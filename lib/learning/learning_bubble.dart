@@ -338,7 +338,9 @@ class _BubbleButtonState extends State<_BubbleButton> {
     child: DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(5),
-        border: Border.all(color: _focus ? AppColors.accent : const Color(0)),
+        border: Border.all(
+          color: _focus ? AppColors.accent : const Color(0x00000000),
+        ),
       ),
       child: Padding(
         padding: const EdgeInsets.all(1),
