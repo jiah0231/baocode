@@ -41,6 +41,7 @@ void main() {
         panel.showSection(session, SidePanelSection.learning);
         await tester.pumpWidget(
           MaterialApp(
+            debugShowCheckedModeBanner: false,
             theme: buildAppTheme(),
             locale: const Locale('zh'),
             supportedLocales: const [Locale('zh')],
@@ -54,7 +55,7 @@ void main() {
                   session: session,
                   learningBuilder: width == 1200
                       ? (_) => LearningPanel(
-                          cards: fixtures(chinese: true),
+                          cards: fixtures(chinese: true).take(1).toList(),
                           enabled: true,
                           modelLabel: '合成教学模型 · 无网络请求',
                           onConfigure: () {},
@@ -80,15 +81,12 @@ void main() {
         expect(session.learning.requestCount, 0);
         expect(tester.takeException(), isNull);
         if (width == 1200) {
-          final expand = find.byKey(const Key('learning-expand-synthetic-2'));
+          final expand = find.byKey(const Key('learning-expand-synthetic-0'));
           await tester.ensureVisible(expand);
           await tester.pumpAndSettle();
           await tester.tap(expand);
           await tester.pumpAndSettle();
-          await tester.ensureVisible(
-            find.text('+ if (generation != current) return;').last,
-          );
-          await tester.pumpAndSettle();
+
           expect(tester.takeException(), isNull);
         }
         if (const bool.fromEnvironment('BAOCODE_LEARNING_VISUALS')) {

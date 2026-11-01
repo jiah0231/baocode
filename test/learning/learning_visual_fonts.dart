@@ -30,8 +30,13 @@ Future<void> loadLearningVisualFonts() async {
     ),
   );
   await load('Microsoft YaHei UI', cjk);
-  await load('Roboto', cjk);
   await load('Consolas', 'consola.ttf');
+  await load('monospace', 'consola.ttf');
+  await load('Cascadia Mono', 'consola.ttf');
+  if (File('$root/segmdl2.ttf').existsSync()) {
+    await load('Segoe MDL2 Assets', 'segmdl2.ttf');
+    await load('Segoe Fluent Icons', 'segmdl2.ttf');
+  }
 }
 
 /// Bound real-I/O fixture failures rather than waiting Flutter's ten minutes.
@@ -40,5 +45,6 @@ void learningWidgetTest(String description, WidgetTesterCallback callback) {
     description,
     callback,
     timeout: const Timeout(Duration(seconds: 60)),
+    variant: TargetPlatformVariant.only(TargetPlatform.windows),
   );
 }

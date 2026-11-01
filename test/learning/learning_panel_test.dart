@@ -85,6 +85,7 @@ void main() {
     tester.view.devicePixelRatio = 1;
     await tester.pumpWidget(
       MaterialApp(
+        debugShowCheckedModeBanner: false,
         theme: buildAppTheme(),
         locale: Locale(chinese ? 'zh' : 'en'),
         supportedLocales: const [Locale('en'), Locale('zh')],
