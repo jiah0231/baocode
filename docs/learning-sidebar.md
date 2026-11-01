@@ -12,7 +12,7 @@ provider configuration; changing these requires confirmation again.
 
 Completed Claude and Codex operations share the same event pipeline. Only
 bounded diff lines, allowlisted edit fields, or completed command excerpts are
-considered. Historical transcripts, streamed text/thoughts, denied operations,
+considered. Completed failed commands are explicitly labelled as failures, not successes. Historical transcripts, streamed text/thoughts, denied operations,
 whole files and environment snapshots are not forwarded. Common secret forms
 and sensitive paths/commands are filtered, but automatic redaction is not a
 confidentiality guarantee: enable only for project content you may share.

@@ -13,14 +13,12 @@ enum LearningPace { calm, balanced }
 /// Only preferences are persisted. Evidence and generated lessons stay in memory.
 class LearningPreferences extends ChangeNotifier {
   LearningPreferences({
-    required Object? Function(String key) read,
-    required Future<void> Function(String key, Object? value) write,
+    required this._read,
+    required this._write,
     Listenable? changes,
     ModelProviders? providers,
     this.scope = '',
-  }) : _read = read,
-       _write = write,
-       _changes = changes,
+  }) : _changes = changes,
        providers = providers ?? ModelProviders.current {
     changes?.addListener(_changed);
     this.providers.addListener(_changed);

@@ -17,7 +17,7 @@ class LearningController extends ChangeNotifier {
   static const maxCards = 40;
   static const maxContextCharacters = 6000;
   final _queue = ListQueue<LearningEvidence>();
-  final _seen = LinkedHashSet<String>();
+  final _seen = <String>{};
   final _cards = <LearningCard>[];
   LearningGenerator? _generator;
   LearningCancellation? _cancellation;
@@ -221,18 +221,23 @@ class LearningController extends ChangeNotifier {
           if (patch is! String || _sensitiveCommand(patch)) return null;
           excerpt = _clip(patch, 2400);
         }
-      case TerminalItem(status: CommandStatus.succeeded):
+      case TerminalItem(
+        status: CommandStatus.succeeded || CommandStatus.failed,
+      ):
         if (_sensitiveCommand(item.command)) return null;
         kind = 'command';
         label = item.description ?? 'Completed command';
         excerpt =
-            'Command: ${_clip(item.command, 450)}\nOutput excerpt:\n${_clip(item.output, 1800)}';
-      case ToolCallItem(status: ToolStatus.succeeded, kind: ToolKind.command):
+            'Observed status: ${item.status.name}. Command: ${_clip(item.command, 450)}\nOutput excerpt:\n${_clip(item.output, 1800)}';
+      case ToolCallItem(
+        status: ToolStatus.succeeded || ToolStatus.failed,
+        kind: ToolKind.command,
+      ):
         if (_sensitiveCommand(item.target)) return null;
         kind = 'command';
         label = item.label ?? 'Completed command';
         excerpt =
-            'Command: ${_clip(item.target, 450)}\nOutput excerpt:\n${_clip(item.output ?? '', 1800)}';
+            'Observed status: ${item.status.name}. Command: ${_clip(item.target, 450)}\nOutput excerpt:\n${_clip(item.output ?? '', 1800)}';
       default:
         return null;
     }
@@ -255,8 +260,9 @@ class LearningController extends ChangeNotifier {
         _busy ||
         _timer != null ||
         _queue.isEmpty ||
-        budgetReached)
+        budgetReached) {
       return;
+    }
     _timer = Timer(_interval, () {
       _timer = null;
       unawaited(_generate());
@@ -270,8 +276,9 @@ class LearningController extends ChangeNotifier {
         _paused ||
         _busy ||
         _queue.isEmpty ||
-        budgetReached)
+        budgetReached) {
       return;
+    }
     final generator = _generator;
     if (generator == null) return;
     final generation = _generation;
@@ -305,8 +312,9 @@ class LearningController extends ChangeNotifier {
         ),
         cancellation,
       );
-      if (_disposed || generation != _generation || cancellation.isCancelled)
+      if (_disposed || generation != _generation || cancellation.isCancelled) {
         return;
+      }
       final card = _validate(output, evidence);
       _cards.add(card);
       if (_cards.length > maxCards) _cards.removeAt(0);
@@ -334,8 +342,9 @@ class LearningController extends ChangeNotifier {
   ) {
     String field(String name, int max) {
       final value = output[name];
-      if (value is! String || value.trim().isEmpty || value.length > max)
+      if (value is! String || value.trim().isEmpty || value.length > max) {
         throw const FormatException('Invalid teaching card');
+      }
       return redactLearningText(value.trim());
     }
 
@@ -346,8 +355,9 @@ class LearningController extends ChangeNotifier {
     if (ids is! List ||
         ids.isEmpty ||
         ids.length > evidence.length ||
-        ids.any((id) => id is! String || !known.containsKey(id)))
+        ids.any((id) => id is! String || !known.containsKey(id))) {
       throw const FormatException('Unknown evidence');
+    }
     return LearningCard(
       id: '$_session:$_generation:$_requests',
       title: field('title', 100),

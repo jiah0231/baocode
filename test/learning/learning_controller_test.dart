@@ -44,6 +44,36 @@ Future<void> settle() async {
 
 void main() {
   test(
+    'completed failures teach explicit failure, not success or denied tools',
+    () async {
+      final controller = LearningController();
+      final generator = FakeGenerator();
+      controller.enable(generator, interval: Duration.zero);
+      controller.observe(
+        const ItemUpserted(
+          1,
+          'failed-build',
+          TerminalItem(
+            command: 'flutter build windows',
+            output: 'Compilation failed: missing symbol',
+            status: CommandStatus.failed,
+          ),
+        ),
+      );
+      await settle();
+      expect(
+        generator.requests.single.evidence.single.excerpt,
+        contains('Observed status: failed'),
+      );
+      expect(
+        generator.requests.single.evidence.single.excerpt,
+        contains('missing symbol'),
+      );
+      controller.dispose();
+    },
+  );
+
+  test(
     'consent invalidation retains session cards; explicit off clears',
     () async {
       final controller = LearningController();

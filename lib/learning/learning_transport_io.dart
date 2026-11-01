@@ -48,7 +48,7 @@ Future<String> sendLearningRequest(
       environment: {
         ...route.environment,
         ...environment,
-        if (environment['NO_PROXY'] case final bypass?) 'no_proxy': bypass,
+        'no_proxy': ?environment['NO_PROXY'],
       },
       maxRetries: 0,
       idleTimeout: const Duration(seconds: 30),
