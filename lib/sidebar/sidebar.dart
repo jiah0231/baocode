@@ -16,6 +16,7 @@ import '../chat/widgets/pixel_loader.dart';
 import '../forge/forge_api.dart' show ForgeState;
 import '../forge/forge_ref.dart' show ForgeItemKind;
 import '../forge/forge_view.dart' show forgeStateLook;
+import '../icons/brand_logos.dart';
 import '../icons/project_icon_picker.dart';
 import '../icons/project_icon_view.dart';
 import '../ide/ide_button.dart' show IdeButtonColors;
@@ -3470,7 +3471,7 @@ class _ThreadRow extends StatelessWidget {
 
   Widget _buildTitle(AppLocalizations l10n, Color foreground) {
     final status = thread.status;
-    return Text.rich(
+    final title = Text.rich(
       TextSpan(
         children: [
           TextSpan(text: thread.localizedTitle(l10n)),
@@ -3509,6 +3510,19 @@ class _ThreadRow extends StatelessWidget {
             : FontWeight.normal,
       ),
     );
+    // Whose agent it is, before the title: a mark of its own, not part of
+    // the title's text.
+    if (thread.kernel.logo case final logo?) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          BrandLogo(logo, size: 12, color: foreground),
+          const SizedBox(width: 4),
+          Flexible(child: title),
+        ],
+      );
+    }
+    return title;
   }
 
   /// The least the title is cut to before what is beside it gives way.

@@ -83,6 +83,9 @@ class CodexCatalog implements SessionCatalog {
       for (final raw in result['data'] as List? ?? const []) {
         if (raw is! Map) continue;
         if (raw['ephemeral'] == true) continue;
+        // Only what BaoCode itself began: Codex keeps its CLI's threads and
+        // other apps' in the same list, which are not this app's history.
+        if (raw['originator'] != 'baocode') continue;
         final id = raw['id'] as String?;
         if (id == null) continue;
         // What its host keeps it under, as a location.
@@ -108,8 +111,11 @@ class CodexCatalog implements SessionCatalog {
 
   /// What it is called: its name, else the start of its first message.
   static String _title(Map raw) {
-    final name = raw['name'] as String?;
-    if (name != null && name.trim().isNotEmpty) return name.trim();
+    final name = (raw['name'] as String? ?? '').trim();
+    // The server's own until the conversation is named: not a title.
+    if (name.isNotEmpty && name != 'Untitled' && name != 'Untitled message') {
+      return name;
+    }
     final preview = raw['preview'] as String? ?? '';
     final line = preview.split('\n').first.trim();
     if (line.length <= 80) return line;

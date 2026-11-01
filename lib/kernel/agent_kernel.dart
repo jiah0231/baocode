@@ -437,6 +437,7 @@ class KernelDescriptor {
     required this.icon,
     required this.description,
     required this.create,
+    this.logo,
     this.catalog,
   });
 
@@ -445,6 +446,10 @@ class KernelDescriptor {
   final IconData icon;
   final String description;
   final AgentKernel Function(KernelContext context) create;
+
+  /// Its mark in [BrandLogos] (`claudecode`, `codex`), beside a session's
+  /// title in the lists: whose agent it is. None for a kernel without one.
+  final String? logo;
 
   /// Its kept sessions, when it keeps any.
   final SessionCatalog? catalog;

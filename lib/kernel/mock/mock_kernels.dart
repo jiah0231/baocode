@@ -14,6 +14,7 @@ abstract final class MockKernels {
     label: 'Claude Code',
     icon: Icons.auto_awesome_rounded,
     description: 'Anthropic’s coding agent',
+    logo: 'claudecode',
     create: (context) => ClaudeCodeKernel(
       claudeCode,
       context,
@@ -26,6 +27,7 @@ abstract final class MockKernels {
     label: 'Codex',
     icon: Icons.data_object_rounded,
     description: 'OpenAI’s coding agent',
+    logo: 'codex',
     create: (context) =>
         CodexKernel(codex, context, start: (_) async => MockCodexTransport()),
   );

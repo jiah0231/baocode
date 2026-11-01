@@ -553,6 +553,10 @@ class CodexKernel
 
   Future<void> _open() async {
     _released = false;
+    // Off the caller's stack: a chat first built may be the one asking
+    // (in its `initState`), and health reported before that build ends
+    // would notify its listeners mid-build.
+    await null;
     _setHealth(const KernelHealth(KernelHealthStatus.starting));
     try {
       final transport = await _start(

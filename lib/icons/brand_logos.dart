@@ -12,6 +12,7 @@ abstract final class BrandLogos {
     'claudecode': 'Claude Code',
     'anthropic': 'Anthropic',
     'openai': 'OpenAI',
+    'codex': 'Codex',
     'gemini': 'Gemini',
     'google': 'Google',
     'deepseek': 'DeepSeek',

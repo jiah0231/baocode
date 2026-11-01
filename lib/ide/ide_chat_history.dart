@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../base/smooth_scroll.dart';
+import '../icons/brand_logos.dart';
 import '../l10n/l10n.dart';
 import '../theme/codicons.dart';
 import '../theme/workbench_theme.dart' show themeColors;
@@ -553,9 +554,14 @@ class _HistoryRowState extends State<_HistoryRow> {
               : 'list.highlightForeground'],
       fontWeight: FontWeight.w600,
     );
-    // Its dot after the title, the title cut short before it.
+    // Whose agent it is, then the title; its dot after the title, which is
+    // cut short before it.
     final title = Row(
       children: [
+        if (thread.kernel.logo case final logo?) ...[
+          BrandLogo(logo, size: 12, color: color),
+          const SizedBox(width: 5),
+        ],
         Flexible(
           child: Text.rich(
             TextSpan(
