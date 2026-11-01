@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import '../channel/channel_setup.dart' show ChannelSetup;
+import 'custom_update_channel.dart';
 import 'update_io.dart';
 import 'update_manifest.dart';
 import 'update_service.dart';
@@ -16,7 +17,14 @@ import 'version.dart';
 /// [manifestUrlVariable] points at a manifest to try.
 PlatformUpdates? platformUpdates({required String updatesDirectory}) {
   final environment = Platform.environment;
-  final override = environment[manifestUrlVariable]?.trim() ?? '';
+  if (CustomUpdateChannel.enabled &&
+      (!Platform.isWindows ||
+          !CustomUpdateChannel.validPublicKey(CustomUpdateChannel.publicKey))) {
+    return null;
+  }
+  final override = CustomUpdateChannel.enabled
+      ? ''
+      : environment[manifestUrlVariable]?.trim() ?? '';
   if (!kReleaseMode && override.isEmpty) return null;
   final manifestUrl = Uri.tryParse(
     override.isEmpty ? defaultManifestUrl : override,

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import 'custom_update_channel.dart';
 import 'update_manifest.dart';
 import 'update_settings.dart';
 import 'version.dart';
@@ -76,7 +77,11 @@ abstract interface class PreparedUpdate {
 class ManualUpdateRequired implements Exception {
   const ManualUpdateRequired(this.reason);
 
-  static final downloadPage = Uri.parse('https://baocode.dev/download');
+  static final downloadPage = Uri.parse(
+    CustomUpdateChannel.enabled
+        ? CustomUpdateChannel.releases
+        : 'https://baocode.dev/download',
+  );
 
   final String reason;
 
@@ -275,6 +280,7 @@ class UpdateService extends ChangeNotifier {
   /// Whether [release] may not be put off: this version is older than its
   /// `minimumVersion`.
   bool isMandatory(UpdateRelease release) =>
+      !CustomUpdateChannel.enabled &&
       switch (release.manifest.minimumVersion) {
         final minimum? => current < minimum,
         null => false,

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../ide/ide_notifications.dart';
 import '../l10n/l10n.dart';
+import 'custom_update_channel.dart';
 import 'update_service.dart';
 import 'version.dart';
 
@@ -35,8 +36,10 @@ class UpdateController {
   /// [version]'s notes on the site's changelog (tool/build_changelog.dart
   /// makes it), the Chinese page for [languageCode] `zh`.
   static Uri changelogUrl(AppVersion version, String languageCode) => Uri.parse(
-    'https://baocode.dev/${languageCode.startsWith('zh') ? 'zh/' : ''}'
-    'changelog#v${version.marketing}',
+    CustomUpdateChannel.enabled
+        ? CustomUpdateChannel.releases
+        : 'https://baocode.dev/${languageCode.startsWith('zh') ? 'zh/' : ''}'
+              'changelog#v${version.marketing}',
   );
 
   bool _restarting = false;

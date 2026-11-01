@@ -56,6 +56,8 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 
+import '../lib/update/custom_update_channel.dart';
+
 /// Where the bundle flutter leaves behind goes (for [arch]), and where the
 /// installer is written. Under build/, which the repository already ignores
 /// and flutter clean already removes.
@@ -125,6 +127,18 @@ Future<void> main(List<String> arguments) async {
   }
   final skipBuild = arguments.contains('--skip-build');
   final noUpdates = arguments.contains('--no-updates');
+  final customUpdates = arguments.contains('--custom-updates');
+  final customKey = Platform.environment['BAOCODE_CUSTOM_UPDATE_KEY'] ?? '';
+  if (customUpdates &&
+      (noUpdates ||
+          skipBuild ||
+          arguments.contains('--channel') ||
+          !CustomUpdateChannel.validPublicKey(customKey))) {
+    _fail(
+      '--custom-updates requires a fresh build, a 32-byte base64 public '
+      'BAOCODE_CUSTOM_UPDATE_KEY, and neither --no-updates nor --channel.',
+    );
+  }
   if (skipBuild && noUpdates) {
     _fail(
       '--no-updates needs a fresh build; it cannot change an existing bundle.',
@@ -173,6 +187,8 @@ Future<void> main(List<String> arguments) async {
       '--release',
       if (channel) '--dart-define=BAOCODE_CHANNEL=true',
       if (noUpdates) '--dart-define=BAOCODE_UPDATES_ENABLED=false',
+      if (customUpdates) '--dart-define=BAOCODE_CUSTOM_UPDATES=true',
+      if (customUpdates) '--dart-define=BAOCODE_CUSTOM_UPDATE_KEY=$customKey',
       // Not --split-debug-info, which would also leave the app's stack
       // traces (errors.log) unnamed, as offsets.
       '--extra-gen-snapshot-options=--save-debugging-info='

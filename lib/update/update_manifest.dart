@@ -3,10 +3,13 @@
 import 'dart:convert';
 
 import 'version.dart';
+import 'custom_update_channel.dart';
 
 /// Where the app looks for its next version: the release manifest
 /// dl.baocode.dev serves (docs/auto-update.md has its format).
-const defaultManifestUrl = 'https://dl.baocode.dev/releases/latest.json';
+const defaultManifestUrl = CustomUpdateChannel.enabled
+    ? CustomUpdateChannel.manifestUrl
+    : 'https://dl.baocode.dev/releases/latest.json';
 
 /// The environment variable that points the app at another manifest, to
 /// try a release before it is published (a local server's, say).
@@ -28,13 +31,18 @@ class UpdateManifestException implements Exception {
 /// [manifestUrlVariable] points at, so a release can be tried from where it
 /// is served before it is published.
 class UpdateUrlPolicy {
-  const UpdateUrlPolicy({this.extraOrigins = const {}});
+  const UpdateUrlPolicy({this.extraOrigins = const {}, this.custom = false});
+
+  final bool custom;
 
   /// For the manifest at [manifest]: its origin allowed too when it is not
   /// the default one.
   factory UpdateUrlPolicy.forManifest(Uri manifest) =>
-      manifest.toString() == defaultManifestUrl ||
-          !(manifest.scheme == 'http' || manifest.scheme == 'https')
+      CustomUpdateChannel.enabled ||
+          manifest.toString() == CustomUpdateChannel.manifestUrl
+      ? const UpdateUrlPolicy(custom: true)
+      : manifest.toString() == defaultManifestUrl ||
+            !(manifest.scheme == 'http' || manifest.scheme == 'https')
       ? const UpdateUrlPolicy()
       : UpdateUrlPolicy(extraOrigins: {manifest.origin});
 
@@ -43,6 +51,7 @@ class UpdateUrlPolicy {
   final Set<String> extraOrigins;
 
   bool allows(Uri url) {
+    if (custom) return CustomUpdateChannel.allowsAsset(url);
     if (url.hasScheme &&
         (url.scheme == 'http' || url.scheme == 'https') &&
         url.host.isNotEmpty &&

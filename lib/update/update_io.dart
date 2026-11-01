@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart' as crypto;
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
+import 'custom_update_channel.dart';
 import 'update_service.dart';
 import 'update_signature.dart';
 import 'version.dart';
@@ -23,10 +24,13 @@ class IoUpdateBackend implements UpdateBackend {
     this.userAgent = 'BaoCode',
     this.publicKey = updatePublicKey,
     this.timeout = const Duration(seconds: 30),
+    this.customChannel = CustomUpdateChannel.enabled,
   }) : _client = client ?? HttpClient.new;
 
   /// `updates/` in the data folder.
   final String directory;
+
+  final bool customChannel;
 
   final String userAgent;
 
@@ -49,9 +53,7 @@ class IoUpdateBackend implements UpdateBackend {
   Future<String> fetchManifest(Uri url) async {
     final client = _newClient();
     try {
-      final request = await client.getUrl(url).timeout(timeout);
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close().timeout(timeout);
+      final response = await _request(client, url, manifest: true);
       if (response.statusCode != HttpStatus.ok) {
         await response.drain<void>();
         throw HttpException('HTTP ${response.statusCode}', uri: url);
@@ -194,9 +196,45 @@ class IoUpdateBackend implements UpdateBackend {
     Uri url, {
     required int from,
   }) async {
-    final request = await client.getUrl(url).timeout(timeout);
-    if (from > 0) request.headers.set(HttpHeaders.rangeHeader, 'bytes=$from-');
-    return request.close().timeout(timeout);
+    return _request(client, url, from: from);
+  }
+
+  Future<HttpClientResponse> _request(
+    HttpClient client,
+    Uri url, {
+    int from = 0,
+    bool manifest = false,
+  }) async {
+    if (customChannel &&
+        !(manifest
+            ? url.toString() == CustomUpdateChannel.manifestUrl
+            : CustomUpdateChannel.allowsAsset(url))) {
+      throw HttpException('Untrusted custom update URL', uri: url);
+    }
+    var current = url;
+    for (var redirects = 0; redirects <= 5; redirects++) {
+      final request = await client.getUrl(current).timeout(timeout);
+      request.followRedirects = !customChannel;
+      if (manifest) {
+        request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      }
+      if (from > 0) {
+        request.headers.set(HttpHeaders.rangeHeader, 'bytes=$from-');
+      }
+      final response = await request.close().timeout(timeout);
+      if (!customChannel || !response.isRedirect) return response;
+      final location = response.headers.value(HttpHeaders.locationHeader);
+      await response.drain<void>().timeout(timeout);
+      if (location == null) {
+        throw HttpException('Missing redirect', uri: current);
+      }
+      final next = current.resolve(location);
+      if (!CustomUpdateChannel.allowsRedirect(next)) {
+        throw HttpException('Untrusted update redirect', uri: next);
+      }
+      current = next;
+    }
+    throw HttpException('Too many update redirects', uri: url);
   }
 
   @override

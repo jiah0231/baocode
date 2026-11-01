@@ -1,0 +1,152 @@
+# Publishing requires owner creation of an exact-SHA release request branch,
+# or explicit manual dispatch. Ordinary code pushes never publish updates.
+name: Custom signed Windows update
+on:
+  create:
+  workflow_dispatch:
+    inputs:
+      expected_commit:
+        description: 'Exact reviewed source commit SHA (must match selected branch)'
+        type: string
+        required: true
+      publish:
+        description: 'Publish the tested build to the custom update channel'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: custom-update-release
+  cancel-in-progress: false
+jobs:
+  build:
+    if: >-
+      github.repository == 'jiah0231/baocode' && github.actor == 'jiah0231' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.ref_type == 'branch' && startsWith(github.event.ref, 'custom-publish/v') &&
+        endsWith(github.event.ref, format('/{0}', github.sha))))
+    runs-on: windows-2025
+    timeout-minutes: 60
+    env:
+      BAOCODE_CUSTOM_UPDATE_KEY: ${{ vars.BAOCODE_CUSTOM_UPDATE_KEY }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.5
+          cache: true
+      - name: Verify requested source identity
+        env:
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+          CREATED_REF: ${{ github.event.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = create ]; then
+            version=$(sed -n 's/^version: //p' pubspec.yaml)
+            test "$CREATED_REF" = "custom-publish/v$version/$GITHUB_SHA"
+          else
+            test "$GITHUB_SHA" = "$EXPECTED_COMMIT"
+          fi
+      - run: flutter pub get
+      - run: flutter gen-l10n
+      - run: flutter analyze --no-pub
+      - name: Test updater and quit protections
+        run: flutter test test/update test/workspace/quit_confirmation_test.dart test/workspace/usage_shutdown_test.dart
+      - name: Test custom build configuration
+        run: flutter test test/update/custom_update_channel_test.dart --dart-define=BAOCODE_CUSTOM_UPDATES=true --dart-define=BAOCODE_CUSTOM_UPDATE_KEY=$env:BAOCODE_CUSTOM_UPDATE_KEY
+      - name: Test preserved Codex and performance functionality
+        run: flutter test test/kernel test/usage test/models/proxy test/models/codex_test.dart test/codex_fork_test.dart test/chat/streamed_words_test.dart
+      - run: choco install innosetup --no-progress -y
+      - run: dart run tool/build_windows.dart --arch x64 --custom-updates --remote-release 1.7.3.23-958eff42c6ca
+      - name: Smoke-test startup
+        shell: pwsh
+        run: |
+          $env:BAOCODE_DATA_DIR = Join-Path $env:RUNNER_TEMP 'custom-smoke'
+          $app = Start-Process 'build/windows/x64/runner/Release/baocode.exe' -PassThru
+          Start-Sleep -Seconds 15
+          $app.Refresh()
+          if ($app.HasExited) { throw "Startup failed: $($app.ExitCode)" }
+          Stop-Process -Id $app.Id
+      - uses: actions/upload-artifact@v6
+        with:
+          name: custom-installer
+          if-no-files-found: error
+          path: build/installers/*.exe
+  publish:
+    if: >-
+      github.repository == 'jiah0231/baocode' && github.actor == 'jiah0231' &&
+      ((github.event_name == 'workflow_dispatch' && inputs.publish) ||
+       (github.event_name == 'create' && github.event.ref_type == 'branch' &&
+        startsWith(github.event.ref, 'custom-publish/v') &&
+        endsWith(github.event.ref, format('/{0}', github.sha))))
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      BAOCODE_CUSTOM_UPDATE_KEY: ${{ vars.BAOCODE_CUSTOM_UPDATE_KEY }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.5
+          cache: true
+      - name: Verify requested source identity
+        env:
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+          CREATED_REF: ${{ github.event.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = create ]; then
+            version=$(sed -n 's/^version: //p' pubspec.yaml)
+            test "$CREATED_REF" = "custom-publish/v$version/$GITHUB_SHA"
+          else
+            test "$GITHUB_SHA" = "$EXPECTED_COMMIT"
+          fi
+      - run: flutter pub get
+      - uses: actions/download-artifact@v7
+        with:
+          name: custom-installer
+          path: build/installers
+      - name: Sign and publish verified build; advertise last
+        env:
+          SIGNING_SEED: ${{ secrets.BAOCODE_CUSTOM_UPDATE_SIGNING_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          key="$RUNNER_TEMP/update-signing.key"
+          trap 'rm -f "$key"' EXIT
+          printf '%s' "$SIGNING_SEED" > "$key"
+          export BAOCODE_CUSTOM_UPDATE_SIGNING_KEY_FILE="$key"
+          version=$(sed -n 's/^version: //p' pubspec.yaml)
+          tag="custom-v$version"
+          # Never overwrite a versioned release or reuse a version number.
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo 'Version already published; increment both app version files.' >&2; exit 1
+          fi
+          installers=(build/installers/*-setup.exe)
+          test "${#installers[@]}" -eq 1
+          previous=()
+          if gh release view custom-stable >/dev/null 2>&1; then
+            mkdir -p "$RUNNER_TEMP/previous-update"
+            gh release download custom-stable --pattern latest.json --dir "$RUNNER_TEMP/previous-update"
+            previous=("$RUNNER_TEMP/previous-update/latest.json")
+          fi
+          dart run tool/custom_release_manifest.dart "$version" "${installers[0]}" build/installers/latest.json "${previous[@]}"
+          gh release create "$tag" "${installers[0]}" --target "$GITHUB_SHA" --draft --title "Custom BaoCode $version" --notes "Tested source: $GITHUB_SHA. Signed Windows x64 custom update."
+          gh release edit "$tag" --draft=false --latest=false
+          # custom-stable is only a manifest pointer; versioned Setup is live first.
+          if ! gh release view custom-stable >/dev/null 2>&1; then
+            gh release create custom-stable --target "$GITHUB_SHA" --title 'Custom stable update channel' --notes 'Signed update manifest for custom Windows installations.' --latest=false
+          fi
+          gh release upload custom-stable build/installers/latest.json --clobber

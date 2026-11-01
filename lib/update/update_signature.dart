@@ -2,12 +2,16 @@
 
 import 'dart:convert';
 
+import 'custom_update_channel.dart';
+
 import 'package:pinenacl/ed25519.dart';
 
 /// The Ed25519 key releases are signed with: the public half, base64. The
 /// private half is kept off the repository (docs/auto-update.md);
 /// tool/release_manifest.dart signs with it.
-const updatePublicKey = 'iBSgPUxNeT4jvgaua22aN/jCDwG+ry8rGc17kMcU4II=';
+const updatePublicKey = CustomUpdateChannel.enabled
+    ? CustomUpdateChannel.publicKey
+    : 'iBSgPUxNeT4jvgaua22aN/jCDwG+ry8rGc17kMcU4II=';
 
 /// What a release's signature covers, and checking it. Not the file
 /// itself (a few hundred megabytes, read whole): its SHA-256, which the
