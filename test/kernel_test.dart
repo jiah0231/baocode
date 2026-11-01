@@ -5995,11 +5995,13 @@ exec /usr/bin/env "\$@"
               as Map;
       expect(
         params['input'],
-        contains({
-          'type': 'skill',
-          'name': 'docs',
-          'path': '/project/.agents/skills/docs/SKILL.md',
-        }),
+        contains(
+          equals({
+            'type': 'skill',
+            'name': 'docs',
+            'path': '/project/.agents/skills/docs/SKILL.md',
+          }),
+        ),
       );
       server.skills = {};
       notify('skills/changed', {});

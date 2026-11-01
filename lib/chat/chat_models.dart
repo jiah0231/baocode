@@ -738,9 +738,15 @@ class FileChange {
   /// that over.
   final bool conflict;
 
-  String get fileName => path.split('/').last;
+  // A change can come from a Windows core or a POSIX SSH host. Split
+  // display labels without altering the path used by review/undo.
+  int get _separator => path.startsWith('/')
+      ? path.lastIndexOf('/')
+      : path.lastIndexOf(RegExp(r'[/\\]'));
+
+  String get fileName => path.substring(_separator + 1);
   String get directory {
-    final index = path.lastIndexOf('/');
+    final index = _separator;
     return index < 0 ? '' : path.substring(0, index);
   }
 }

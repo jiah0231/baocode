@@ -947,7 +947,8 @@ class ClaudeTranslator {
     String tense(String done, String doing) =>
         outcome == _Outcome.running ? doing : done;
     String? path(String key) => _string(input[key]);
-    String base(String? path) => path == null ? '' : path.split('/').last;
+    String base(String? path) =>
+        path == null ? '' : path.substring(_lastPathSeparator(path) + 1);
     final name = tool.name;
     // The app's own, shown as it says.
     if (ClaudeSdkTools.called(name) case ClaudeSdkTool(
@@ -1390,6 +1391,14 @@ class ClaudeTranslator {
     return OriginalByEdits(edits.nonNulls.toList());
   }
 
+  /// A result may come from Windows or from a POSIX SSH host, regardless
+  /// of the machine displaying it. Keep the original path for file access;
+  /// only split its display label. An absolute POSIX path can legally have
+  /// a backslash in its filename, so do not treat that as a separator.
+  static int _lastPathSeparator(String path) => path.startsWith('/')
+      ? path.lastIndexOf('/')
+      : math.max(path.lastIndexOf('/'), path.lastIndexOf(r'\'));
+
   /// An edit's result as a diff card and a pending change; false when it
   /// carries no patch to show.
   bool _diff(String id, _Tool tool, Map<String, Object?> result) {
@@ -1460,7 +1469,7 @@ class ClaudeTranslator {
       }
     }
     if (lines.isEmpty) return false;
-    final slash = path.lastIndexOf('/');
+    final slash = _lastPathSeparator(path);
     _put(
       id,
       CodeDiffItem(
