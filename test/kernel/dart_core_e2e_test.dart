@@ -113,7 +113,7 @@ void main() {
           kernel.stopped.timeout(const Duration(seconds: 10)),
       ]);
       await api.close();
-      await Directory(root).delete(recursive: true);
+      await _deleteFixtureDirectory(Directory(root));
     } finally {
       ClaudeEnvironment.use(null);
       ModelProviders.current = providers;
@@ -547,6 +547,27 @@ void main() {
     kernel.dispose();
     await kernel.stopped;
   });
+}
+
+/// Windows may briefly retain a directory handle after a core isolate or
+/// its child process exits. Wait only for sharing/lock violations, after
+/// the kernels have been disposed and awaited; a lasting leak still fails.
+Future<void> _deleteFixtureDirectory(Directory directory) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (true) {
+    try {
+      if (await directory.exists()) await directory.delete(recursive: true);
+      return;
+    } on FileSystemException catch (error) {
+      final code = error.osError?.errorCode;
+      if (!Platform.isWindows ||
+          (code != 32 && code != 33) ||
+          !DateTime.now().isBefore(deadline)) {
+        rethrow;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+  }
 }
 
 /// These fixtures speak real HTTP only to their in-process FakeApi/proxy.
