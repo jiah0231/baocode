@@ -9,6 +9,7 @@ import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/widgets/edit_step.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/kernel_event.dart';
+import 'package:baocode/kernel/kernel_types.dart';
 import 'package:baocode/learning/learning_bubble.dart';
 import 'package:baocode/learning/work_trace_panel.dart';
 import 'package:baocode/learning/learning_models.dart';
@@ -29,7 +30,25 @@ class _Kernel implements AgentKernel {
   @override
   final Stream<KernelEvent> events;
   @override
-  dynamic noSuchMethod(Invocation invocation) => null;
+  KernelHealth get health => const KernelHealth(KernelHealthStatus.ready);
+  @override
+  String? get sessionId => null;
+  @override
+  Future<void> get stopped => Future<void>.value();
+  @override
+  void send(KernelTurn turn) {}
+  @override
+  void answer(String requestId, InteractionAnswer answer) {}
+  @override
+  void cancel() {}
+  @override
+  void restart() {}
+  @override
+  void prepare() {}
+  @override
+  void release() {}
+  @override
+  void dispose() {}
 }
 
 class _Generator implements LearningGenerator {

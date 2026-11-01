@@ -7,8 +7,10 @@ import 'package:baocode/models/model_providers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'learning_visual_fonts.dart';
+
 void main() {
-  testWidgets('turn off stops locally before a failed preference save', (
+  learningWidgetTest('turn off stops locally before a failed preference save', (
     tester,
   ) async {
     final providers = ModelProviders.memory(

@@ -14,6 +14,8 @@ import 'package:baocode/models/model_providers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'learning_visual_fonts.dart' show learningWidgetTest;
+
 class ScopeGenerator implements LearningGenerator {
   final requests = <LearningRequest>[];
   final cancellations = <LearningCancellation>[];
@@ -55,7 +57,10 @@ void main() {
   late ScopeGenerator generator;
   late ChatSession session;
 
-  setUp(() {
+  // Construct Futures and mock sessions in the widget test's fake-async zone.
+  // An outer setUp owns a different zone: awaiting its preference write chain
+  // from a widget callback can otherwise wait for an unflushed microtask.
+  void initialize() {
     providers = ModelProviders.memory(
       providers: const [
         ModelProvider(
@@ -70,13 +75,14 @@ void main() {
     session = ChatSession(
       historyCount: 8,
       kernelContext: const KernelContext(cwd: '/synthetic/project'),
+      openReview: (root, {session}) async => null,
     );
-  });
-  tearDown(() {
-    session.dispose();
-    preferences.dispose();
-    providers.dispose();
-  });
+    addTearDown(() {
+      session.dispose();
+      preferences.dispose();
+      providers.dispose();
+    });
+  }
 
   Future<void> enable() =>
       preferences.configure(modelRef: '@synthetic/teaching', consent: true);
@@ -101,51 +107,62 @@ void main() {
         ),
       );
 
-  testWidgets('mounted chat starts disabled and enabling never reads history', (
-    tester,
-  ) async {
-    LearningScope? scope;
-    await tester.pumpWidget(
-      host(
-        child: Builder(
-          builder: (context) {
-            scope = LearningScope.of(context);
-            return const LearningControls();
-          },
+  learningWidgetTest(
+    'mounted chat starts disabled and enabling never reads history',
+    (tester) async {
+      initialize();
+      debugPrint('[learning-scope synthetic] mount start');
+      LearningScope? scope;
+      await tester.pumpWidget(
+        host(
+          child: Builder(
+            builder: (context) {
+              scope = LearningScope.of(context);
+              return const LearningControls();
+            },
+          ),
         ),
-      ),
-    );
-    expect(session.learning.active, isTrue);
-    expect(session.learning.enabled, isFalse);
-    observe(session, 1);
-    await tester.pump(const Duration(seconds: 25));
-    expect(generator.requests, isEmpty);
-    await enable();
-    await tester.pump();
-    expect(session.learning.enabled, isTrue);
-    await tester.pump(const Duration(seconds: 25));
-    expect(
-      generator.requests,
-      isEmpty,
-      reason: 'Existing history and pre-consent events never become requests',
-    );
-    observe(session, 2);
-    await tester.pump(const Duration(seconds: 25));
-    await tester.pump();
-    expect(generator.requests, hasLength(1));
-    expect(scope!.cardForItem('synthetic-operation-2'), isNotNull);
-    expect(scope!.cardForItem('synthetic-operation-1'), isNull);
-    expect(scope!.cardForItem('/synthetic/project'), isNull);
-    expect(scope!.modelLabel, 'Synthetic provider · teaching');
-    await tester.pumpWidget(const SizedBox());
-    expect(session.learning.active, isFalse);
-    // Host-owned preferences remain usable after the binding leaves.
-    expect(preferences.enabled, isTrue);
-  });
+      );
+      debugPrint('[learning-scope synthetic] mount complete');
+      expect(session.learning.active, isTrue);
+      expect(session.learning.enabled, isFalse);
+      observe(session, 1);
+      await tester.pump(const Duration(seconds: 25));
+      expect(generator.requests, isEmpty);
+      debugPrint('[learning-scope synthetic] consent write start');
+      await enable();
+      debugPrint('[learning-scope synthetic] consent write complete');
+      await tester.pump();
+      expect(session.learning.enabled, isTrue);
+      await tester.pump(const Duration(seconds: 25));
+      expect(
+        generator.requests,
+        isEmpty,
+        reason: 'Existing history and pre-consent events never become requests',
+      );
+      debugPrint('[learning-scope synthetic] request settle start');
+      observe(session, 2);
+      await tester.pump(const Duration(seconds: 25));
+      await tester.pump();
+      debugPrint('[learning-scope synthetic] request settle complete');
+      expect(generator.requests, hasLength(1));
+      expect(scope!.cardForItem('synthetic-operation-2'), isNotNull);
+      expect(scope!.cardForItem('synthetic-operation-1'), isNull);
+      expect(scope!.cardForItem('/synthetic/project'), isNull);
+      expect(scope!.modelLabel, 'Synthetic provider · teaching');
+      debugPrint('[learning-scope synthetic] unmount start');
+      await tester.pumpWidget(const SizedBox());
+      debugPrint('[learning-scope synthetic] unmount complete');
+      expect(session.learning.active, isFalse);
+      // Host-owned preferences remain usable after the binding leaves.
+      expect(preferences.enabled, isTrue);
+    },
+  );
 
-  testWidgets(
+  learningWidgetTest(
     'hidden task cancels immediately and does not accumulate backlog',
     (tester) async {
+      initialize();
       await enable();
       generator.pending = Completer<Map<String, Object?>>();
       await tester.pumpWidget(host());
@@ -172,36 +189,39 @@ void main() {
     },
   );
 
-  testWidgets('reusing binding for another task cancels the prior task', (
-    tester,
-  ) async {
-    final other = ChatSession(
-      kernelContext: const KernelContext(cwd: '/synthetic/project'),
-    );
-    addTearDown(other.dispose);
-    await enable();
-    generator.pending = Completer<Map<String, Object?>>();
-    await tester.pumpWidget(host());
-    observe(session, 1);
-    await tester.pump(const Duration(seconds: 25));
-    await tester.pumpWidget(host(task: other));
-    expect(session.learning.active, isFalse);
-    expect(other.learning.active, isTrue);
-    expect(generator.cancellations.single.isCancelled, isTrue);
-    generator.pending!.complete(generator.answer(generator.requests.single));
-    generator.pending = null;
-    await tester.pump();
-    expect(session.learning.cards, isEmpty);
-    await tester.pump(const Duration(seconds: 25));
-    expect(generator.requests, hasLength(1));
-    await tester.pumpWidget(const SizedBox());
-    expect(other.learning.active, isFalse);
-  });
+  learningWidgetTest(
+    'reusing binding for another task cancels the prior task',
+    (tester) async {
+      initialize();
+      final other = ChatSession(
+        kernelContext: const KernelContext(cwd: '/synthetic/project'),
+      );
+      addTearDown(other.dispose);
+      await enable();
+      generator.pending = Completer<Map<String, Object?>>();
+      await tester.pumpWidget(host());
+      observe(session, 1);
+      await tester.pump(const Duration(seconds: 25));
+      await tester.pumpWidget(host(task: other));
+      expect(session.learning.active, isFalse);
+      expect(other.learning.active, isTrue);
+      expect(generator.cancellations.single.isCancelled, isTrue);
+      generator.pending!.complete(generator.answer(generator.requests.single));
+      generator.pending = null;
+      await tester.pump();
+      expect(session.learning.cards, isEmpty);
+      await tester.pump(const Duration(seconds: 25));
+      expect(generator.requests, hasLength(1));
+      await tester.pumpWidget(const SizedBox());
+      expect(other.learning.active, isFalse);
+    },
+  );
 
   for (final limited in [false, true]) {
-    testWidgets(
+    learningWidgetTest(
       'compact controls show safe ${limited ? 'budget' : 'error'} status and keep pause available',
       (tester) async {
+        initialize();
         final controller = StatusController(
           failure: !limited,
           limited: limited,
@@ -244,7 +264,10 @@ void main() {
     );
   }
 
-  testWidgets('legacy side panel never activates teaching', (tester) async {
+  learningWidgetTest('legacy side panel never activates teaching', (
+    tester,
+  ) async {
+    initialize();
     final panel = AgentSidePanel();
     addTearDown(panel.dispose);
     await tester.pumpWidget(
@@ -252,29 +275,35 @@ void main() {
         home: LearningSessionView(session: session, panel: panel),
       ),
     );
-    expect(session.learning.active, isFalse);
+    // Merely reading the controller creates its default active flag. What
+    // matters is that this legacy surface neither enables nor observes it.
     expect(session.learning.enabled, isFalse);
+    expect(session.learning.cards, isEmpty);
     expect(generator.requests, isEmpty);
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('one view leaving does not deactivate another visible owner', (
-    tester,
-  ) async {
-    Widget view(String key) => LearningSessionBinding(
-      key: ValueKey(key),
-      session: session,
-      preferences: preferences,
-      generator: generator,
-      child: const SizedBox(),
-    );
-    await tester.pumpWidget(
-      MaterialApp(home: Column(children: [view('one'), view('two')])),
-    );
-    expect(session.learning.active, isTrue);
-    await tester.pumpWidget(MaterialApp(home: Column(children: [view('two')])));
-    expect(session.learning.active, isTrue);
-    await tester.pumpWidget(const SizedBox());
-    expect(session.learning.active, isFalse);
-  });
+  learningWidgetTest(
+    'one view leaving does not deactivate another visible owner',
+    (tester) async {
+      initialize();
+      Widget view(String key) => LearningSessionBinding(
+        key: ValueKey(key),
+        session: session,
+        preferences: preferences,
+        generator: generator,
+        child: const SizedBox(),
+      );
+      await tester.pumpWidget(
+        MaterialApp(home: Column(children: [view('one'), view('two')])),
+      );
+      expect(session.learning.active, isTrue);
+      await tester.pumpWidget(
+        MaterialApp(home: Column(children: [view('two')])),
+      );
+      expect(session.learning.active, isTrue);
+      await tester.pumpWidget(const SizedBox());
+      expect(session.learning.active, isFalse);
+    },
+  );
 }
