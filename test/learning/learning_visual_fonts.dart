@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:baocode/theme/code_font.dart';
 
 /// The app bundles icon glyphs only. On the Windows visual CI runner load its
 /// actual desktop text fonts explicitly: widget tests otherwise paint Ahem.
@@ -33,6 +34,9 @@ Future<void> loadLearningVisualFonts() async {
   await load('Consolas', 'consola.ttf');
   await load('monospace', 'consola.ttf');
   await load('Cascadia Mono', 'consola.ttf');
+  // Test fonts do not discover installed families. Select the same available
+  // Windows fallback explicitly, rather than letting Ahem claim JetBrains Mono.
+  CodeFont.families.value = const ['Consolas', 'Microsoft YaHei UI'];
   if (File('$root/segmdl2.ttf').existsSync()) {
     await load('Segoe MDL2 Assets', 'segmdl2.ttf');
     await load('Segoe Fluent Icons', 'segmdl2.ttf');

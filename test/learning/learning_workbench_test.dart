@@ -11,12 +11,32 @@ import 'package:baocode/chat/side_panel/side_panel_view.dart';
 import 'package:baocode/ide/ide_notifications.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/learning/learning_panel.dart';
+import 'package:baocode/learning/learning_models.dart';
 import 'package:baocode/theme/app_theme.dart';
 import 'package:baocode/theme/workbench_theme.dart';
 
 import '../ide/workbench/fake_files.dart';
 import 'learning_visual_fonts.dart';
-import 'learning_panel_test.dart' show fixtures;
+
+LearningCard visibleRangeLesson() => LearningCard(
+  id: 'synthetic-visible-range',
+  title: '只为可见的列表行构建界面',
+  summary: '代码把全量范围计算换成 viewport 提供的惰性范围。',
+  why: '这可能是为了减少滚动时的重复计算；列表很大时，避免逐项扫描尤其重要。',
+  concept: '虚拟列表的工作量应尽量随屏幕可见内容增长，而不是随全部数据量增长。',
+  tradeoff: '仍需维护完整的滚动范围，并验证动态行高变化时的位置是否稳定。',
+  example: '十万条数据不必同时构建；先构建当前屏幕附近需要显示的行。',
+  evidence: const [
+    LearningEvidence(
+      id: 'synthetic-main-diff',
+      kind: 'diff',
+      label: 'main.dart',
+      path: '/synthetic/lib/main.dart',
+      excerpt: '- final visibleRange = calculateRange(scrollOffset);\n+ final visibleRange = viewport.lazyRange(scrollOffset);',
+    ),
+  ],
+  createdAt: DateTime(2026, 1, 1),
+);
 
 void main() {
   setUpAll(loadLearningVisualFonts);
@@ -55,7 +75,7 @@ void main() {
                   session: session,
                   learningBuilder: width == 1200
                       ? (_) => LearningPanel(
-                          cards: fixtures(chinese: true).take(1).toList(),
+                          cards: [visibleRangeLesson()],
                           enabled: true,
                           modelLabel: '合成教学模型 · 无网络请求',
                           onConfigure: () {},
@@ -81,7 +101,9 @@ void main() {
         expect(session.learning.requestCount, 0);
         expect(tester.takeException(), isNull);
         if (width == 1200) {
-          final expand = find.byKey(const Key('learning-expand-synthetic-0'));
+          final expand = find.byKey(
+            const Key('learning-expand-synthetic-visible-range'),
+          );
           await tester.ensureVisible(expand);
           await tester.pumpAndSettle();
           await tester.tap(expand);
