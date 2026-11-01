@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:baocode/kernel/codex/codex_install.dart';
 import 'package:baocode/kernel/codex/codex_app_tools.dart';
+import 'package:baocode/kernel/codex/codex_skills.dart';
 import 'package:baocode/platform/data_dir.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -106,13 +107,7 @@ void main() {
         expect(userLayers, hasLength(1));
         final userConfigPath = (userLayers.single['name'] as Map)['file'];
         expect(userConfigPath, isA<String>());
-        expect(
-          p.equals(
-            p.normalize(userConfigPath as String),
-            p.normalize(configFile.path),
-          ),
-          isTrue,
-        );
+        await _expectSameFile(userConfigPath as String, configFile.path);
         final restricted = await rpc.request('thread/start', {
           'cwd': project.path,
           'approvalPolicy': 'never',
@@ -128,18 +123,30 @@ void main() {
           'forceReload': true,
         });
         expect(skills, contains('data'));
+        for (final entry in skills['data'] as List) {
+          // ignore: avoid_print
+          print(
+            'Skills cwd: ${(entry as Map)['cwd']}; fixture cwd: ${project.path}',
+          );
+        }
+        expect(
+          CodexSkill.fromResponse(
+            skills,
+            cwd: project.path,
+            paths: p.context,
+          ).map((skill) => skill.name),
+          contains('baocode-smoke'),
+          reason: 'Production skill parser must accept the native server cwd',
+        );
         Map skillFrom(Map<String, dynamic> response) => [
           for (final group in response['data'] as List)
             for (final skill in (group as Map)['skills'] as List)
               if ((skill as Map)['name'] == 'baocode-smoke') skill,
         ].single;
         final discoveredSkill = skillFrom(skills);
-        expect(
-          p.equals(
-            p.normalize(discoveredSkill['path'] as String),
-            p.normalize(skillFile.path),
-          ),
-          isTrue,
+        await _expectSameFile(
+          discoveredSkill['path'] as String,
+          skillFile.path,
         );
         expect(discoveredSkill['enabled'], isTrue);
         await rpc.request('skills/config/write', {
@@ -183,7 +190,10 @@ void main() {
         final effective = written['config'] as Map;
         expect(effective['model_verbosity'], 'low');
         final registeredAgent = (effective['agents'] as Map)[agentName] as Map;
-        expect(registeredAgent['config_file'], agentFile.path);
+        await _expectSameFile(
+          registeredAgent['config_file'] as String,
+          agentFile.path,
+        );
         expect(
           registeredAgent['description'],
           'Updated isolated protocol smoke fixture',
@@ -262,6 +272,21 @@ class _RealHttpOverrides extends HttpOverrides {
     };
     return client;
   }
+}
+
+Future<void> _expectSameFile(String actual, String expected) async {
+  // Codex's Rust canonicalization can return a Windows verbatim path while
+  // Dart's temp directory uses a normal drive path (or different casing).
+  // Compare OS file identity, not just path spelling, without accepting an
+  // arbitrary file elsewhere in the isolated tree.
+  final diagnostic = 'Codex path: $actual; fixture path: $expected';
+  // ignore: avoid_print
+  print(diagnostic);
+  expect(
+    await FileSystemEntity.identical(actual, expected),
+    isTrue,
+    reason: diagnostic,
+  );
 }
 
 Future<void> _deleteTemp(Directory root) async {

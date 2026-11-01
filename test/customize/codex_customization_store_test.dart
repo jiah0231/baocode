@@ -253,6 +253,78 @@ void main() {
       expect(disk.data['/custom/codex/agents/helper.toml'], 'existing');
     },
   );
+  test(
+    'ambiguous canonical role registration preserves the created file',
+    () async {
+      store = CodexCustomizationStore(
+        disk: disk,
+        request: (method, params) async {
+          if (method == 'config/value/write') {
+            // The write committed, but its acknowledgement was lost. The server
+            // reports another spelling; lexical equality cannot prove absence.
+            config = {
+              'agents': {
+                'helper': {
+                  'config_file': '/canonical/codex/agents/helper.toml',
+                },
+              },
+            };
+            throw StateError('connection lost after commit');
+          }
+          return request(method, params);
+        },
+      );
+      await expectLater(
+        store.create(
+          CustomizationKind.subagents,
+          CustomizationScope.user,
+          'helper',
+        ),
+        throwsStateError,
+      );
+      expect(
+        disk.data['/custom/codex/agents/helper.toml'],
+        contains('developer_instructions'),
+      );
+    },
+  );
+  test('ambiguous role in a non-effective layer prevents rollback', () async {
+    var attempted = false;
+    store = CodexCustomizationStore(
+      disk: disk,
+      request: (method, params) async {
+        if (method == 'config/value/write') {
+          attempted = true;
+          throw StateError('connection lost after commit');
+        }
+        final result = await request(method, params);
+        if (method == 'config/read' && attempted) {
+          (result['layers'] as List).add({
+            'name': {'type': 'project', 'dotCodexFolder': '/project/.codex'},
+            'disabledReason': 'untrusted',
+            'config': {
+              'agents': {
+                'helper': {'config_file': '/canonical/helper.toml'},
+              },
+            },
+          });
+        }
+        return result;
+      },
+    );
+    await expectLater(
+      store.create(
+        CustomizationKind.subagents,
+        CustomizationScope.user,
+        'helper',
+      ),
+      throwsStateError,
+    );
+    expect(
+      disk.data['/custom/codex/agents/helper.toml'],
+      contains('developer_instructions'),
+    );
+  });
   test('failed registration preserves concurrent user edits', () async {
     store = CodexCustomizationStore(
       disk: disk,

@@ -452,14 +452,14 @@ class CodexCustomizationStore extends CustomizationStore {
           final response = await _rpc((ask) => _config(ask, project));
           final effective = response['config'] as Map? ?? {};
           final agents = effective['agents'] as Map? ?? {};
-          final role = agents[name] as Map? ?? {};
-          var registered = role['config_file'] == path;
+          // A server may canonicalize paths (including Windows aliases).
+          // Any same-named role makes rollback ambiguous: preserve the file
+          // rather than risk deleting a successfully registered role.
+          var registered = agents.containsKey(name);
           for (final layer in response['layers'] as List? ?? []) {
             if (layer is! Map || layer['config'] is! Map) continue;
             final roles = (layer['config'] as Map)['agents'];
-            if (roles is Map &&
-                roles[name] is Map &&
-                (roles[name] as Map)['config_file'] == path) {
+            if (roles is Map && roles.containsKey(name)) {
               registered = true;
             }
           }
