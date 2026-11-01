@@ -74,16 +74,24 @@ class _Files implements IdeFileService {
   final List<String> listed = [];
   Future<String> Function(String)? reader;
 
+  // Like the native filesystem, equivalent local separators address the
+  // same file. Keep caller-owned map keys intact for mutation assertions.
+  String _key(String path) => texts.keys.firstWhere(
+    (key) => p.normalize(p.absolute(key)) == p.normalize(p.absolute(path)),
+    orElse: () => path,
+  );
+
   @override
   Future<String> read(String path, {bool force = false}) async =>
       reader?.call(path) ??
-      texts[path] ??
+      texts[_key(path)] ??
       (throw IdeFileNotFoundException(path));
 
   @override
   Future<void> write(String path, String text, {String? expectedText}) async {
-    if (texts[path] != expectedText) throw IdeFileConflictException(path);
-    texts[path] = text;
+    final key = _key(path);
+    if (texts[key] != expectedText) throw IdeFileConflictException(path);
+    texts[key] = text;
   }
 
   @override
@@ -91,7 +99,8 @@ class _Files implements IdeFileService {
     listed.add(directory);
     return [
       for (final path in texts.keys)
-        if (p.dirname(path) == directory)
+        if (p.normalize(p.absolute(p.dirname(path))) ==
+            p.normalize(p.absolute(directory)))
           IdeFile(path, p.basename(path), isDirectory: false),
     ];
   }
@@ -108,7 +117,7 @@ class _CopyingFiles extends _Files {
 
   @override
   Future<void> copy(String from, String to) async {
-    if (texts.containsKey(to)) throw IdeFileExistsException(to);
+    if (texts.containsKey(_key(to))) throw IdeFileExistsException(to);
     copied.add((from, to));
     texts[to] = '';
   }
@@ -778,7 +787,10 @@ void main() {
     expect(panel.tabsOf(first).section, SidePanelSection.terminal);
     expect(panel.tabsOf(second).section, SidePanelSection.changes);
     panel.showSection(first, SidePanelSection.files);
-    expect(panel.tabsOf(first).active!.path, '/p/a.dart');
+    expect(
+      p.normalize(panel.tabsOf(first).active!.path),
+      p.normalize('/p/a.dart'),
+    );
     panel.openTerminal(first, 'bash-2');
     expect(panel.tabsOf(first).terminal, 'bash-2');
     expect(panel.tabsOf(second).terminal, isNull);
@@ -833,11 +845,11 @@ void main() {
     panel.open(session, diff('/p/b.dart', 'b'));
     await tester.pumpAndSettle();
     final tabs = panel.tabsOf(session);
-    expect(tabs.diffs.single.path, '/p/b.dart');
+    expect(p.normalize(tabs.diffs.single.path), p.normalize('/p/b.dart'));
 
     panel.open(session, diff('/p/a.dart', 'a'));
     await tester.pumpAndSettle();
-    expect(tabs.diffs.single.path, '/p/a.dart');
+    expect(p.normalize(tabs.diffs.single.path), p.normalize('/p/a.dart'));
     expect(modified().scrollOffset.dy, lessThan(scrolled.dy));
   });
 
@@ -1080,7 +1092,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey(SidePanelSection.files)));
     await tester.pumpAndSettle();
     expect(find.byType(FilePreview), findsOneWidget);
-    expect(_active(panel, session)!.path, '/p/lib/main.dart');
+    expect(
+      p.normalize(_active(panel, session)!.path),
+      p.normalize('/p/lib/main.dart'),
+    );
     panel.width = AgentSidePanel.minWidth;
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
@@ -1111,7 +1126,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.descendant(of: list, matching: find.text('b.dart')));
     await tester.pumpAndSettle();
-    expect(_active(panel, session)!.path, '/p/b.dart');
+    expect(
+      p.normalize(_active(panel, session)!.path),
+      p.normalize('/p/b.dart'),
+    );
     expect(_edited(tester).text, 'beta');
 
     // The list hides, and comes back as wide as dragged.
@@ -1365,7 +1383,11 @@ void main() {
         )
         .controller
         .text;
-    expect(composed, contains('lib/a'));
+    final token = ComposerTokenEmbed.decode(
+      composerEmbedsIn(composed).single.embed.data,
+    );
+    expect(token.value, p.normalize('lib/a'));
+    expect(token.kind.name, 'folder');
     expect(composed, isNot(contains('main.dart')));
 
     await tester.tap(row('main.dart'), buttons: kSecondaryButton);
@@ -1461,7 +1483,10 @@ void main() {
     );
     expect(find.byTooltip('The agent works here'), findsWidgets);
     // main is checked out in the other.
-    expect(find.byTooltip('Checked out in worktree p\n/p'), findsOneWidget);
+    expect(
+      find.byTooltip('Checked out in worktree p\n${p.normalize('/p')}'),
+      findsOneWidget,
+    );
 
     await tester.tap(find.text('p-wt'));
     await tester.pumpAndSettle();
@@ -1469,7 +1494,7 @@ void main() {
     expect(find.text('p-wt  ✦ AI'), findsOneWidget);
     await tester.tap(find.text('p  (main worktree)'));
     await tester.pumpAndSettle();
-    expect(picked, ['/p']);
+    expect(picked, [p.normalize('/p')]);
   });
 
   testWidgets('the changes page commits as JetBrains IDEs do: a message '
@@ -1987,7 +2012,7 @@ void main() {
 
     expect(panel.shown, isTrue);
     final tab = _active(panel, session)!;
-    expect(tab.path, '/p/lib/main.dart');
+    expect(p.normalize(tab.path), p.normalize('/p/lib/main.dart'));
     expect(tab.diff, isFalse);
     expect(tab.request.range, const FileLineRange(1, 562));
     expect(find.byType(FilePreview), findsOneWidget);
@@ -2010,7 +2035,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final tab = _active(panel, session)!;
-    expect(tab.path, '/p/lib/main.dart');
+    expect(p.normalize(tab.path), p.normalize('/p/lib/main.dart'));
     expect(tab.diff, isTrue);
     // At its first change.
     expect(tab.request.range?.start, 143);
@@ -2033,7 +2058,7 @@ void main() {
     await tester.tap(find.text('lib/main.dart:142'));
     await tester.pumpAndSettle();
     final tab = _active(panel, session)!;
-    expect(tab.path, '/p/lib/main.dart');
+    expect(p.normalize(tab.path), p.normalize('/p/lib/main.dart'));
     expect(tab.request.range, const FileLineRange(142));
   });
 
@@ -2209,7 +2234,7 @@ void main() {
     _tapSpan(tester, 'the screen');
     await tester.pumpAndSettle();
     final tab = _active(panel, session)!;
-    expect(tab.path, '/p/lib/chat_screen.dart');
+    expect(p.normalize(tab.path), p.normalize('/p/lib/chat_screen.dart'));
     expect(tab.request.range, const FileLineRange(4, 6));
     // The caret at the lines' start.
     final edited = _edited(tester);
@@ -2217,7 +2242,10 @@ void main() {
 
     _tapSpan(tester, 'notes');
     await tester.pumpAndSettle();
-    expect(_active(panel, session)!.path, '/p/docs/release notes.md');
+    expect(
+      p.normalize(_active(panel, session)!.path),
+      p.normalize('/p/docs/release notes.md'),
+    );
   });
 
   testWidgets('inline code naming a file is a link once the file is known '
@@ -2233,7 +2261,7 @@ void main() {
     _tapSpan(tester, 'lib/main.dart:12');
     await tester.pumpAndSettle();
     final tab = _active(panel, session)!;
-    expect(tab.path, '/p/lib/main.dart');
+    expect(p.normalize(tab.path), p.normalize('/p/lib/main.dart'));
     expect(tab.request.range, const FileLineRange(12));
   });
 
@@ -2291,7 +2319,10 @@ void main() {
     await tester.tap(find.byType(ToolCallRow).first);
     expect(opened, isEmpty);
     await tester.tap(find.byType(ToolCallRow).last);
-    expect([for (final request in opened) request.path], ['/p/a.dart']);
+    expect(
+      [for (final request in opened) request.path],
+      [p.normalize('/p/a.dart')],
+    );
   });
 
   testWidgets('the side panel is toggled from the title bar, and kept shown '
@@ -2651,7 +2682,7 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 200));
     });
     await tester.pumpAndSettle();
-    expect(files.copied, [(shot.path, '/p/docs/shot.png')]);
+    expect(files.copied, [(shot.path, p.join('/p/docs', 'shot.png'))]);
     expect(edit!.controller.document.text, contains('![](shot.png)'));
   });
 

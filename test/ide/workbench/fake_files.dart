@@ -159,7 +159,8 @@ mixin ReadWriteOnlyFiles implements IdeFileService {
       throw UnsupportedError('writeBytes');
 }
 
-final testRoot = p.join(p.separator, 'project');
+// Match IdeWorkspace.open/openDiff, including the drive on Windows.
+final testRoot = p.absolute(p.join(p.separator, 'project'));
 String inRoot(String relative) => p.joinAll([testRoot, ...relative.split('/')]);
 
 const chatKey = Key('test-chat');

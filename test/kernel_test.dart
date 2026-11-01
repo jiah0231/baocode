@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart' show ChangeNotifier, Icons;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:bao_remote/claude.dart'
     show ClaudeHistoryPage, ClaudeNotInstalled;
 import 'package:baocode/chat/chat_models.dart';
@@ -5305,14 +5306,22 @@ void main() {
         'to run is a setting now', () async {
       final root = await Directory.systemTemp.createTemp('baocode-locator-');
       addTearDown(() => root.delete(recursive: true));
-      final variant = File('${root.path}/claude-variant')
-        ..writeAsStringSync('#!/bin/sh\n');
-      final installed = File('${root.path}/bin/claude')
+      // The locator validates native executable headers, not just existence.
+      final program = Platform.isWindows
+          ? (Uint8List(0x48)
+              ..setAll(0, 'MZ'.codeUnits)
+              ..[0x3C] = 0x40
+              ..setAll(0x40, [0x50, 0x45, 0, 0, 0x64, 0x86]))
+          : utf8.encode('#!/bin/sh\n');
+      final suffix = Platform.isWindows ? '.exe' : '';
+      final variant = File(p.join(root.path, 'claude-variant$suffix'))
+        ..writeAsBytesSync(program);
+      final installed = File(p.join(root.path, 'bin', 'claude$suffix'))
         ..createSync(recursive: true)
-        ..writeAsStringSync('#!/bin/sh\n');
+        ..writeAsBytesSync(program);
       CliLocator.use({
         'BAOCODE_CLAUDE_PATH': variant.path,
-        'PATH': '${root.path}/bin',
+        'PATH': p.join(root.path, 'bin'),
       });
 
       final cli = await CliLocator.locate();
@@ -5416,16 +5425,27 @@ void main() {
     test('Volta\'s shim is passed over for its package\'s build', () async {
       final root = await Directory.systemTemp.createTemp('baocode-locator-');
       addTearDown(() => root.delete(recursive: true));
-      final volta = '${root.path}/Volta';
-      final bin = '$volta/bin';
+      final volta = p.join(root.path, 'Volta');
+      final bin = p.join(volta, 'bin');
       final environment = {'LOCALAPPDATA': root.path};
 
       // No build in Volta's image: the shim is left to the PATH's turn.
       expect(CliLocator.behindVolta(bin, environment), isNull);
 
       final exe = File(
-        '$volta/tools/image/packages/@anthropic-ai/claude-code/'
-        'node_modules/@anthropic-ai/claude-code/bin/claude.exe',
+        p.joinAll([
+          volta,
+          'tools',
+          'image',
+          'packages',
+          '@anthropic-ai',
+          'claude-code',
+          'node_modules',
+          '@anthropic-ai',
+          'claude-code',
+          'bin',
+          'claude.exe',
+        ]),
       )..createSync(recursive: true);
       expect(CliLocator.behindVolta(bin, environment), exe.path);
       expect(CliLocator.behindVolta(bin, {'VOLTA_HOME': volta}), exe.path);
@@ -5760,7 +5780,9 @@ exec /usr/bin/env "\$@"
       File('$config/projects/-p/two.jsonl').deleteSync();
       expect(await titles(), {'one': 'aaaa'});
       final kept = jsonDecode(File(cacheFile).readAsStringSync()) as Map;
-      expect((kept['files'] as Map).keys, [first.path]);
+      expect((kept['files'] as Map).keys.cast<String>().map(p.normalize), [
+        p.normalize(first.path),
+      ]);
 
       write('one', 'grown longer');
       expect(await titles(), {'one': 'grown longer'});
@@ -5878,7 +5900,10 @@ exec /usr/bin/env "\$@"
       ];
 
       final path = await storage.fork(id, into, title: 'Mine (fork)');
-      expect(path, '$config/projects/-p/$into.jsonl');
+      expect(
+        p.normalize(path),
+        p.join(p.normalize(config), 'projects', '-p', '$into.jsonl'),
+      );
       final all = read(path);
       expect(all.map((e) => e['uuid'] ?? e['customTitle']), [
         'u1',
@@ -5938,7 +5963,7 @@ exec /usr/bin/env "\$@"
         for (final line in file.readAsLinesSync())
           (jsonDecode(line) as Map).cast<String, Object?>(),
       ];
-      expect(lines.map((line) => line['cwd']), [null, to, '$to/lib']);
+      expect(lines.map((line) => line['cwd']), [null, to, p.join(to, 'lib')]);
       expect(lines.first['customTitle'], 'T');
       expect(File('${dir(to)}/mine/subagents/a.jsonl').existsSync(), isTrue);
       expect(File('${dir(to)}/memory/MEMORY.md').existsSync(), isTrue);

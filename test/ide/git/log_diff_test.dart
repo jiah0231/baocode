@@ -209,6 +209,9 @@ void main() {
       label: 'a.dart (HEAD)',
       original: () async => 'f(a,b);\nreal();\n',
     );
+    expect(workspace.active!.path, inRoot('lib/a.dart'));
+    expect(workspace.active!.openError, isNull);
+    expect(workspace.active!.diff, isNotNull);
     await tester.pumpAndSettle();
     DiffEditorModel model() =>
         tester.widget<DiffEditor>(find.byType(DiffEditor)).model;
@@ -247,6 +250,9 @@ void main() {
       label: 'a.dart (HEAD)',
       original: () async => _head,
     );
+    expect(workspace.active!.path, inRoot('lib/a.dart'));
+    expect(workspace.active!.openError, isNull);
+    expect(workspace.active!.diff, isNotNull);
     await tester.pumpAndSettle();
     expect(
       find.byTooltip('Undo this change (back to the left side)'),
@@ -284,6 +290,9 @@ void main() {
       label: 'a.dart (HEAD)',
       original: () async => '${lines.join('\n')}\n',
     );
+    expect(workspace.active!.path, inRoot('lib/a.dart'));
+    expect(workspace.active!.openError, isNull);
+    expect(workspace.active!.diff, isNotNull);
     await tester.pumpAndSettle();
     HiddenLineRanges? hidden() => tester
         .widget<EditorSurface>(

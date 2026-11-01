@@ -92,7 +92,9 @@ class _Review extends ChangeReview {
   }
 }
 
-final _root = p.join(p.separator, 'agent-edits-project');
+// Windows root-relative paths have no drive until absolute() runs;
+// use the same fully-qualified spelling as IdeWorkspace.open.
+final _root = p.absolute(p.join(p.separator, 'agent-edits-project'));
 final _file = p.join(_root, 'a.txt');
 
 void main() {
@@ -107,6 +109,8 @@ void main() {
     final workspace = IdeWorkspace(_root, files: files);
     addTearDown(workspace.dispose);
     await workspace.open(_file);
+    expect(workspace.active!.path, _file);
+    expect(workspace.active!.openError, isNull);
     final chat = ChatSession(
       kernel: MockKernels.claudeCode,
       kernelContext: KernelContext(cwd: _root),

@@ -78,7 +78,7 @@ void main() {
     await _pump(tester, repositories: [('/work/monad', git)]);
     expect(find.text('feature · monad-wt'), findsOneWidget);
     expect(
-      find.byTooltip('In worktree monad-wt\n/work/monad-wt'),
+      find.byTooltip('In worktree monad-wt\n${p.normalize('/work/monad-wt')}'),
       findsOneWidget,
     );
   });
@@ -156,10 +156,10 @@ void main() {
       await tester.tap(find.text('feature'));
       await tester.pumpAndSettle();
       expect(fake.callsTo('checkout'), isEmpty);
-      expect(switched, [('/work/monad', '/work/monad-feature')]);
+      expect(switched, [('/work/monad', p.normalize('/work/monad-feature'))]);
       expect(
         session.draft.pendingMessage?.text,
-        'From now on, work in /work/monad-feature (branch feature): read and '
+        'From now on, work in ${p.normalize('/work/monad-feature')} (branch feature): read and '
         'edit the files and run the commands there.',
       );
     });
@@ -181,13 +181,13 @@ void main() {
         '-b',
         'fix/login',
         '--',
-        '/work/monad-fix-login',
+        p.normalize('/work/monad-fix-login'),
       ]);
       expect(worktreeCalls.last, ['worktree', 'list', '--porcelain']);
-      expect(switched, [('/work/monad', '/work/monad-fix-login')]);
+      expect(switched, [('/work/monad', p.normalize('/work/monad-fix-login'))]);
       expect(
         session.draft.pendingMessage?.text,
-        contains('/work/monad-fix-login (branch fix/login)'),
+        contains('${p.normalize('/work/monad-fix-login')} (branch fix/login)'),
       );
     });
 
@@ -298,7 +298,9 @@ void main() {
     const label = 'monad: feature · monad-wt, relay: main';
     expect(find.text(label), findsOneWidget);
     expect(
-      find.byTooltip('BaoCode\n\nIn worktree monad-wt\n/work/monad-wt'),
+      find.byTooltip(
+        'BaoCode\n\nIn worktree monad-wt\n${p.normalize('/work/monad-wt')}',
+      ),
       findsOneWidget,
     );
     await _pump(
