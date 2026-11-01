@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:bao_editor/textmate/textmate_syntax.dart' show TextMateSyntax;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -71,6 +72,7 @@ class ChatScreen extends StatefulWidget {
     this.onRename,
     this.onSummarizeTitle,
     this.subtitle,
+    this.titleTabs,
     this.titleDragBuilder,
     this.onTitleDragStart,
     this.autofocus = false,
@@ -84,6 +86,7 @@ class ChatScreen extends StatefulWidget {
     this.onOpenTerminalTask,
     this.colorizeCode,
     this.colorizeCodeBlock,
+    this.codeSyntax,
     this.start,
     this.startHint,
     this.below,
@@ -117,6 +120,10 @@ class ChatScreen extends StatefulWidget {
   /// After the title, fainter: e.g. a pane's project, and the host it is
   /// on.
   final Widget? subtitle;
+
+  /// In the title bar in place of the title (and [subtitle]), but while
+  /// it is renamed: e.g. a pane's tabs.
+  final Widget? titleTabs;
 
   /// Wraps the title as a drag source, when not renaming. Its double click
   /// still renames; the title bar's controls are never part of the source.
@@ -166,6 +173,9 @@ class ChatScreen extends StatefulWidget {
 
   /// Colors code blocks by the language their fences name.
   final CodeBlockColorizer? colorizeCodeBlock;
+
+  /// See [CodeCitationScope.syntax].
+  final TextMateSyntax Function()? codeSyntax;
 
   /// Over the composer while nothing was sent, e.g. where the agent is to
   /// work: given, the composer waits in the middle of the screen until then.
@@ -565,6 +575,8 @@ class _ChatScreenState extends State<ChatScreen>
                   child: Align(
                     alignment: Alignment.centerLeft,
                     child: switch (widget.subtitle) {
+                      _ when !_renaming && widget.titleTabs != null =>
+                        widget.titleTabs!,
                       final subtitle? when !_renaming => LayoutBuilder(
                         builder: (context, constraints) => Row(
                           children: [
@@ -834,6 +846,7 @@ class _ChatScreenState extends State<ChatScreen>
           onOpen: links == null ? widget.onOpenCode : _openCode,
           colorize: widget.colorizeCode,
           colorizeBlock: widget.colorizeCodeBlock,
+          syntax: widget.codeSyntax,
           child: ComposerVocabulary(
             commands: _commandSuggestions(),
             suggestFiles: _suggestFiles(root),
@@ -1129,6 +1142,7 @@ class _ChatScreenState extends State<ChatScreen>
           child: switch (_session.queued) {
             final queued when queued.isNotEmpty => QueuePanel(
               messages: queued,
+              onMove: _session.moveQueued,
               onEdit: (id) => unawaited(_session.editQueued(id)),
               onSendNow: _session.sendQueuedNow,
               onRemove: _session.cancelQueued,

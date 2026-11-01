@@ -1019,7 +1019,9 @@ class CodexKernel
     }
     final id = thread?['id'] as String?;
     if (id == null || id.isEmpty) {
-      throw const CodexUnavailable('Codex could not go on with another provider');
+      throw const CodexUnavailable(
+        'Codex could not go on with another provider',
+      );
     }
     _threadId = id;
     _sessionId = id;
@@ -1376,6 +1378,14 @@ class CodexKernel
         _endTurn(running, interrupted: true);
       }
     });
+  }
+
+  @override
+  void moveQueued(String turnId, int index) {
+    final at = _queue.indexOf(turnId);
+    if (at < 0) return;
+    _queue.removeAt(at);
+    _queue.insert(index.clamp(0, _queue.length), turnId);
   }
 
   void _takeQueued() {

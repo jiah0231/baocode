@@ -14,7 +14,7 @@ import '../../ide/git/git_model.dart';
 import '../../ide/git/commit_message.dart';
 import '../../ide/git/git_repository.dart';
 import '../../ide/git/ide_git_log_view.dart'
-    show IdeGitLogView, IdeGitWorktreeChoice;
+    show IdeGitLogView, IdeGitWorktreeChoice, ideLocalDiffFile;
 import '../../ide/git/ide_git_commit_panel.dart';
 import '../../ide/git/scm_host.dart';
 import '../../ide/ide_button.dart';
@@ -51,6 +51,7 @@ import '../../theme/app_theme.dart';
 import '../../theme/codicons.dart';
 import '../../theme/material_file_icons.dart';
 import '../../theme/workbench_theme.dart' show themeColors;
+import '../../usage/ui/conversation_usage_view.dart';
 import '../chat_session.dart';
 import '../widgets/code_citation.dart' show CodeColorizer;
 import '../widgets/plan_start.dart';
@@ -581,6 +582,10 @@ class AgentSidePanelView extends StatelessWidget {
               SidePanelSection.files => _filesPage(context, tabs),
               SidePanelSection.changes => _changesPage(context, tabs),
               SidePanelSection.terminal => _terminalPage(context, tabs),
+              SidePanelSection.usage => ConversationUsageView(
+                key: ValueKey(('page', SidePanelSection.usage, session)),
+                session: session,
+              ),
               SidePanelSection.browser => const BrowserMirror(
                 key: ValueKey(('page', SidePanelSection.browser)),
               ),
@@ -770,17 +775,8 @@ class AgentSidePanelView extends StatelessWidget {
         background: AppColors.code,
         border: AppColors.partBorder,
         onOpen: (path) => panel.open(session, FileOpenRequest(path)),
-        // A commit's file: its changes in a tab, as the local ones'.
-        onOpenDiff: (file) => panel.open(
-          session,
-          FileOpenRequest(
-            file.path,
-            diff: true,
-            original: file.original,
-            modified: file.modified,
-            readOnly: true,
-          ),
-        ),
+        // A commit's files, the local changes and a stash's in the table's
+        // place, one at a time, as the IDE's Source Control shows them.
         // A file shown once read, compared and colored: what was before
         // until then.
         overlay: active == null
@@ -799,11 +795,30 @@ class AgentSidePanelView extends StatelessWidget {
           onOpen: (path, {focusEditor = false}) async =>
               panel.open(session, FileOpenRequest(path)),
           // Its diff; its HEAD side is the diff's left.
-          onOpenChange: (resource, {head = false, focusEditor = false}) async {
-            final of = _gitOf(resource.path);
-            if (of?.state case final state?) {
-              panel.open(session, gitChangeRequest(of!, state, resource));
-            }
+          onOpenChange:
+              (
+                resource, {
+                head = false,
+                focusEditor = false,
+                List<IdeGitResource>? among,
+              }) async {
+                final of = _gitOf(resource.path);
+                final state = of?.state;
+                if (of == null || state == null) return;
+                if (focusEditor) {
+                  return panel.open(session, FileOpenRequest(resource.path));
+                }
+                if (head) {
+                  return panel.open(
+                    session,
+                    gitChangeRequest(of, state, resource),
+                  );
+                }
+                _showLocalDiff(context, of, state, resource, among);
+              },
+          onShowDiff: (files, index) {
+            panel.showLog(session);
+            panel.scmOf(git).log.showDiff(files, index);
           },
           onRevealInExplorer: _revealInFiles,
           revealInExplorerLabel: context.l10n.sidePanelRevealInFiles,
@@ -816,6 +831,51 @@ class AgentSidePanelView extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  /// [resource]'s change in the log's table's place, the other local
+  /// changes ([among], as Source Control lists them) a step away; the keys
+  /// still the list's.
+  void _showLocalDiff(
+    BuildContext context,
+    IdeGitRepository git,
+    IdeGitState state,
+    IdeGitResource resource,
+    List<IdeGitResource>? among,
+  ) {
+    final l10n = context.l10n;
+    final resources =
+        among ??
+        [for (final group in IdeGitGroup.values) ...state.group(group)];
+    // In front of a change opened from the conversation.
+    panel.showLog(session);
+    panel
+        .scmOf(git)
+        .log
+        .showDiff(
+          [
+            for (final change in resources)
+              ideLocalDiffFile(
+                git,
+                state,
+                change,
+                files.read,
+                l10n,
+                onOpenInEditor: () =>
+                    panel.open(session, FileOpenRequest(change.path)),
+                write: (path, text, {expectedText}) async {
+                  try {
+                    await files.write(path, text, expectedText: expectedText);
+                  } on Object catch (error) {
+                    notifications.notify(IdeSeverity.error, '$error');
+                    rethrow;
+                  }
+                },
+              ),
+          ],
+          resources.indexWhere((change) => change.path == resource.path),
+          focus: false,
+        );
   }
 
   /// The repository [path] is in: the one of [_gits] whose folder holds it
@@ -1273,6 +1333,7 @@ extension SidePanelSectionUi on SidePanelSection {
     SidePanelSection.files => Codicons.files,
     SidePanelSection.changes => Codicons.sourceControl,
     SidePanelSection.terminal => Codicons.terminal,
+    SidePanelSection.usage => Codicons.graph,
     SidePanelSection.browser => Codicons.globe,
     SidePanelSection.plan => Codicons.checklist,
   };
@@ -1282,6 +1343,7 @@ extension SidePanelSectionUi on SidePanelSection {
     SidePanelSection.files => ChatCommandIds.sidePanelFiles,
     SidePanelSection.changes => ChatCommandIds.sidePanelChanges,
     SidePanelSection.terminal => ChatCommandIds.sidePanelTerminal,
+    SidePanelSection.usage => ChatCommandIds.sidePanelUsage,
     SidePanelSection.browser || SidePanelSection.plan => null,
   };
 
@@ -1289,6 +1351,7 @@ extension SidePanelSectionUi on SidePanelSection {
     SidePanelSection.files => context.l10n.sidePanelFiles,
     SidePanelSection.changes => context.l10n.sidePanelChanges,
     SidePanelSection.terminal => context.l10n.sidePanelTerminal,
+    SidePanelSection.usage => context.l10n.sidePanelUsage,
     SidePanelSection.browser => context.l10n.sidePanelBrowser,
     SidePanelSection.plan => context.l10n.sidePanelPlan,
   };
@@ -1325,6 +1388,7 @@ class SidePanelRail extends StatelessWidget {
               .length ??
           0,
     SidePanelSection.files ||
+    SidePanelSection.usage ||
     SidePanelSection.browser ||
     SidePanelSection.plan => 0,
   };
@@ -1514,6 +1578,7 @@ class _SectionBar extends StatelessWidget {
                     compact: compact,
                     count: switch (section) {
                       SidePanelSection.files ||
+                      SidePanelSection.usage ||
                       SidePanelSection.browser ||
                       SidePanelSection.plan => 0,
                       SidePanelSection.changes => changes,
