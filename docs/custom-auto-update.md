@@ -41,3 +41,5 @@
 CI：`flutter test test/update`；另以 custom dart-defines 运行 `test/update/custom_update_channel_test.dart`。真机还需验证旧 Setup→新 Setup、运行中 agent 取消退出、断网重试、用户/机器安装模式和 UAC 拒绝恢复。单元测试和启动 smoke-test 不替代真实安装升级验证。
 
 发布中断后的安全恢复：当前脚本拒绝覆盖任何已有版本 Release。若已创建 draft/版本 Release 但 stable 尚未成功发布，先检查该 Release 的提交和资产 SHA256，再经授权补传相应已签清单；不要删除重建/替换版本包或盲目 rerun。也可增加版本号发布修复版本。
+
+CI 还安装校验过 SHA256 的既有 build 23 Setup，再在 runner 临时用户级目录安装候选 Setup，验证 Windows 资源中的四段数字 ProductVersion、exe/AOT 文件哈希、保留测试数据和升级后启动。安装使用 silent/current-user 模式，不触发默认安装后自动启动；不测试用户机 UAC、交互重启或完整线上下载链。首次基线来自固定成功 Actions run（归档和 Setup 双 SHA 校验）；归档有保留期，后续应改用已发布且固定哈希的 Release 基线，过期会明确失败而非跳过测试。

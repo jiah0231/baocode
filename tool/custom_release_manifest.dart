@@ -7,10 +7,10 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 
-import '../lib/update/custom_update_channel.dart';
-import '../lib/update/update_manifest.dart';
-import '../lib/update/update_signature.dart';
-import '../lib/update/version.dart';
+import 'package:baocode/update/custom_update_channel.dart';
+import 'package:baocode/update/update_manifest.dart';
+import 'package:baocode/update/update_signature.dart';
+import 'package:baocode/update/version.dart';
 
 Future<void> main(List<String> args) async {
   if (args.length < 3 || args.length > 4) {

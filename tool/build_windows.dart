@@ -56,7 +56,7 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 
-import '../lib/update/custom_update_channel.dart';
+import 'package:baocode/update/custom_update_channel.dart';
 
 /// Where the bundle flutter leaves behind goes (for [arch]), and where the
 /// installer is written. Under build/, which the repository already ignores

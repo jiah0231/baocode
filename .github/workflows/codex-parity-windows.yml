@@ -6,6 +6,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: codex-parity-${{ github.ref }}
   cancel-in-progress: true
@@ -60,6 +61,32 @@ jobs:
           $app.Refresh()
           if ($app.HasExited) { throw "BaoCode exited during startup: $($app.ExitCode)" }
           Stop-Process -Id $app.Id
+      - name: Fetch pinned previous installer for isolated upgrade test
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          $api = 'https://api.github.com/repos/jiah0231/baocode'
+          $run = Invoke-RestMethod "$api/actions/runs/41317014593" -Headers $headers
+          if ($run.head_sha -ne '16a81015e3c3bb460d524fb616e4329349933b5f' -or $run.conclusion -ne 'success') { throw 'Unexpected baseline run' }
+          $artifacts = Invoke-RestMethod "$api/actions/runs/41317014593/artifacts" -Headers $headers
+          $matches = @($artifacts.artifacts | Where-Object { $_.name -eq 'BaoCode-Codex-Parity-Windows-x64' -and !$_.expired })
+          if ($matches.Count -ne 1) { throw 'Pinned baseline artifact unavailable' }
+          $zip = Join-Path $env:RUNNER_TEMP 'baseline-installer.zip'
+          Invoke-WebRequest "$api/actions/artifacts/$($matches[0].id)/zip" -Headers $headers -OutFile $zip
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() -ne '67aa81ebff3039b5f931a342722ccf2c5d2b663d58b9ef1edcc239a7887b45fc') { throw 'Baseline archive checksum mismatch' }
+          Expand-Archive $zip -DestinationPath (Join-Path $env:RUNNER_TEMP 'baseline-installer')
+          $setup = @(Get-ChildItem (Join-Path $env:RUNNER_TEMP 'baseline-installer') -Filter '*-setup.exe')
+          if ($setup.Count -ne 1 -or (Get-FileHash $setup[0].FullName -Algorithm SHA256).Hash.ToLower() -ne 'b02342f4e41b8de578ff9b422ac9c7c21ffce29bf3dd351726cbd36abdd624d2') { throw 'Baseline Setup checksum mismatch' }
+      - name: Install old build then upgrade in isolated per-user directory
+        shell: pwsh
+        run: |
+          $old = (Get-ChildItem (Join-Path $env:RUNNER_TEMP 'baseline-installer') -Filter '*-setup.exe').FullName
+          $new = @(Get-ChildItem build/installers -Filter '*-setup.exe')
+          if ($new.Count -ne 1) { throw 'Expected one new Setup' }
+          $version = (Select-String -Path pubspec.yaml -Pattern '^version: (.+)$').Matches[0].Groups[1].Value
+          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version
       - name: Record build identity and checksums
         shell: pwsh
         run: |
