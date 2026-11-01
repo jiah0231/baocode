@@ -50,22 +50,30 @@ void main() {
     var printed = 0;
 
     void show() {
-      final quiet = ChatCodec.botQuiet(session.itemCount, session.itemAt);
       for (; printed < session.itemCount; printed++) {
         final item = session.itemAt(printed);
         final at = DateTime.now().difference(started).inMilliseconds / 1000;
         final line = switch (item) {
           UserMessageItem(:final text) => 'USER  $text',
-          AssistantTextItem(:final text) =>
-            quiet.contains(printed) ? '(note) $text' : 'TEXT  $text',
-          final ToolCallItem tool when ChatCodec.botSay(tool) != null =>
-            'SAY   ${ChatCodec.botSay(tool)}',
+          AssistantTextItem(:final text) => [
+            // Replies, narration and chat cards are text tags now, not
+            // bot_say tool calls. Untagged text is not sent to the user.
+            for (final (tag, content) in ChatCodec.botParts(text))
+              '${switch (tag) {
+                ChatCodec.botSayTag => 'SAY',
+                ChatCodec.botNarrateTag => 'NOTE',
+                ChatCodec.botCardTag => 'CHAT',
+                _ => tag,
+              }}   $content',
+          ].join('\n'),
           ToolCallItem(:final tool, :final target, :final input) =>
             'tool  ${tool ?? ''} $target ${input.isEmpty ? '' : input}',
           NoticeItem(:final text) => 'notice $text',
           _ => null,
         };
-        if (line != null) stdout.writeln('${at.toStringAsFixed(1)}s $line');
+        if (line != null && line.isNotEmpty) {
+          stdout.writeln('${at.toStringAsFixed(1)}s $line');
+        }
       }
     }
 

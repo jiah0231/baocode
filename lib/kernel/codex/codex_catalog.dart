@@ -78,12 +78,12 @@ class CodexCatalog implements SessionCatalog {
     final ids = <String>{};
     while (true) {
       final result = await server.request('thread/list', {
-        if (cwd != null) 'cwd': cwd,
+        'cwd': ?cwd,
         // Every provider's, not the default one's alone: a thread on one
         // of BaoCode's models is kept with its provider ([modelRef]).
         'modelProviders': <String>[],
         'limit': 100,
-        if (cursor != null) 'cursor': cursor,
+        'cursor': ?cursor,
       });
       for (final raw in result['data'] as List? ?? const []) {
         if (raw is! Map) continue;

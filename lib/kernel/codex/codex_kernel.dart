@@ -176,10 +176,7 @@ class CodexKernel
   /// Where the server's models are kept between runs (main.dart sets it),
   /// so the picker lists them before the server has started (it starts
   /// with the first message). As it last listed them.
-  static GlobalStorage? get modelCache => _modelCache;
-  static set modelCache(GlobalStorage? storage) => _modelCache = storage;
-
-  static GlobalStorage? _modelCache;
+  static GlobalStorage? modelCache;
   static const modelCacheKey = 'codex.models';
 
   /// The server's models, as it listed them; empty until it has.
@@ -342,7 +339,7 @@ class CodexKernel
     final transport = _transport;
     try {
       final result = await _request('skills/list', {
-        'cwds': [if (cwd != null) cwd],
+        'cwds': [?cwd],
         'forceReload': forceReload,
       });
       if (_disposed || generation != _skillsLoad || transport != _transport) {
@@ -709,11 +706,7 @@ class CodexKernel
     final id = ++_requests;
     final response = Completer<Map<String, Object?>>();
     _responses[id] = response;
-    transport.write({
-      'id': id,
-      'method': method,
-      if (params != null) 'params': params,
-    });
+    transport.write({'id': id, 'method': method, 'params': ?params});
     return response.future.timeout(
       const Duration(seconds: 60),
       onTimeout: () {
@@ -740,7 +733,7 @@ class CodexKernel
   /// What the last run's server listed, if it did: the picker is right
   /// before this run's server has started.
   void _useCachedModels() {
-    final kept = _modelCache?.get<List<Object?>>(modelCacheKey);
+    final kept = modelCache?.get<List<Object?>>(modelCacheKey);
     if (kept != null) {
       _useModels(kept, remember: false, emit: false);
       return;
@@ -981,7 +974,7 @@ class CodexKernel
   /// Keeps [data] (the server's models, as listed) for the picker at the
   /// next run's start, when they changed.
   static void _keepModels(List<Object?> data) {
-    final storage = _modelCache;
+    final storage = modelCache;
     if (storage == null) return;
     final kept = storage.get<List<Object?>>(modelCacheKey);
     if (kept != null && jsonEncode(kept) == jsonEncode(data)) return;
@@ -1048,7 +1041,7 @@ class CodexKernel
       final result = await _request('thread/fork', {
         'threadId': threadId,
         // None for Default: the server's own pick.
-        if (_modelForServer case final model?) 'model': model,
+        'model': ?_modelForServer,
         if (proxied != null) 'modelProvider': proxied.modelProvider,
         if (proxied != null) 'config': proxied.config,
       });
@@ -1076,12 +1069,11 @@ class CodexKernel
   Future<void> _startThread() async {
     final proxied = await _proxyThread();
     final result = await _request('thread/start', {
-      if (_projectPath case final cwd?) 'cwd': cwd,
-      if (_modelForServer case final model?) 'model': model,
+      'cwd': ?_projectPath,
+      'model': ?_modelForServer,
       if (proxied != null) 'modelProvider': proxied.modelProvider,
       if (proxied != null) 'config': proxied.config,
-      if (proxied == null)
-        if (_fastTier case final tier?) 'serviceTier': tier,
+      if (proxied == null) 'serviceTier': ?_fastTier,
       'approvalPolicy': _approvalPolicy,
       'sandbox': _sandboxMode,
     });
@@ -1095,12 +1087,11 @@ class CodexKernel
     final proxied = await _proxyThread();
     final result = await _request('thread/resume', {
       'threadId': id,
-      if (_projectPath case final cwd?) 'cwd': cwd,
-      if (_modelForServer case final model?) 'model': model,
+      'cwd': ?_projectPath,
+      'model': ?_modelForServer,
       if (proxied != null) 'modelProvider': proxied.modelProvider,
       if (proxied != null) 'config': proxied.config,
-      if (proxied == null)
-        if (_fastTier case final tier?) 'serviceTier': tier,
+      if (proxied == null) 'serviceTier': ?_fastTier,
       'approvalPolicy': _approvalPolicy,
       'sandbox': _sandboxMode,
     });
@@ -1254,7 +1245,7 @@ class CodexKernel
         'model': _modelForServer,
         'approvalPolicy': _approvalPolicy,
         'sandboxPolicy': _sandboxPolicy,
-        if (_effort case final effort?) 'effort': effort,
+        'effort': ?_effort,
         if (_fastTier case final tier?)
           'serviceTierForTurn': tier
         else if (_fast == false)
@@ -1263,8 +1254,8 @@ class CodexKernel
           'collaborationMode': {
             'mode': 'plan',
             'settings': {
-              if (_modelForServer case final model?) 'model': model,
-              if (_effort case final effort?) 'reasoning_effort': effort,
+              'model': ?_modelForServer,
+              'reasoning_effort': ?_effort,
             },
           },
       });
@@ -1544,7 +1535,7 @@ class CodexKernel
       final beforeTurn = before == null ? null : _turnOfItem[before];
       final result = await _request('thread/fork', {
         'threadId': threadId,
-        if (beforeTurn != null) 'beforeTurnId': beforeTurn,
+        'beforeTurnId': ?beforeTurn,
       });
       final thread = (result['thread'] as Map?)?.cast<String, Object?>();
       final id = thread?['id'] as String?;
@@ -1609,8 +1600,7 @@ class CodexKernel
       'limit': 30,
       'itemsView': 'full',
       'sortDirection': 'desc',
-      if (!initial)
-        if (_turnsCursor case final cursor?) 'cursor': cursor,
+      if (!initial) 'cursor': ?_turnsCursor,
     });
     final next = result['nextCursor'] as String?;
     _turnsCursor = next == null || next.isEmpty ? null : next;
@@ -1700,7 +1690,7 @@ class CodexKernel
       await _ensureStarted();
       final result = await _request('mcpServerStatus/list', {
         'detail': 'toolsAndAuthOnly',
-        if (_threadId case final thread?) 'threadId': thread,
+        'threadId': ?_threadId,
       });
       _servers = [
         for (final raw in result['data'] as List? ?? const [])
@@ -1754,7 +1744,7 @@ class CodexKernel
       await _ensureStarted();
       final result = await _request('mcpServer/oauth/login', {
         'name': name,
-        if (_threadId case final thread?) 'threadId': thread,
+        'threadId': ?_threadId,
       });
       final url = Uri.tryParse('${result['authorizationUrl'] ?? ''}');
       return url != null && url.hasScheme ? url : null;
@@ -2069,7 +2059,7 @@ class CodexKernel
         emit(
           ItemUpserted(
             nextSeq,
-            'compact:${nextSeq}',
+            'compact:$nextSeq',
             const NoticeItem(
               NoticeKind.compaction,
               'The conversation was summarized',
@@ -3111,8 +3101,9 @@ class CodexKernel
     final previous = _outputReported;
     if (!force &&
         previous != null &&
-        now.difference(previous) < const Duration(milliseconds: 100))
+        now.difference(previous) < const Duration(milliseconds: 100)) {
       return;
+    }
     _outputReported = now;
     emit(OutputReported(nextSeq, _output.output));
   }
