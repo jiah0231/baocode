@@ -17,6 +17,9 @@ class LearningController extends ChangeNotifier {
   static const maxCards = 40;
   static const maxContextCharacters = 6000;
   final _queue = ListQueue<LearningEvidence>();
+  // Diff items can be previews awaiting permission (not completed edits).
+  // Retain only minimized candidates until a FileEdited confirms the path.
+  final _diffCandidates = <String, LearningEvidence>{};
   final _seen = <String>{};
   final _cards = <LearningCard>[];
   LearningGenerator? _generator;
@@ -115,6 +118,7 @@ class LearningController extends ChangeNotifier {
     _timer?.cancel();
     _timer = null;
     _queue.clear();
+    _diffCandidates.clear();
     _cancellation?.cancel();
     // Do not release the single-flight slot until its transport settles.
   }
@@ -130,6 +134,27 @@ class LearningController extends ChangeNotifier {
       return;
     }
     if (!_enabled || !_active || _paused || budgetReached) return;
+    if (event is TurnEnded) {
+      _diffCandidates.clear();
+      return;
+    }
+    if (event is ItemRemoved) {
+      _diffCandidates.removeWhere((_, item) => item.sourceItemId == event.id);
+      return;
+    }
+    final reportedItem = switch (event) {
+      ItemCompleted(:final item) => item ?? completedItem,
+      ItemUpserted(:final item) => item,
+      _ => null,
+    };
+    if (reportedItem is ToolCallItem &&
+        reportedItem.kind == ToolKind.edit &&
+        (reportedItem.status == ToolStatus.denied ||
+            reportedItem.status == ToolStatus.failed)) {
+      // A denied/failed edit cannot confirm any staged preview.
+      _diffCandidates.clear();
+      return;
+    }
     LearningEvidence? evidence;
     if (event is ItemCompleted) {
       evidence = _fromItem(event.id, event.item ?? completedItem);
@@ -138,17 +163,23 @@ class LearningController extends ChangeNotifier {
     } else if (event is FileEdited && !event.change.binary) {
       final change = event.change;
       if (!_sensitivePath(change.path)) {
-        evidence = LearningEvidence(
-          id: 'edit:${event.seq}',
-          kind: 'file-summary',
-          label: _safeLabel(change.fileName),
-          path: change.path,
-          excerpt:
-              'Reported ${change.kind.name}: +${change.added} / -${change.removed} lines. Code and intent are not available in this record.',
-        );
+        evidence =
+            _diffCandidates.remove(_pathKey(change.path)) ??
+            LearningEvidence(
+              id: 'edit:${event.seq}',
+              kind: 'file-summary',
+              label: _safeLabel(change.fileName),
+              path: change.path,
+              excerpt:
+                  'Reported ${change.kind.name}: +${change.added} / -${change.removed} lines. Code and intent are not available in this record.',
+            );
       }
     }
     if (evidence == null) return;
+    if (evidence.kind == 'diff' && event is! FileEdited) {
+      _stageDiff(evidence);
+      return;
+    }
     // Prefer actual changed code to its nearby file-count notification.
     final pendingEvidence = evidence;
     if (pendingEvidence.path != null) {
@@ -177,6 +208,25 @@ class LearningController extends ChangeNotifier {
     _queue.add(evidence);
     _schedule();
   }
+
+  void _stageDiff(LearningEvidence evidence) {
+    final path = evidence.path;
+    if (path == null) return;
+    final key = _pathKey(path);
+    _diffCandidates.remove(key);
+    _diffCandidates[key] = evidence;
+    // Bound both count and serialized context, not just number of files.
+    while (_diffCandidates.length > maxQueue ||
+        _diffCandidates.values.fold<int>(
+              0,
+              (sum, item) => sum + jsonEncode(item.toJson()).length,
+            ) >
+            maxContextCharacters) {
+      _diffCandidates.remove(_diffCandidates.keys.first);
+    }
+  }
+
+  static String _pathKey(String path) => path.replaceAll(r'\', '/');
 
   LearningEvidence? _fromItem(String id, ChatItem? item) {
     String kind;
@@ -300,7 +350,10 @@ class LearningController extends ChangeNotifier {
     }
     _busy = true;
     _requests++;
-    if (budgetReached) _queue.clear();
+    if (budgetReached) {
+      _queue.clear();
+      _diffCandidates.clear();
+    }
     _error = null;
     notifyListeners();
     try {

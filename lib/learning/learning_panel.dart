@@ -7,6 +7,23 @@ import '../theme/app_theme.dart';
 import '../theme/codicons.dart';
 import 'learning_models.dart';
 
+/// Session-owned presentation only; no evidence or generated content is copied.
+/// Keeping this outside the widget preserves reading position when the rail
+/// temporarily shows a file. A different conversation uses a different instance.
+class LearningReadingState {
+  final Set<String> _expanded = {};
+  bool _following = true;
+  bool _recap = false;
+  int _unread = 0;
+  double _scrollOffset = 0;
+
+  Set<String> get expandedIds => Set.unmodifiable(_expanded);
+  bool get following => _following;
+  bool get recapExpanded => _recap;
+  int get unreadCount => _unread;
+  double get scrollOffset => _scrollOffset;
+}
+
 /// A quiet, presentational rail. Generated strings are plain text, never
 /// markdown/HTML, commands or navigable model-supplied URLs.
 class LearningPanel extends StatefulWidget {
@@ -24,6 +41,7 @@ class LearningPanel extends StatefulWidget {
     this.modelLabel,
     this.onOpenEvidence,
     this.sessionKey = '',
+    this.readingState,
   });
 
   final List<LearningCard> cards;
@@ -32,17 +50,55 @@ class LearningPanel extends StatefulWidget {
   final VoidCallback onConfigure, onTogglePause, onDisable;
   final ValueChanged<LearningEvidence>? onOpenEvidence;
   final String sessionKey;
+  final LearningReadingState? readingState;
 
   @override
   State<LearningPanel> createState() => _LearningPanelState();
 }
 
 class _LearningPanelState extends State<LearningPanel> {
-  final _scroll = ScrollController();
-  final _expanded = <String>{};
-  bool _following = true;
-  bool _recap = false;
-  int _unread = 0;
+  late LearningReadingState _reading;
+  late final ScrollController _scroll;
+  bool _restoring = false;
+  Set<String> get _expanded => _reading._expanded;
+  bool get _following => _reading._following;
+  set _following(bool value) => _reading._following = value;
+  bool get _recap => _reading._recap;
+  set _recap(bool value) => _reading._recap = value;
+  int get _unread => _reading._unread;
+  set _unread(int value) => _reading._unread = value;
+
+  @override
+  void initState() {
+    super.initState();
+    _reading = widget.readingState ?? LearningReadingState();
+    _expanded.retainAll(widget.cards.map((card) => card.id));
+    _scroll = ScrollController(
+      initialScrollOffset: _reading._scrollOffset,
+      keepScrollOffset: false,
+    );
+    _scroll.addListener(_saveScroll);
+  }
+
+  void _saveScroll() {
+    if (!_restoring && _scroll.hasClients) {
+      _reading._scrollOffset = _scroll.offset;
+    }
+  }
+
+  void _restoreScroll() {
+    final reading = _reading;
+    final offset = reading._scrollOffset;
+    _restoring = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !identical(reading, _reading) || !_scroll.hasClients) {
+        return;
+      }
+      _scroll.jumpTo(offset.clamp(0.0, _scroll.position.maxScrollExtent));
+      _restoring = false;
+      _saveScroll();
+    });
+  }
 
   String _t(String zh, String en) =>
       Localizations.maybeLocaleOf(context)?.languageCode == 'zh' ? zh : en;
@@ -50,12 +106,12 @@ class _LearningPanelState extends State<LearningPanel> {
   @override
   void didUpdateWidget(LearningPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.sessionKey != widget.sessionKey) {
-      _expanded.clear();
-      _following = true;
-      _unread = 0;
-      _recap = false;
-      _jumpToLatest();
+    if (oldWidget.sessionKey != widget.sessionKey ||
+        !identical(oldWidget.readingState, widget.readingState)) {
+      _saveScroll();
+      _reading = widget.readingState ?? LearningReadingState();
+      _expanded.retainAll(widget.cards.map((card) => card.id));
+      _restoreScroll();
       return;
     }
     final oldIds = oldWidget.cards.map((card) => card.id).toSet();
@@ -73,8 +129,12 @@ class _LearningPanelState extends State<LearningPanel> {
   }
 
   void _jumpToLatest() {
+    final reading = _reading;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _following && _scroll.hasClients) {
+      if (mounted &&
+          identical(reading, _reading) &&
+          _following &&
+          _scroll.hasClients) {
         _scroll.jumpTo(_scroll.position.maxScrollExtent);
       }
     });
@@ -91,6 +151,8 @@ class _LearningPanelState extends State<LearningPanel> {
 
   @override
   void dispose() {
+    _saveScroll();
+    _scroll.removeListener(_saveScroll);
     _scroll.dispose();
     super.dispose();
   }
@@ -385,9 +447,19 @@ class _LearningPanelState extends State<LearningPanel> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(card.title, style: _style(strong: true)),
+          Text(
+            card.title,
+            maxLines: expanded ? null : 2,
+            overflow: expanded ? null : TextOverflow.ellipsis,
+            style: _style(strong: true),
+          ),
           const SizedBox(height: 7),
-          Text(card.summary, style: _style()),
+          Text(
+            card.summary,
+            maxLines: expanded ? null : 2,
+            overflow: expanded ? null : TextOverflow.ellipsis,
+            style: _style(),
+          ),
           if (card.concept.isNotEmpty) ...[
             const SizedBox(height: 10),
             Text(_t('知识点', 'Takeaway'), style: _style(size: 10, muted: true)),
@@ -419,8 +491,16 @@ class _LearningPanelState extends State<LearningPanel> {
                 _t('依据 · ${evidence.label}', 'Evidence · ${evidence.label}'),
                 style: _style(size: 11, muted: true),
               ),
-              if (widget.onOpenEvidence != null &&
-                  evidence.sourceItemId != null) ...[
+              const SizedBox(height: 5),
+              Text(
+                evidence.excerpt.length > 600
+                    ? '${evidence.excerpt.substring(0, 600)}…'
+                    : evidence.excerpt,
+                maxLines: 6,
+                overflow: TextOverflow.ellipsis,
+                style: _style(size: 12, muted: true),
+              ),
+              if (widget.onOpenEvidence != null && evidence.path != null) ...[
                 const SizedBox(height: 5),
                 _LearningButton(
                   label: _t('只读查看当前文件', 'View current file · Read-only'),

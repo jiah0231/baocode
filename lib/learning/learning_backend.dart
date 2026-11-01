@@ -100,14 +100,11 @@ class LearningBackend implements LearningGenerator {
     unawaited(cancellation.whenCancelled.then((_) => local.cancel()));
     final timeout = Timer(const Duration(seconds: 45), local.cancel);
     try {
-      final text = await Future.any<String>([
-        _transport(provider, model, body, local),
-        local.whenCancelled.then(
-          (_) => throw const LearningBackendException(
-            'Learning was paused or the request expired.',
-          ),
-        ),
-      ]);
+      // Cancellation updates the UI immediately, but must not release the
+      // controller's single-flight slot until the HTTP transport has actually
+      // torn down. Racing this future against cancellation permits paid
+      // requests to overlap after a rapid pause/resume or model switch.
+      final text = await _transport(provider, model, body, local);
       if (local.isCancelled || cancellation.isCancelled) {
         throw const LearningBackendException(
           'Learning was paused or the request expired.',

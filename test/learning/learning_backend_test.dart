@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:baocode/chat/chat_models.dart';
+import 'package:baocode/kernel/kernel_event.dart';
 import 'package:baocode/learning/learning_backend.dart';
+import 'package:baocode/learning/learning_controller.dart';
 import 'package:baocode/learning/learning_models.dart';
 import 'package:baocode/learning/learning_preferences.dart';
 import 'package:baocode/models/model_provider.dart';
@@ -174,33 +177,138 @@ void main() {
     },
   );
 
-  test(
-    'cancel and disable promptly discard a transport that ignores cancellation',
-    () async {
-      await enable();
-      final pending = Completer<String>();
-      final started = Completer<void>();
-      LearningCancellation? transportCancellation;
-      final backend = LearningBackend(
-        preferences: preferences,
-        transport: (_, _, _, cancellation) {
-          transportCancellation = cancellation;
-          started.complete();
-          return pending.future;
-        },
-      );
-      final result = backend.generate(request, LearningCancellation());
-      final expectation = expectLater(
-        result,
-        throwsA(isA<LearningBackendException>()),
-      );
-      await started.future;
-      await preferences.disable();
-      await expectation;
-      expect(transportCancellation!.isCancelled, isTrue);
-      pending.complete(reply);
-    },
-  );
+  test('disable signals cancellation but retains the slot until transport teardown', () async {
+    await enable();
+    final pending = Completer<String>();
+    final started = Completer<void>();
+    LearningCancellation? transportCancellation;
+    final backend = LearningBackend(
+      preferences: preferences,
+      transport: (_, _, _, cancellation) {
+        transportCancellation = cancellation;
+        started.complete();
+        return pending.future;
+      },
+    );
+    var settled = false;
+    final result = backend
+        .generate(request, LearningCancellation())
+        .whenComplete(() {
+          settled = true;
+        });
+    final expectation = expectLater(
+      result,
+      throwsA(isA<LearningBackendException>()),
+    );
+    await started.future;
+    await preferences.disable();
+    await Future<void>.delayed(Duration.zero);
+    expect(transportCancellation!.isCancelled, isTrue);
+    expect(settled, isFalse);
+    pending.complete(reply);
+    await expectation;
+    expect(settled, isTrue);
+  });
+
+  for (final switchModel in [false, true]) {
+    test(
+      'controller retains actual single flight across ${switchModel ? 'model change' : 'pause/resume'}',
+      () async {
+        await enable();
+        final controller = LearningController();
+        final pending = Completer<String>();
+        final cancellations = <LearningCancellation>[];
+        var active = 0;
+        var maximumActive = 0;
+        var calls = 0;
+        Future<String> transport(
+          ModelProvider p,
+          ProviderModel m,
+          Map<String, Object?> body,
+          LearningCancellation cancellation,
+        ) async {
+          calls++;
+          active++;
+          if (active > maximumActive) maximumActive = active;
+          cancellations.add(cancellation);
+          try {
+            if (calls == 1) return await pending.future;
+            final messages = body['messages'] as List;
+            final evidence = jsonDecode(
+              (messages.single as Map)['content'] as String,
+            ) as Map;
+            final id = ((evidence['evidence'] as List).single as Map)['id'];
+            return jsonEncode({
+              ...jsonDecode(reply) as Map<String, dynamic>,
+              'evidenceIds': [id],
+            });
+          } finally {
+            active--;
+          }
+        }
+
+        Future<void> settle() async {
+          for (var i = 0; i < 6; i++) {
+            await Future<void>.delayed(Duration.zero);
+          }
+        }
+
+        void observe(int seq) => controller.observe(
+          ItemUpserted(
+            seq,
+            'operation-$seq',
+            TerminalItem(
+              command: 'flutter test synthetic_$seq.dart',
+              output: 'Passed',
+            ),
+          ),
+        );
+        controller.enable(
+          LearningBackend(preferences: preferences, transport: transport),
+          interval: Duration.zero,
+        );
+        observe(1);
+        await settle();
+        expect(calls, 1);
+        expect(controller.busy, isTrue);
+        if (switchModel) {
+          await preferences.configure(
+            modelRef: '@lesson/worker-model',
+            consent: true,
+          );
+          controller.enable(
+            LearningBackend(preferences: preferences, transport: transport),
+            interval: Duration.zero,
+          );
+        } else {
+          controller.setPaused(true);
+          expect(controller.paused, isTrue);
+          controller.setPaused(false);
+        }
+        observe(2);
+        await settle();
+        expect(cancellations.first.isCancelled, isTrue);
+        expect(controller.busy, isTrue);
+        expect(calls, 1, reason: 'Cancellation is not transport completion');
+        expect(controller.cards, isEmpty);
+        pending.complete(reply);
+        await settle();
+        expect(calls, 2);
+        expect(maximumActive, 1);
+        expect(active, 0);
+        expect(
+          controller.cards,
+          hasLength(1),
+          reason: 'Only the new request may publish a card',
+        );
+        expect(
+          controller.cards.single.evidence.single.sourceItemId,
+          'operation-2',
+        );
+        controller.dispose();
+      },
+    );
+  }
 
   test(
     'malformed, huge and raw provider errors never surface raw bodies',

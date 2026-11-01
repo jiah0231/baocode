@@ -1,0 +1,35 @@
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:flutter/services.dart';
+
+/// The app bundles icon glyphs only. On the Windows visual CI runner load its
+/// actual desktop text fonts explicitly: widget tests otherwise paint Ahem.
+Future<void> loadLearningVisualFonts() async {
+  final icons = FontLoader('codicon')
+    ..addFont(rootBundle.load('assets/codicons/codicon.ttf'));
+  await icons.load();
+  if (!const bool.fromEnvironment('BAOCODE_LEARNING_VISUALS')) return;
+  if (!Platform.isWindows) {
+    throw StateError('Visual fixtures require the Windows desktop font set');
+  }
+  final root = '${Platform.environment['WINDIR'] ?? r'C:\Windows'}/Fonts';
+  Future<void> load(String family, String file) async {
+    final bytes = await File('$root/$file').readAsBytes();
+    final loader = FontLoader(family)
+      ..addFont(Future.value(ByteData.sublistView(bytes)));
+    await loader.load();
+  }
+
+  await load('Roboto', 'segoeui.ttf');
+  await load('Segoe UI', 'segoeui.ttf');
+  final cjk = ['msyh.ttc', 'msyhl.ttc', 'simsun.ttc'].firstWhere(
+    (file) => File('$root/$file').existsSync(),
+    orElse: () => throw StateError(
+      'Readable Chinese font missing: install Microsoft YaHei on Windows visual runner',
+    ),
+  );
+  await load('Microsoft YaHei UI', cjk);
+  await load('Roboto', cjk);
+  await load('Consolas', 'consola.ttf');
+}

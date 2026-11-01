@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:baocode/chat/chat_screen.dart';
 import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/chat/side_panel/side_panel_controller.dart';
@@ -14,8 +15,11 @@ import 'package:baocode/theme/app_theme.dart';
 import 'package:baocode/theme/workbench_theme.dart';
 
 import '../ide/workbench/fake_files.dart';
+import 'learning_visual_fonts.dart';
+import 'learning_panel_test.dart' show fixtures;
 
 void main() {
+  setUpAll(loadLearningVisualFonts);
   for (final theme in ['Bao Dark', 'Bao Light']) {
     for (final width in [1200.0, 600.0]) {
       testWidgets('learning host synthetic $theme $width', (tester) async {
@@ -23,7 +27,7 @@ void main() {
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.reset);
         WorkbenchThemeService.instance.restore(setting: theme);
-        await WorkbenchThemeService.instance.initialize();
+        await tester.runAsync(WorkbenchThemeService.instance.initialize);
         final session = ChatSession(
           historyCount: 8,
           kernelContext: const KernelContext(cwd: '/synthetic'),
@@ -36,6 +40,9 @@ void main() {
         await tester.pumpWidget(
           MaterialApp(
             theme: buildAppTheme(),
+            locale: const Locale('zh'),
+            supportedLocales: const [Locale('zh')],
+            localizationsDelegates: GlobalMaterialLocalizations.delegates,
             home: Material(
               child: AgentSidePanelArea(
                 panel: panel,
@@ -43,6 +50,17 @@ void main() {
                 builder: (context) => AgentSidePanelView(
                   panel: panel,
                   session: session,
+                  learningBuilder: width == 1200
+                      ? (_) => LearningPanel(
+                          cards: fixtures(chinese: true),
+                          enabled: true,
+                          modelLabel: '合成教学模型 · 无网络请求',
+                          onConfigure: () {},
+                          onTogglePause: () {},
+                          onDisable: () {},
+                          onOpenEvidence: (_) {},
+                        )
+                      : null,
                   files: TreeFiles({
                     '/synthetic/lib/main.dart': 'void main() {}',
                   }),
@@ -59,6 +77,17 @@ void main() {
         expect(session.learning.enabled, isFalse);
         expect(session.learning.requestCount, 0);
         expect(tester.takeException(), isNull);
+        if (width == 1200) {
+          final expand = find.byKey(const Key('learning-expand-synthetic-2'));
+          await tester.ensureVisible(expand);
+          await tester.tap(expand);
+          await tester.pumpAndSettle();
+          await tester.ensureVisible(
+            find.text('+ if (generation != current) return;').last,
+          );
+          await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull);
+        }
         if (const bool.fromEnvironment('BAOCODE_LEARNING_VISUALS')) {
           await tester.runAsync(() async {
             final image = await captureImage(tester.binding.rootElement!);

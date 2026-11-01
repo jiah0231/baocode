@@ -255,6 +255,184 @@ void main() {
     },
   );
 
+  test('provisional diff never sends before a confirmed file edit', () async {
+    final controller = LearningController();
+    final generator = FakeGenerator();
+    controller.enable(generator, interval: Duration.zero);
+    const preview = CodeDiffItem(
+      fileName: 'main.dart',
+      directory: 'lib',
+      lines: [DiffLine(DiffLineType.added, 1, 'final answer = 42;')],
+    );
+    controller.observe(const ItemUpserted(1, 'preview', preview));
+    controller.observe(const ItemCompleted(2, 'preview', item: preview));
+    await settle();
+    expect(generator.requests, isEmpty);
+    expect(controller.queuedCount, 0);
+    controller.observe(
+      const FileEdited(
+        3,
+        FileChange(path: 'lib/main.dart', added: 1, removed: 0),
+      ),
+    );
+    await settle();
+    expect(generator.requests.single.evidence.single.kind, 'diff');
+    expect(
+      generator.requests.single.evidence.single.excerpt,
+      contains('answer = 42'),
+    );
+    controller.dispose();
+  });
+
+  test(
+    'denied preview is discarded and cannot attach to a later edit',
+    () async {
+      final controller = LearningController();
+      final generator = FakeGenerator();
+      controller.enable(generator, interval: Duration.zero);
+      controller.observe(
+        const ItemUpserted(
+          1,
+          'preview',
+          CodeDiffItem(
+            fileName: 'main.dart',
+            directory: 'lib',
+            lines: [DiffLine(DiffLineType.added, 1, 'unapproved code')],
+          ),
+        ),
+      );
+      controller.observe(
+        const ItemUpserted(
+          2,
+          'preview',
+          ToolCallItem(
+            kind: ToolKind.edit,
+            target: 'lib/main.dart',
+            status: ToolStatus.denied,
+          ),
+        ),
+      );
+      await settle();
+      expect(generator.requests, isEmpty);
+      controller.observe(
+        const FileEdited(
+          3,
+          FileChange(path: 'lib/main.dart', added: 1, removed: 0),
+        ),
+      );
+      await settle();
+      expect(generator.requests.single.evidence.single.kind, 'file-summary');
+      expect(
+        generator.requests.single.evidence.single.excerpt,
+        isNot(contains('unapproved code')),
+      );
+      controller.dispose();
+    },
+  );
+
+  test(
+    'staged previews expire on pause, turn end and bounded eviction',
+    () async {
+      final controller = LearningController();
+      final generator = FakeGenerator();
+      controller.enable(generator, interval: Duration.zero);
+      for (var i = 0; i < 20; i++) {
+        controller.observe(
+          ItemUpserted(
+            i + 1,
+            'preview-$i',
+            CodeDiffItem(
+              fileName: 'file$i.dart',
+              directory: 'lib',
+              lines: [DiffLine(DiffLineType.added, 1, 'changed $i')],
+            ),
+          ),
+        );
+      }
+      controller.observe(
+        const FileEdited(
+          21,
+          FileChange(path: 'lib/file0.dart', added: 1, removed: 0),
+        ),
+      );
+      await settle();
+      expect(generator.requests.last.evidence.single.kind, 'file-summary');
+      controller.observe(const TurnEnded(22, 'turn'));
+      controller.observe(
+        const FileEdited(
+          23,
+          FileChange(path: 'lib/file19.dart', added: 2, removed: 0),
+        ),
+      );
+      await settle();
+      expect(generator.requests.last.evidence.single.kind, 'file-summary');
+      controller.observe(
+        const ItemUpserted(
+          24,
+          'paused-preview',
+          CodeDiffItem(
+            fileName: 'paused.dart',
+            directory: 'lib',
+            lines: [DiffLine(DiffLineType.added, 1, 'pending')],
+          ),
+        ),
+      );
+      controller.setPaused(true);
+      controller.setPaused(false);
+      controller.observe(
+        const FileEdited(
+          25,
+          FileChange(path: 'lib/paused.dart', added: 3, removed: 0),
+        ),
+      );
+      await settle();
+      expect(generator.requests.last.evidence.single.kind, 'file-summary');
+      controller.dispose();
+    },
+  );
+
+  test(
+    'staged preview memory is bounded by context size as well as count',
+    () async {
+      final controller = LearningController();
+      final generator = FakeGenerator();
+      controller.enable(generator, interval: Duration.zero);
+      for (var i = 0; i < 4; i++) {
+        controller.observe(
+          ItemUpserted(
+            i + 1,
+            'large-$i',
+            CodeDiffItem(
+              fileName: 'large$i.dart',
+              directory: 'lib',
+              lines: List.generate(
+                20,
+                (line) => DiffLine(DiffLineType.added, line, 'x' * 200),
+              ),
+            ),
+          ),
+        );
+      }
+      controller.observe(
+        const FileEdited(
+          5,
+          FileChange(path: 'lib/large0.dart', added: 20, removed: 0),
+        ),
+      );
+      controller.observe(
+        const FileEdited(
+          6,
+          FileChange(path: 'lib/large3.dart', added: 20, removed: 0),
+        ),
+      );
+      await settle();
+      final evidence = generator.requests.single.evidence;
+      expect(evidence.first.kind, 'file-summary');
+      expect(evidence.last.kind, 'diff');
+      controller.dispose();
+    },
+  );
+
   test('excludes sensitive paths and bounds selected code context', () async {
     final controller = LearningController();
     final generator = FakeGenerator();
@@ -282,6 +460,15 @@ void main() {
             (i) => DiffLine(DiffLineType.added, i, 'x' * 1000),
           ),
         ),
+      ),
+    );
+    controller.observe(
+      const FileEdited(3, FileChange(path: '.env.local', added: 1, removed: 0)),
+    );
+    controller.observe(
+      const FileEdited(
+        4,
+        FileChange(path: 'lib/main.dart', added: 10000, removed: 0),
       ),
     );
     await settle();

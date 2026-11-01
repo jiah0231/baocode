@@ -447,7 +447,12 @@ class AgentSidePanelView extends StatelessWidget {
     this.titleBarInset = 0,
     this.leading,
     this.windowTitleBar = true,
+    this.learningBuilder,
   });
+
+  /// Optional teaching content renderer, for an isolated embedded host.
+  /// The ordinary app uses the consent-gated session binding.
+  final WidgetBuilder? learningBuilder;
 
   final AgentSidePanel panel;
   final ChatSession session;
@@ -595,11 +600,17 @@ class AgentSidePanelView extends StatelessWidget {
               SidePanelSection.files => _filesPage(context, tabs),
               SidePanelSection.changes => _changesPage(context, tabs),
               SidePanelSection.terminal => _terminalPage(context, tabs),
-              SidePanelSection.learning => LearningSessionView(
-                key: ValueKey(('page', SidePanelSection.learning, session)),
-                session: session,
-                panel: panel,
-              ),
+              SidePanelSection.learning =>
+                learningBuilder?.call(context) ??
+                    LearningSessionView(
+                      key: ValueKey((
+                        'page',
+                        SidePanelSection.learning,
+                        session,
+                      )),
+                      session: session,
+                      panel: panel,
+                    ),
               SidePanelSection.usage => ConversationUsageView(
                 key: ValueKey(('page', SidePanelSection.usage, session)),
                 session: session,

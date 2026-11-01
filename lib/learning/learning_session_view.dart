@@ -29,6 +29,11 @@ class LearningSessionView extends StatefulWidget {
 }
 
 class _LearningSessionViewState extends State<LearningSessionView> {
+  // Weak keys: closing a conversation does not leave its reading state in a
+  // process-wide map, while a file preview can temporarily replace this view.
+  static final _readingStates = Expando<LearningReadingState>();
+  LearningReadingState get _readingState =>
+      _readingStates[widget.session] ??= LearningReadingState();
   late LearningPreferences _preferences;
   String? _configuration;
   String _languageCode = 'en';
@@ -108,6 +113,7 @@ class _LearningSessionViewState extends State<LearningSessionView> {
         ModelProviders.current,
       ),
       sessionKey: '${identityHashCode(widget.session)}',
+      readingState: _readingState,
       onConfigure: () => unawaited(
         showLearningSettingsDialog(
           context,
