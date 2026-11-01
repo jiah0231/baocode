@@ -273,6 +273,9 @@ void main() {
       ],
     );
     await _post(await url('gw'), request(), {'authorization': 'Bearer tok'});
+    // HTTP EOF is not the completion boundary for capture in the handler's
+    // finally. Await that lifecycle boundary before reading calls or traces.
+    await proxy.drainRequests();
     ledger.flush();
     final call = (await ledger.ofSession(session)).single;
     final trace = (await ledger.traceOf(call))!;
@@ -299,8 +302,13 @@ void main() {
     await _post(await url('relay'), request(model: 'claude-x'), {
       'x-api-key': 'tok',
     });
+    // HTTP EOF is not the completion boundary for capture in the handler's
+    // finally. Await that lifecycle boundary before reading calls or traces.
+    await proxy.drainRequests();
     ledger.flush();
-    final passed = (await ledger.ofSession(session)).last;
+    final calls = await ledger.ofSession(session);
+    expect(calls, hasLength(2));
+    final passed = calls.last;
     final through = (await ledger.traceOf(passed))!;
     expect(through.passedOn, isTrue);
     expect(through.received.single.body, contains('message_start'));

@@ -203,6 +203,13 @@ class _Harness {
   final servers = <_Server>[];
   final kernels = <CodexKernel>[];
   late final KernelDescriptor descriptor;
+  // A Workspace can also create a default empty conversation. Resolve the
+  // transport by the server request's identity, not creation order/count.
+  _Server resumed(String threadId) => servers.singleWhere(
+    (server) => server
+        .requests('thread/resume')
+        .any((request) => (request['params'] as Map)['threadId'] == threadId),
+  );
   ChatSession session({bool resume = true}) => ChatSession(
     kernel: descriptor,
     kernels: [descriptor],
@@ -682,7 +689,7 @@ void main() {
         final source = workspace.threads.firstWhere((t) => t.id == 'source');
         final session = source.session;
         expect(await session.prepareConversation(), isTrue);
-        final server = h.servers.single;
+        final server = h.resumed('source');
         if (running) {
           session.send(const ComposerMessage(text: 'Keep working'));
           await pumpEventQueue();
@@ -705,7 +712,7 @@ void main() {
           'deferGoalContinuation': true,
         });
         await pumpEventQueue();
-        final child = h.servers.last;
+        final child = h.resumed('forked');
         final params = child.requests('turn/start').single['params'] as Map;
         expect(params['threadId'], 'forked');
         expect(
@@ -740,7 +747,7 @@ void main() {
       await workspace.load();
       final source = workspace.threads.firstWhere((t) => t.id == 'source');
       expect(await source.session.prepareConversation(), isTrue);
-      h.servers.single.failFork = true;
+      final server = h.resumed('source')..failFork = true;
       final count = workspace.threads.length;
       expect(
         await workspace.askBeside(
@@ -751,7 +758,7 @@ void main() {
       );
       expect(workspace.threads, hasLength(count));
       expect(workspace.asidesOf(source), isEmpty);
-      expect(h.servers.single.requests('turn/start'), isEmpty);
+      expect(server.requests('turn/start'), isEmpty);
       expect(_items(source.session).whereType<NoticeItem>(), isNotEmpty);
     },
   );
@@ -775,9 +782,9 @@ void main() {
       );
       expect(aside, isNotNull);
       expect(aside!.session.health.status, KernelHealthStatus.failed);
-      expect(h.servers.last.requests('turn/start'), isEmpty);
+      expect(h.resumed('forked').requests('turn/start'), isEmpty);
       expect(_items(aside.session).whereType<UserMessageItem>(), isEmpty);
-      expect(h.servers.first.requests('turn/start'), isEmpty);
+      expect(h.resumed('source').requests('turn/start'), isEmpty);
     },
   );
 

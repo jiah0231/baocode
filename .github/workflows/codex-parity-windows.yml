@@ -33,6 +33,7 @@ jobs:
       - name: Test changed components
         run: flutter test test/kernel test/usage test/models/proxy test/workspace/usage_shutdown_test.dart test/workspace/quit_confirmation_test.dart test/settings/codex_path_settings_test.dart test/settings/codex_install_controls_test.dart test/customize test/bots test/chat/goal_panel_test.dart test/chat/streamed_words_test.dart test/claude_runtime_test.dart test/models/codex_test.dart test/models/codex_quota_format_test.dart test/update test/link/chat_codec_test.dart test/ide/lsp/packs/lsp_settings_template_test.dart
       - name: Test custom update channel fail-closed configuration
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
         run: flutter test test/update/custom_update_channel_test.dart --dart-define=BAOCODE_CUSTOM_UPDATES=true
       - name: Test Codex adapter integration
         if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
@@ -46,6 +47,7 @@ jobs:
           BAOCODE_CODEX_OFFICIAL_SMOKE: '1'
         run: flutter test test/kernel/codex_official_smoke_test.dart --timeout 10m
       - name: Test upstream edit ledger and legacy SSH compatibility
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
         run: >-
           flutter test
           test/chat/change_review_test.dart
@@ -57,6 +59,7 @@ jobs:
           test/remote/remote_server_test.dart
           packages/bao_agent/test/engine/host_hooks_test.dart
       - name: Test upstream chat, usage UI, search and editor integration
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
         run: >-
           flutter test
           test/chat/composer_intercept_test.dart
@@ -73,10 +76,12 @@ jobs:
           test/workspace/chat_branch_bar_test.dart
           test/workspace/chat_quota_bar_test.dart
       - name: Test full kernel integration and preserved phone protocol
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
         run: flutter test test/kernel_test.dart test/link
       # Requires a developer's live upstream account and is intentionally
       # skipped when BAOCODE_LIVE_SETTINGS is unset in these offline builds.
       - name: Load optional live review regression
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
         run: flutter test test/e2e_review_real_test.dart
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
