@@ -1,11 +1,9 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 
 import '../../l10n/l10n.dart';
 import '../../theme/codicons.dart';
+import '../usage_prices.dart';
 import '../usage_query.dart';
-import '../usage_record.dart';
 import 'usage_charts.dart';
 import 'usage_filters.dart';
 import 'usage_style.dart';
@@ -17,6 +15,26 @@ List<(double, Color)> tokenSegments(UsageTotals totals) => [
   (totals.cacheWrite.toDouble(), UsagePalette.cacheWrite),
   (totals.output.toDouble(), UsagePalette.output),
 ];
+
+/// What a total's tokens of each kind cost in [currency], in the order and
+/// colors of [tokenSegments].
+List<(double, Color)> costSegments(UsageTotals totals, String currency) {
+  final parts = totals.cost.parts[currency] ?? UsageCostParts();
+  return [
+    (parts.cacheRead, UsagePalette.cacheRead),
+    (parts.input, UsagePalette.input),
+    (parts.cacheWrite, UsagePalette.cacheWrite),
+    (parts.output, UsagePalette.output),
+  ];
+}
+
+/// [UsagePrices.money] without its trailing zeros: for an axis.
+String Function(double) moneyFormat(String currency) => (value) {
+  final text = UsagePrices.money(value, currency);
+  return text.contains('.')
+      ? text.replaceFirst(RegExp(r'\.?0+(?=\D*$)'), '')
+      : text;
+};
 
 /// The token kinds, as a legend names them.
 List<UsageSeries> tokenSeries(BuildContext context) {
@@ -57,6 +75,21 @@ class UsageOverview extends StatelessWidget {
           ),
           trend: trend((t) => t.total.toDouble()),
         ),
+        // In the currency most is in, its trend; the others after it.
+        if (t.cost.byCurrency.entries.firstOrNull case final first?)
+          UsageStatTile(
+            icon: Codicons.creditCard,
+            label: l10n.ustatCost,
+            value: UsagePrices.money(first.value, first.key),
+            detail: [
+              for (final MapEntry(:key, :value) in t.cost.byCurrency.entries)
+                if (key != first.key) '+ ${UsagePrices.money(value, key)}',
+              t.cost.unpriced > 0
+                  ? l10n.ustatCostUnpriced(t.cost.unpriced)
+                  : l10n.ustatCostEstimated,
+            ].join('  ·  '),
+            trend: trend((t) => t.cost.byCurrency[first.key] ?? 0),
+          ),
         UsageStatTile(
           icon: Codicons.pulse,
           label: l10n.ustatCalls,
@@ -68,10 +101,14 @@ class UsageOverview extends StatelessWidget {
           icon: Codicons.database,
           label: l10n.ustatCacheHit,
           value: UsageFormat.percent(t.cacheHitRate, digits: 1),
-          detail: l10n.ustatCacheDetail(
-            UsageFormat.tokens(t.cacheRead),
-            UsageFormat.tokens(t.cacheWrite),
-          ),
+          // What it saved first: cut short, the tokens go.
+          detail: [
+            if (t.cost.savedText case final saved?) l10n.ustatCacheSaved(saved),
+            l10n.ustatCacheDetail(
+              UsageFormat.tokens(t.cacheRead),
+              UsageFormat.tokens(t.cacheWrite),
+            ),
+          ].join(' · '),
           trend: trend((t) => t.cacheHitRate),
         ),
         UsageStatTile(
@@ -88,13 +125,11 @@ class UsageOverview extends StatelessWidget {
         UsageStatTile(
           icon: Codicons.flame,
           label: l10n.ustatSpeed,
-          value: switch (t.averageSpeed) {
-            final speed? => '${speed.toStringAsFixed(1)} tok/s',
-            null => '—',
-          },
-          detail: t.reasoning > 0
-              ? l10n.ustatReasoningDetail(UsageFormat.tokens(t.reasoning))
-              : l10n.ustatOutputDetail(UsageFormat.tokens(t.output)),
+          // The unit under it: the number as large as the others.
+          value: UsageFormat.speed(t.averageSpeed, unit: false),
+          detail:
+              'tok/s  ·  '
+              '${t.reasoning > 0 ? l10n.ustatReasoningDetail(UsageFormat.tokens(t.reasoning)) : l10n.ustatOutputDetail(UsageFormat.tokens(t.output))}',
           trend: trend((t) => t.averageSpeed ?? 0),
         ),
         UsageStatTile(
@@ -113,10 +148,11 @@ class UsageOverview extends StatelessWidget {
 }
 
 /// What the time chart shows.
-enum UsageMetric { tokens, calls, latency, speed }
+enum UsageMetric { cost, tokens, calls, latency, speed }
 
-/// [summary] over time: its tokens by kind, its calls (the failed apart),
-/// its time to first token and in all, or its speed, as picked.
+/// [summary] over time: its cost or its tokens by kind, its calls (the
+/// failed apart), its time to first token and in all, or its speed, as
+/// picked; its cost first, where any is priced.
 class UsageTimeSection extends StatefulWidget {
   const UsageTimeSection({
     super.key,
@@ -138,7 +174,7 @@ class UsageTimeSection extends StatefulWidget {
 }
 
 class _UsageTimeSectionState extends State<UsageTimeSection> {
-  UsageMetric _metric = UsageMetric.tokens;
+  UsageMetric? _picked;
 
   String _bucketLabel(DateTime time) => switch (widget.summary.step) {
     UsageStep.minute || UsageStep.hour => UsageFormat.clock(time),
@@ -157,9 +193,40 @@ class _UsageTimeSectionState extends State<UsageTimeSection> {
   Widget build(BuildContext context) {
     final l10n = context.l10n;
     final buckets = widget.summary.buckets;
+    final currency = widget.summary.totals.cost.currency;
+    final metric = switch (_picked) {
+      null || UsageMetric.cost when currency == null => UsageMetric.tokens,
+      null => UsageMetric.cost,
+      final picked => picked,
+    };
     final Widget chart;
     final Widget? legend;
-    switch (_metric) {
+    switch (metric) {
+      case UsageMetric.cost:
+        final series = tokenSeries(context);
+        legend = UsageLegend(series: series);
+        chart = UsageColumnChart(
+          height: widget.height,
+          series: series,
+          format: moneyFormat(currency!),
+          onTapColumn: widget.onPickBucket == null
+              ? null
+              : (i) => widget.onPickBucket!(buckets[i].start, buckets[i].end),
+          columns: [
+            for (final bucket in buckets)
+              (
+                label: _bucketLabel(bucket.start),
+                title: _bucketTitle(bucket),
+                values: [
+                  for (final (value, _) in costSegments(
+                    bucket.totals,
+                    currency,
+                  ))
+                    value,
+                ],
+              ),
+          ],
+        );
       case UsageMetric.tokens:
         final series = tokenSeries(context);
         legend = UsageLegend(series: series);
@@ -207,7 +274,7 @@ class _UsageTimeSectionState extends State<UsageTimeSection> {
           ],
         );
       case UsageMetric.latency || UsageMetric.speed:
-        final latency = _metric == UsageMetric.latency;
+        final latency = metric == UsageMetric.latency;
         final lines = latency
             ? [
                 UsageLine(
@@ -272,11 +339,19 @@ class _UsageTimeSectionState extends State<UsageTimeSection> {
     }
     return UsageCard(
       title: widget.title ?? l10n.ustatOverTime,
+      // In the one currency: the others' apart, in the totals.
+      subtitle:
+          metric == UsageMetric.cost &&
+              widget.summary.totals.cost.byCurrency.length > 1
+          ? l10n.ustatCostIn(currency!)
+          : null,
       trailing: UsageSegmented<UsageMetric>(
         dense: true,
-        value: _metric,
-        onChanged: (metric) => setState(() => _metric = metric),
+        value: metric,
+        onChanged: (metric) => setState(() => _picked = metric),
         segments: [
+          if (currency != null)
+            (value: UsageMetric.cost, label: l10n.ustatCost),
           (value: UsageMetric.tokens, label: l10n.ustatMetricTokens),
           (value: UsageMetric.calls, label: l10n.ustatMetricCalls),
           (value: UsageMetric.latency, label: l10n.ustatMetricLatency),
@@ -294,176 +369,137 @@ class _UsageTimeSectionState extends State<UsageTimeSection> {
   }
 }
 
-/// A group's row: its tokens (in parts by kind), its calls after them.
+/// A group's row: its tokens (in parts by kind), its cost and calls after
+/// them; ranked by cost ([rank]), its cost first (in parts by the kind of
+/// token paid for), its tokens after.
 UsageRankItem rankOf(
   BuildContext context,
   UsageGroup group, {
   String? label,
   String? detail,
   Color? color,
-}) => UsageRankItem(
-  key: group.key,
-  label: label ?? group.label ?? group.key,
-  detail: detail ?? group.detail,
-  value: group.totals.total.toDouble(),
-  valueText: UsageFormat.tokens(group.totals.total),
-  secondary: context.l10n.ustatCallsShort(group.totals.calls),
-  color: color,
-  segments: color == null ? tokenSegments(group.totals) : null,
-);
-
-/// A conversation's context over its requests: the main agent's (washed
-/// under) and its subagents', each a line of how much each request sent;
-/// a mark where it was compacted.
-class UsageContextSection extends StatelessWidget {
-  const UsageContextSection({
-    super.key,
-    required this.summary,
-    this.agentLabel,
-    this.height = 210,
-    this.maxAgents = 4,
-  });
-
-  final UsageSummary summary;
-  final String Function(String agent)? agentLabel;
-  final double height;
-  final int maxAgents;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = context.l10n;
-    final points = summary.context;
-    final byAgent = <String, List<UsageContextPoint>>{};
-    final markers = <UsageMarker>[];
-    for (final point in points) {
-      if (point.requestClass == UsageClass.compaction) {
-        markers.add((
-          x: point.at.millisecondsSinceEpoch.toDouble(),
-          label: l10n.ustatCompactedFrom(UsageFormat.tokens(point.prompt)),
-          color: UsagePalette.marker,
-        ));
-        continue;
-      }
-      if (point.requestClass == UsageClass.auxiliary ||
-          point.requestClass == UsageClass.sideReply) {
-        continue;
-      }
-      (byAgent[point.agent] ??= []).add(point);
-    }
-    // The main agent first, then the subagents that sent the most.
-    final agents = byAgent.keys.toList()
-      ..sort((a, b) {
-        if (a.isEmpty) return -1;
-        if (b.isEmpty) return 1;
-        int sum(String k) => byAgent[k]!.fold(0, (s, p) => s + p.prompt);
-        return sum(b).compareTo(sum(a));
-      });
-    final shown = agents.take(maxAgents + 1).toList();
-    var slot = 0;
-    final lines = [
-      for (final agent in shown)
-        UsageLine(
-          label: agent.isEmpty
-              ? l10n.ustatMainAgent
-              : (agentLabel?.call(agent) ?? agent),
-          color: agent.isEmpty
-              ? UsagePalette.input
-              : UsagePalette.series([0, 2, 3, 4, 5][math.min(slot++, 4)]),
-          area: agent.isEmpty,
-          points: [
-            for (final point in byAgent[agent]!)
-              (
-                x: point.at.millisecondsSinceEpoch.toDouble(),
-                y: point.prompt.toDouble(),
-              ),
-          ],
-        ),
-    ];
-    final main = byAgent[''] ?? const [];
-    final peak = main.fold(0, (top, p) => math.max(top, p.prompt));
-    final last = main.lastOrNull?.prompt;
-    return UsageCard(
-      title: l10n.ustatContextGrowth,
-      subtitle: [
-        if (last != null) l10n.ustatContextNow(UsageFormat.tokens(last)),
-        if (peak > 0) l10n.ustatContextPeak(UsageFormat.tokens(peak)),
-        if (markers.isNotEmpty) l10n.ustatCompactions(markers.length),
-      ].join('  ·  '),
-      child: lines.isEmpty
-          ? Padding(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              child: Text(l10n.ustatNoCalls, style: UsageText.faint),
-            )
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                UsageLegend(
-                  lines: true,
-                  series: [
-                    for (final line in lines)
-                      (label: line.label, color: line.color),
-                    if (markers.isNotEmpty)
-                      (
-                        label: l10n.ustatClassCompaction,
-                        color: UsagePalette.marker,
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                UsageLineChart(
-                  height: height,
-                  lines: lines,
-                  markers: markers,
-                  format: UsageFormat.tokens,
-                  xLabel: (x) => UsageFormat.clock(
-                    DateTime.fromMillisecondsSinceEpoch(x.round()),
-                  ),
-                ),
-              ],
-            ),
-    );
-  }
+  Widget? leading,
+  UsageRanking? rank,
+}) {
+  final totals = group.totals;
+  final byCost = rank?.byCost ?? false;
+  return UsageRankItem(
+    key: group.key,
+    leading: leading,
+    label: label ?? group.label ?? group.key,
+    detail: detail ?? group.detail,
+    value: rank?.value(group) ?? totals.total.toDouble(),
+    valueText: byCost
+        ? totals.cost.text ?? '—'
+        : UsageFormat.tokens(totals.total),
+    secondary: [
+      if (byCost) UsageFormat.tokens(totals.total) else ?totals.cost.text,
+      if (totals.averageSpeed case final speed?) UsageFormat.speed(speed),
+      context.l10n.ustatCallsShort(totals.calls),
+    ].join(' · '),
+    color: color,
+    segments: color != null
+        ? null
+        : byCost
+        ? costSegments(totals, totals.cost.currency ?? '')
+        : tokenSegments(totals),
+  );
 }
 
-/// What the latest request of the main agent had in its context, by
-/// part (estimated, scaled to what the upstream counted).
-class UsageMakeupSection extends StatelessWidget {
-  const UsageMakeupSection({super.key, required this.summary});
+/// How a [UsageRankCard]'s groups rank: by their tokens, or by their cost:
+/// each by its own currency, against the costliest in it (no rate between
+/// them is known).
+class UsageRanking {
+  UsageRanking(
+    Iterable<UsageGroup> groups, {
+    required this.byCost,
+    bool sort = true,
+  }) {
+    if (byCost) {
+      for (final group in groups) {
+        for (final MapEntry(:key, :value)
+            in group.totals.cost.byCurrency.entries) {
+          if (value > (_top[key] ?? 0)) _top[key] = value;
+        }
+      }
+    }
+    this.groups = groups.toList();
+    if (sort) {
+      this.groups.sort(
+        (a, b) => switch (value(b).compareTo(value(a))) {
+          0 => b.totals.total.compareTo(a.totals.total),
+          final order => order,
+        },
+      );
+    }
+  }
+
+  final bool byCost;
+  final _top = <String, double>{};
+
+  /// The costliest first (or those of the most tokens), unless kept in
+  /// their order.
+  late final List<UsageGroup> groups;
+
+  /// What [group]'s bar shows: its tokens; or its cost in its leading
+  /// currency, a share of the costliest in it.
+  double value(UsageGroup group) {
+    if (!byCost) return group.totals.total.toDouble();
+    final cost = group.totals.cost;
+    final top = _top[cost.currency] ?? 0;
+    return top <= 0 ? 0 : cost.byCurrency[cost.currency]! / top;
+  }
+
+  /// A row for each of [groups], built by [row].
+  List<UsageRankItem> items(
+    UsageRankItem Function(UsageGroup group, UsageRanking rank) row,
+  ) => [for (final group in groups) row(group, this)];
+}
+
+/// A card of groups ranked by their cost (where any of [summary] is
+/// priced) or their tokens, as picked: one pick for all such cards. Its
+/// rows built by [builder], by cost or not.
+class UsageRankCard extends StatelessWidget {
+  const UsageRankCard({
+    super.key,
+    required this.summary,
+    required this.title,
+    this.subtitle,
+    required this.builder,
+  });
+
+  /// Whether they rank by cost: kept while the app runs.
+  static final byCost = ValueNotifier(true);
 
   final UsageSummary summary;
+  final String title;
+  final String? subtitle;
+  final Widget Function(BuildContext context, bool byCost) builder;
 
   @override
   Widget build(BuildContext context) {
     final l10n = context.l10n;
-    final latest = summary.calls.reversed
-        .where(
-          (call) =>
-              call.agentId == null &&
-              call.requestClass == UsageClass.main &&
-              (call.context?.total ?? 0) > 0,
-        )
-        .firstOrNull;
-    final makeup = latest?.context;
-    if (latest == null || makeup == null) return const SizedBox.shrink();
-    // The estimate's parts, in the upstream's count where it gave one.
-    final scale = latest.prompt > 0 ? latest.prompt / makeup.total : 1.0;
-    return UsageCard(
-      title: l10n.ustatContextMakeup,
-      subtitle: l10n.ustatContextMakeupDetail(
-        UsageFormat.tokens(latest.prompt > 0 ? latest.prompt : makeup.total),
-        UsageFormat.when(latest.at),
-      ),
-      child: UsageStackBar(
-        parts: [
-          for (final (key, value) in makeup.parts)
-            (
-              label: UsageFormat.part(context, key),
-              value: value * scale,
-              color: UsagePalette.part(key),
-              text: UsageFormat.tokens(value * scale),
-            ),
-        ],
-      ),
+    final priced = !summary.totals.cost.isEmpty;
+    return ValueListenableBuilder(
+      valueListenable: byCost,
+      builder: (context, cost, _) {
+        return UsageCard(
+          title: title,
+          subtitle: subtitle,
+          trailing: !priced
+              ? null
+              : UsageSegmented<bool>(
+                  dense: true,
+                  value: cost,
+                  onChanged: (cost) => byCost.value = cost,
+                  segments: [
+                    (value: true, label: l10n.ustatCost),
+                    (value: false, label: l10n.ustatMetricTokens),
+                  ],
+                ),
+          child: builder(context, priced && cost),
+        );
+      },
     );
   }
 }
@@ -540,55 +576,6 @@ class _UsageToolsSectionState extends State<UsageToolsSection> {
                 _ToolSort.time => '×${tool.calls}',
               },
             ),
-        ],
-      ),
-    );
-  }
-}
-
-/// The kinds of request, side by side: the main agent's, the subagents',
-/// compactions, the rest; picked, they filter.
-class UsageClassSection extends StatelessWidget {
-  const UsageClassSection({
-    super.key,
-    required this.summary,
-    this.selected = const {},
-    this.onToggle,
-  });
-
-  final UsageSummary summary;
-  final Set<UsageClass> selected;
-  final ValueChanged<UsageClass>? onToggle;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = context.l10n;
-    final entries = summary.byClass.entries.toList()
-      ..sort((a, b) => b.value.total.compareTo(a.value.total));
-    return UsageCard(
-      title: l10n.ustatByClass,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          UsageStackBar(
-            columns: 1,
-            selected: {
-              for (final (i, entry) in entries.indexed)
-                if (selected.contains(entry.key)) i,
-            },
-            onTap: onToggle == null || entries.length < 2
-                ? null
-                : (i) => onToggle!(entries[i].key),
-            parts: [
-              for (final MapEntry(:key, :value) in entries)
-                (
-                  label: UsageFormat.ofClass(context, key),
-                  value: value.total.toDouble(),
-                  color: UsagePalette.ofClass(key),
-                  text: UsageFormat.tokens(value.total),
-                ),
-            ],
-          ),
         ],
       ),
     );

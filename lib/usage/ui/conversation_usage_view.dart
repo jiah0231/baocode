@@ -10,19 +10,20 @@ import '../../l10n/l10n.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/codicons.dart';
 import '../usage_ledger.dart';
+import '../usage_prices.dart';
 import '../usage_query.dart';
 import '../usage_record.dart';
 import 'usage_calls.dart';
 import 'usage_charts.dart';
+import 'usage_context.dart';
 import 'usage_filters.dart';
 import 'usage_sections.dart';
 import 'usage_style.dart';
 
 /// The side panel's Usage page: what [session]'s conversation took of
 /// its custom upstream, request by request, as the model proxy kept it:
-/// its context as it grew and was compacted, the main agent's and each
-/// subagent's share, the tools', each turn's, and every call; filtered by
-/// kind, agent and model.
+/// its context as it grew and was compacted, each turn's, and every
+/// call; filtered by kind, agent and model.
 class ConversationUsageView extends StatefulWidget {
   const ConversationUsageView({
     super.key,
@@ -59,6 +60,7 @@ class _ConversationUsageViewState extends State<ConversationUsageView> {
   void initState() {
     super.initState();
     _ledger.addListener(_ledgerChanged);
+    UsagePrices.current.addListener(_repriced);
     widget.session.addListener(_sessionChanged);
     _sessionId = _idOf(widget);
     unawaited(_load());
@@ -90,9 +92,13 @@ class _ConversationUsageViewState extends State<ConversationUsageView> {
   void dispose() {
     _reload?.cancel();
     _ledger.removeListener(_ledgerChanged);
+    UsagePrices.current.removeListener(_repriced);
     widget.session.removeListener(_sessionChanged);
     super.dispose();
   }
+
+  /// The costs, at the prices as they are now.
+  void _repriced() => setState(_summarize);
 
   void _sessionChanged() {
     final id = _idOf(widget);
@@ -103,20 +109,27 @@ class _ConversationUsageViewState extends State<ConversationUsageView> {
 
   void _ledgerChanged() {
     if (_ledger.version == _loadedVersion) {
-      setState(() {});
+      // Its choices: those beside the conversation shown or not.
+      setState(_summarize);
       return;
     }
     _reload?.cancel();
     _reload = Timer(const Duration(milliseconds: 500), () => _load());
   }
 
-  Future<void> _load() async {
+  /// [force]: summed again though nothing changed (as of now).
+  Future<void> _load({bool force = false}) async {
     final id = _sessionId;
     final version = _ledger.version;
     final calls = id == null
         ? const <UsageCall>[]
         : await _ledger.ofSession(id);
     if (!mounted || id != _sessionId) return;
+    _loadedVersion = version;
+    // Another conversation's call: this one's page left as it is.
+    if (!force && !_loading && calls.isNotEmpty && _same(calls, _calls)) {
+      return;
+    }
     setState(() {
       _loadedVersion = version;
       _calls = calls;
@@ -125,10 +138,22 @@ class _ConversationUsageViewState extends State<ConversationUsageView> {
     });
   }
 
+  /// Whether [a] and [b] are the same calls, though read again.
+  static bool _same(List<UsageCall> a, List<UsageCall> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].at.millisecondsSinceEpoch != b[i].at.millisecondsSinceEpoch) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   void _summarize() {
     final now = DateTime.now();
-    _all = UsageSummary.of(_calls, const UsageFilter(), now: now);
-    _summary = UsageSummary.of(_calls, _filter, now: now);
+    final calls = _ledger.shown(_calls);
+    _all = UsageSummary.of(calls, const UsageFilter(), now: now);
+    _summary = UsageSummary.of(calls, _filter, now: now);
   }
 
   void _setFilter(UsageFilter filter) => setState(() {
@@ -161,7 +186,7 @@ class _ConversationUsageViewState extends State<ConversationUsageView> {
         UsageIconButton(
           icon: Codicons.refresh,
           tooltip: l10n.ustatRefresh,
-          onPressed: () => unawaited(_load()),
+          onPressed: () => unawaited(_load(force: true)),
         ),
       ],
       children: [
@@ -215,81 +240,48 @@ class _ConversationUsageViewState extends State<ConversationUsageView> {
 
   List<Widget> _sections(UsageSummary summary) {
     final l10n = context.l10n;
-    final filter = _filter;
     final prompts = UsageSummary.ranked(summary.byPrompt)
       ..sort((a, b) => b.totals.first!.compareTo(a.totals.first!));
     return [
       UsageOverview(summary: summary, minWidth: 128),
-      UsageContextSection(
-        summary: summary,
-        agentLabel: _agentLabel,
-        height: 200,
-      ),
-      UsageMakeupSection(summary: summary),
-      UsageClassSection(
-        summary: summary,
-        selected: filter.classes,
-        onToggle: (kind) {
-          final classes = {...filter.classes};
-          if (!classes.remove(kind)) classes.add(kind);
-          _setFilter(filter.copyWith(classes: classes));
-        },
-      ),
-      UsageCard(
-        title: l10n.ustatByAgent,
-        subtitle: l10n.ustatByAgentDetail,
-        child: UsageRankList(
-          selected: filter.agents,
-          onTap: (item) {
-            final picked = {...filter.agents};
-            if (!picked.remove(item.key)) picked.add(item.key);
-            _setFilter(filter.copyWith(agents: picked));
-          },
-          moreLabel: (n) => l10n.ustatShowAll(n),
-          lessLabel: l10n.ustatShowLess,
-          items: [
-            for (final group in UsageSummary.ranked(summary.byAgent))
-              rankOf(
-                context,
-                group,
-                label: _agentLabel(group.key),
-                detail: group.key.isEmpty ? null : group.detail,
-              ),
-          ],
-        ),
-      ),
-      UsageToolsSection(summary: summary),
+      UsageContextSection(summary: summary, agentLabel: _agentLabel),
       if (prompts.isNotEmpty)
-        UsageCard(
+        UsageRankCard(
+          summary: summary,
           title: l10n.ustatByTurn,
           subtitle: l10n.ustatByTurnDetail,
-          child: UsageRankList(
+          builder: (context, byCost) => UsageRankList(
             limit: 5,
             moreLabel: (n) => l10n.ustatShowAll(n),
             lessLabel: l10n.ustatShowLess,
-            items: [
-              for (final group in prompts)
-                rankOf(
-                  context,
-                  group,
-                  label: UsageFormat.when(group.totals.first!),
-                  detail: l10n.ustatTurnDetail(
-                    UsageFormat.duration(
-                      group.totals.last!.difference(group.totals.first!),
-                    ),
-                    group.totals.maxPrompt == 0
-                        ? '—'
-                        : UsageFormat.tokens(group.totals.maxPrompt),
+            // As they came, not ranked.
+            items: UsageRanking(prompts, byCost: byCost, sort: false).items(
+              (group, rank) => rankOf(
+                context,
+                group,
+                rank: rank,
+                label: UsageFormat.when(group.totals.first!),
+                detail: l10n.ustatTurnDetail(
+                  UsageFormat.duration(
+                    group.totals.ended!.difference(group.totals.first!),
                   ),
+                  group.totals.maxPrompt == 0
+                      ? '—'
+                      : UsageFormat.tokens(group.totals.maxPrompt),
                 ),
-            ],
+              ),
+            ),
           ),
         ),
-      UsageTimeSection(summary: summary, height: 160),
+      UsageTimeSection(summary: summary, height: 140),
       UsageCard(
         title: l10n.ustatCallsTitle,
         subtitle: l10n.ustatRecentCallsDetail(summary.calls.length),
-        child: UsageCallsList(calls: summary.calls, showSession: false),
+        child: UsageCallsList(
+          calls: summary.calls,
+          showSession: false,
+          ledger: _ledger,
+        ),
       ),
     ];
   }
@@ -322,55 +314,45 @@ class _ConversationUsageViewState extends State<ConversationUsageView> {
     final l10n = context.l10n;
     final all = _all;
     final summary = _summary;
-    final hasCalls = _calls.isNotEmpty && all != null && summary != null;
+    final hasCalls = all != null && all.calls.isNotEmpty && summary != null;
+    // Its filters stay at the top, what scrolls fading out under them.
     return ColoredBox(
       color: AppColors.code,
-      child: ScrollEdgeFade(
-        fadeLength: 40,
-        child: SmoothScrolling(
-          builder: (context, controller) => ListView(
-            controller: controller,
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
-            children: [
-              Row(
-                children: [
-                  Icon(Codicons.graph, size: 14, color: AppColors.accent),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      l10n.ustatConversationTitle,
-                      style: UsageText.heading.copyWith(fontSize: 13.5),
-                    ),
-                  ),
-                  if (_sessionId case final id?)
-                    Text(
-                      id.length > 8 ? id.substring(0, 8) : id,
-                      style: UsageText.faint.copyWith(
-                        fontFamily: AppFonts.mono,
-                        fontFamilyFallback: AppFonts.monoFallbacks,
-                      ),
-                    ),
-                ],
+      child: SmoothScrolling(
+        builder: (context, controller) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (hasCalls)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+                child: _filters(all),
               ),
-              const SizedBox(height: 12),
-              if (!hasCalls)
-                _loading ? const SizedBox(height: 120) : _empty()
-              else ...[
-                _filters(all),
-                const SizedBox(height: 12),
-                if (summary.calls.isEmpty)
-                  UsageEmpty(
-                    icon: Codicons.filter,
-                    title: l10n.ustatEmptyFiltered,
-                  )
-                else
-                  for (final (i, section) in _sections(summary).indexed) ...[
-                    if (i > 0) const SizedBox(height: 12),
-                    section,
+            Expanded(
+              child: ScrollEdgeFade(
+                fadeLength: hasCalls ? 28 : 40,
+                child: ListView(
+                  controller: controller,
+                  padding: EdgeInsets.fromLTRB(16, hasCalls ? 12 : 14, 16, 32),
+                  children: [
+                    if (!hasCalls)
+                      _loading ? const SizedBox(height: 120) : _empty()
+                    else if (summary.calls.isEmpty)
+                      UsageEmpty(
+                        icon: Codicons.filter,
+                        title: l10n.ustatEmptyFiltered,
+                      )
+                    else
+                      for (final (i, section) in _sections(
+                        summary,
+                      ).indexed) ...[
+                        if (i > 0) const SizedBox(height: 12),
+                        section,
+                      ],
                   ],
-              ],
-            ],
-          ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

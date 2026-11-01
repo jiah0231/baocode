@@ -61,6 +61,7 @@ class CodexKernel
         RenamesSession,
         AcceptsImages,
         LoadsHistory,
+        PreparesConversation,
         SuggestsPrompts,
         ManagesMcpServers,
         RunsBackgroundTasks,
@@ -686,6 +687,19 @@ class CodexKernel
       return;
     }
     unawaited(_ensureStarted().catchError((Object _) {}));
+  }
+
+  @override
+  Future<bool> prepareConversation() async {
+    if (_disposed) return false;
+    try {
+      await _ensureStarted();
+      return !_disposed && (_sessionId == null || _threadId != null);
+    } on Object {
+      // Startup/resume reports the failure in kernel health. Do not insert
+      // a new message ahead of unread history or send into a failed resume.
+      return false;
+    }
   }
 
   @override
@@ -3046,7 +3060,6 @@ class CodexKernel
         };
         _commands.remove(id);
         emit(ItemUpserted(nextSeq, id, _commandItem(completed, done: true)));
-        emit(FilesMayHaveChanged(nextSeq));
         _startedAt.remove(id);
       case 'fileChange':
         _fileChanges(id, item['changes'] as List? ?? const []);

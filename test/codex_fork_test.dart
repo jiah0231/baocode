@@ -668,6 +668,119 @@ void main() {
     },
   );
 
+  for (final running in [false, true]) {
+    test(
+      '/btw uses a Codex fork with ordered history (running: $running)',
+      () async {
+        final h = _Harness();
+        final workspace = Workspace(
+          kernels: [h.descriptor],
+          preferences: MemoryPreferenceStore(),
+        );
+        addTearDown(workspace.dispose);
+        await workspace.load();
+        final source = workspace.threads.firstWhere((t) => t.id == 'source');
+        final session = source.session;
+        expect(await session.prepareConversation(), isTrue);
+        final server = h.servers.single;
+        if (running) {
+          session.send(const ComposerMessage(text: 'Keep working'));
+          await pumpEventQueue();
+          expect(session.isStreaming, isTrue);
+        }
+        expect(workspace.canAskBeside(source), isTrue);
+        final at = session.forkEndsAt;
+        final aside = await workspace.askBeside(
+          source,
+          const ComposerMessage(text: 'A question on the side'),
+        );
+        expect(aside, isNotNull);
+        expect(aside!.kernel.id, 'codex');
+        expect(aside.id, 'forked');
+        expect(workspace.parentOf(aside), same(source));
+        expect(workspace.asidesAt(source)[at], [same(aside)]);
+        expect(server.requests('thread/fork').single['params'], {
+          'threadId': 'source',
+          if (running) 'beforeTurnId': 'server-turn-1',
+          'deferGoalContinuation': true,
+        });
+        await pumpEventQueue();
+        final child = h.servers.last;
+        final params = child.requests('turn/start').single['params'] as Map;
+        expect(params['threadId'], 'forked');
+        expect(
+          (params['input'] as List).whereType<Map>().map((i) => i['text']),
+          containsAllInOrder([Workspace.asideNote, 'A question on the side']),
+        );
+        expect(
+          _items(aside.session).whereType<UserMessageItem>().map((i) => i.text),
+          ['Kept question', 'A question on the side'],
+        );
+        expect(
+          _items(session).whereType<UserMessageItem>().map((i) => i.text),
+          ['Kept question', if (running) 'Keep working'],
+        );
+        expect(session.isStreaming, running);
+        expect(server.requests('turn/start'), hasLength(running ? 1 : 0));
+        expect(server.requests('turn/interrupt'), isEmpty);
+        expect(server.requests('thread/revert'), isEmpty);
+      },
+    );
+  }
+
+  test(
+    '/btw fork failure leaves the source and aside family unchanged',
+    () async {
+      final h = _Harness();
+      final workspace = Workspace(
+        kernels: [h.descriptor],
+        preferences: MemoryPreferenceStore(),
+      );
+      addTearDown(workspace.dispose);
+      await workspace.load();
+      final source = workspace.threads.firstWhere((t) => t.id == 'source');
+      expect(await source.session.prepareConversation(), isTrue);
+      h.servers.single.failFork = true;
+      final count = workspace.threads.length;
+      expect(
+        await workspace.askBeside(
+          source,
+          const ComposerMessage(text: 'Do not send to the source'),
+        ),
+        isNull,
+      );
+      expect(workspace.threads, hasLength(count));
+      expect(workspace.asidesOf(source), isEmpty);
+      expect(h.servers.single.requests('turn/start'), isEmpty);
+      expect(_items(source.session).whereType<NoticeItem>(), isNotEmpty);
+    },
+  );
+
+  test(
+    '/btw child resume failure does not send before unread history',
+    () async {
+      final h = _Harness();
+      final workspace = Workspace(
+        kernels: [h.descriptor],
+        preferences: MemoryPreferenceStore(),
+      );
+      addTearDown(workspace.dispose);
+      await workspace.load();
+      final source = workspace.threads.firstWhere((t) => t.id == 'source');
+      expect(await source.session.prepareConversation(), isTrue);
+      h.configureServer = (server) => server.failResume = true;
+      final aside = await workspace.askBeside(
+        source,
+        const ComposerMessage(text: 'Do not send without history'),
+      );
+      expect(aside, isNotNull);
+      expect(aside!.session.health.status, KernelHealthStatus.failed);
+      expect(h.servers.last.requests('turn/start'), isEmpty);
+      expect(_items(aside.session).whereType<UserMessageItem>(), isEmpty);
+      expect(h.servers.first.requests('turn/start'), isEmpty);
+    },
+  );
+
   Finder row(String title) =>
       find.descendant(of: find.byType(Sidebar), matching: find.text(title));
   Future<Workspace> app(WidgetTester tester, _Harness h) async {

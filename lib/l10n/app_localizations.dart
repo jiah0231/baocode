@@ -3698,6 +3698,36 @@ abstract class AppLocalizations {
   /// **'Fork'**
   String get sidebarFork;
 
+  /// The menu of a conversation asked beside another with /btw, listed under it in the sidebar: makes it a conversation of its own.
+  ///
+  /// In en, this message translates to:
+  /// **'Detach from Conversation'**
+  String get sidebarDetachAside;
+
+  /// After the message asking to delete an agent that has conversations asked beside it with /btw.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Its /btw conversation is deleted with it.} other{Its {count} /btw conversations are deleted with it.}}'**
+  String sidebarDeleteAsidesToo(int count);
+
+  /// The /btw command in the composer's command list: what follows is asked in a new conversation copied from this one, listed under it.
+  ///
+  /// In en, this message translates to:
+  /// **'Ask in a conversation of its own, beside this one'**
+  String get btwCommandDetail;
+
+  /// The arrow on a sidebar row with conversations asked beside it (/btw) listed under it: no longer lists them.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide /btw Conversations'**
+  String get sidebarFoldAsides;
+
+  /// The arrow, or the tag, on a sidebar row whose conversations asked beside it (/btw) are hidden: lists them under it again.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{Show its /btw conversation} other{Show its {count} /btw conversations}}'**
+  String sidebarUnfoldAsides(int count);
+
   /// No description provided for @sidebarShowMore.
   ///
   /// In en, this message translates to:
@@ -5126,16 +5156,10 @@ abstract class AppLocalizations {
   /// **'Changed again since the agent left it, so Undo could not take the agent\'s change out. Undo it by hand, then keep it.'**
   String get stripChangeConflict;
 
-  /// Tooltip of a changed file seen while another agent worked in the same project.
-  ///
-  /// In en, this message translates to:
-  /// **'Another agent was working in this project at the same time: some of this change may be its.'**
-  String get stripChangeShared;
-
   /// No description provided for @stripChangeUntracked.
   ///
   /// In en, this message translates to:
-  /// **'What it was before is not known (it is ignored or too large and the agent did not tell, or it is outside the project): it can be kept, not undone.'**
+  /// **'What it was before is not known (too large to keep, or the agent did not tell): it can be kept, not undone.'**
   String get stripChangeUntracked;
 
   /// Label of the diff editor comparing a file before the agent changed it with the file now.
@@ -18294,41 +18318,11 @@ abstract class AppLocalizations {
   /// **'Select a commit to see its details.'**
   String get gitLogSelectCommit;
 
-  /// No description provided for @gitLogAuthor.
-  ///
-  /// In en, this message translates to:
-  /// **'Author'**
-  String get gitLogAuthor;
-
   /// No description provided for @gitLogParents.
   ///
   /// In en, this message translates to:
   /// **'Parent: '**
   String get gitLogParents;
-
-  /// No description provided for @gitLogShowBranches.
-  ///
-  /// In en, this message translates to:
-  /// **'Show Branches'**
-  String get gitLogShowBranches;
-
-  /// No description provided for @gitLogHideBranches.
-  ///
-  /// In en, this message translates to:
-  /// **'Hide Branches'**
-  String get gitLogHideBranches;
-
-  /// No description provided for @gitLogShowSizes.
-  ///
-  /// In en, this message translates to:
-  /// **'Show Sizes'**
-  String get gitLogShowSizes;
-
-  /// No description provided for @gitLogHideSizes.
-  ///
-  /// In en, this message translates to:
-  /// **'Hide Sizes'**
-  String get gitLogHideSizes;
 
   /// No description provided for @gitLogFileCount.
   ///
@@ -18803,24 +18797,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{count, plural, =1{1 unchanged line} other{{count} unchanged lines}}'**
   String diffUnchangedLines(int count);
-
-  /// No description provided for @diffHighlightCharacters.
-  ///
-  /// In en, this message translates to:
-  /// **'Highlight Characters'**
-  String get diffHighlightCharacters;
-
-  /// No description provided for @diffHighlightWords.
-  ///
-  /// In en, this message translates to:
-  /// **'Highlight Words'**
-  String get diffHighlightWords;
-
-  /// No description provided for @diffHighlightLines.
-  ///
-  /// In en, this message translates to:
-  /// **'Highlight Lines'**
-  String get diffHighlightLines;
 
   /// No description provided for @diffGoToFile.
   ///
@@ -20478,12 +20454,6 @@ abstract class AppLocalizations {
   /// **'usage statistics tokens cache calls cost dashboard upstream model'**
   String get ustatKeywords;
 
-  /// No description provided for @ustatDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'Every request to your custom upstreams, as BaoCode\'s model proxy passed it on: tokens, the cache, time, by conversation, subagent and tool. Claude\'s official service does not go through the proxy and is not counted. Kept on this computer only.'**
-  String get ustatDescription;
-
   /// No description provided for @ustatAll.
   ///
   /// In en, this message translates to:
@@ -20826,12 +20796,6 @@ abstract class AppLocalizations {
   /// **'Speed'**
   String get ustatMetricSpeed;
 
-  /// No description provided for @ustatByClass.
-  ///
-  /// In en, this message translates to:
-  /// **'By kind of request'**
-  String get ustatByClass;
-
   /// No description provided for @ustatByUpstream.
   ///
   /// In en, this message translates to:
@@ -20849,18 +20813,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'By conversation'**
   String get ustatByConversation;
-
-  /// No description provided for @ustatByAgent.
-  ///
-  /// In en, this message translates to:
-  /// **'Main agent and subagents'**
-  String get ustatByAgent;
-
-  /// No description provided for @ustatByAgentDetail.
-  ///
-  /// In en, this message translates to:
-  /// **'What each agent of the conversation sent and got back'**
-  String get ustatByAgentDetail;
 
   /// No description provided for @ustatByTurn.
   ///
@@ -20981,12 +20933,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'What fills the context'**
   String get ustatContextMakeup;
-
-  /// No description provided for @ustatContextMakeupDetail.
-  ///
-  /// In en, this message translates to:
-  /// **'The main agent\'s last request: {tokens}, {time}. Parts estimated from its text.'**
-  String ustatContextMakeupDetail(String tokens, String time);
 
   /// No description provided for @ustatRecentCalls.
   ///
@@ -21147,7 +21093,7 @@ abstract class AppLocalizations {
   /// No description provided for @ustatEmptyDetail.
   ///
   /// In en, this message translates to:
-  /// **'Calls show here once a conversation runs on a custom upstream (Settings → Models).'**
+  /// **'Calls show here once a conversation runs.'**
   String get ustatEmptyDetail;
 
   /// No description provided for @ustatEmptyFiltered.
@@ -21155,12 +21101,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Nothing matches these filters'**
   String get ustatEmptyFiltered;
-
-  /// No description provided for @ustatConversationTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Conversation usage'**
-  String get ustatConversationTitle;
 
   /// No description provided for @ustatConversationNew.
   ///
@@ -21213,13 +21153,13 @@ abstract class AppLocalizations {
   /// No description provided for @ustatRecordDescription.
   ///
   /// In en, this message translates to:
-  /// **'Sessions on a custom upstream go through BaoCode\'s local proxy, which keeps each call. Applies to agents started from now on.'**
+  /// **'Claude Code\'s own calls are read from what it prints; sessions on a custom upstream go through BaoCode\'s local proxy, which keeps each call. Applies to agents started from now on.'**
   String get ustatRecordDescription;
 
   /// No description provided for @ustatRecordOffDescription.
   ///
   /// In en, this message translates to:
-  /// **'Turn it on to keep each call to your custom upstreams: tokens, the cache, time, by conversation, subagent and tool.'**
+  /// **'Turn it on to keep each call to a model: tokens, the cache, time, by conversation, subagent and tool.'**
   String get ustatRecordOffDescription;
 
   /// No description provided for @ustatDetailed.
@@ -21389,6 +21329,642 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Listening on port {port}'**
   String mobileStatusListening(int port);
+
+  /// No description provided for @autoResetCreditsToggle.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto-Use Reset Credits'**
+  String get autoResetCreditsToggle;
+
+  /// No description provided for @modelsResetCredits.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 reset left} other{{count} resets left}}'**
+  String modelsResetCredits(int count);
+
+  /// No description provided for @modelsResetCreditsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 reset credit} other{{count} reset credits}}'**
+  String modelsResetCreditsTitle(int count);
+
+  /// No description provided for @modelsResetCreditsDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Using one starts this account\'s quota windows over at once.'**
+  String get modelsResetCreditsDetail;
+
+  /// No description provided for @modelsResetCreditExpires.
+  ///
+  /// In en, this message translates to:
+  /// **'Expires {time}'**
+  String modelsResetCreditExpires(String time);
+
+  /// No description provided for @modelsResetCreditUse.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset Now'**
+  String get modelsResetCreditUse;
+
+  /// No description provided for @modelsResetCreditConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Use a reset credit of {account}?'**
+  String modelsResetCreditConfirm(String account);
+
+  /// No description provided for @modelsResetCreditConfirmDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Its quota starts over at once. The credit can\'t be given back, and whatever quota is left now is lost.'**
+  String get modelsResetCreditConfirmDetail;
+
+  /// No description provided for @resetCreditsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{A reset credit expires} other{{count} reset credits expire}} within a week. To get their worth, use Codex models on this plan, resetting once the quota runs out:'**
+  String resetCreditsHint(int count);
+
+  /// No description provided for @resetCreditsHintDay.
+  ///
+  /// In en, this message translates to:
+  /// **'{day}: reset {count, plural, =1{once} other{{count} times}}'**
+  String resetCreditsHintDay(String day, int count);
+
+  /// No description provided for @resetCreditsHintBy.
+  ///
+  /// In en, this message translates to:
+  /// **'by {time}'**
+  String resetCreditsHintBy(String time);
+
+  /// No description provided for @resetCreditsHintToday.
+  ///
+  /// In en, this message translates to:
+  /// **'Today'**
+  String get resetCreditsHintToday;
+
+  /// No description provided for @resetCreditsHintTomorrow.
+  ///
+  /// In en, this message translates to:
+  /// **'Tomorrow'**
+  String get resetCreditsHintTomorrow;
+
+  /// No description provided for @resetCreditsHintAuto.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset Automatically'**
+  String get resetCreditsHintAuto;
+
+  /// No description provided for @resetCreditsHintLater.
+  ///
+  /// In en, this message translates to:
+  /// **'Got It'**
+  String get resetCreditsHintLater;
+
+  /// No description provided for @ustatPartMemory.
+  ///
+  /// In en, this message translates to:
+  /// **'CLAUDE.md & rules'**
+  String get ustatPartMemory;
+
+  /// No description provided for @ustatPartSkills.
+  ///
+  /// In en, this message translates to:
+  /// **'Skills'**
+  String get ustatPartSkills;
+
+  /// No description provided for @ustatPartMcp.
+  ///
+  /// In en, this message translates to:
+  /// **'MCP'**
+  String get ustatPartMcp;
+
+  /// No description provided for @ustatPartMessages.
+  ///
+  /// In en, this message translates to:
+  /// **'Conversation'**
+  String get ustatPartMessages;
+
+  /// No description provided for @ustatCacheHitShort.
+  ///
+  /// In en, this message translates to:
+  /// **'{rate} cached'**
+  String ustatCacheHitShort(String rate);
+
+  /// No description provided for @ustatCompactedAfter.
+  ///
+  /// In en, this message translates to:
+  /// **'First after compacting'**
+  String get ustatCompactedAfter;
+
+  /// No description provided for @ustatContextPickHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Click to see what filled it'**
+  String get ustatContextPickHint;
+
+  /// No description provided for @ustatRequests.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 request} other{{count} requests}}'**
+  String ustatRequests(int count);
+
+  /// No description provided for @ustatRequestOf.
+  ///
+  /// In en, this message translates to:
+  /// **'#{index} of {count}'**
+  String ustatRequestOf(int index, int count);
+
+  /// No description provided for @ustatPreviousRequest.
+  ///
+  /// In en, this message translates to:
+  /// **'Previous request'**
+  String get ustatPreviousRequest;
+
+  /// No description provided for @ustatNextRequest.
+  ///
+  /// In en, this message translates to:
+  /// **'Next request'**
+  String get ustatNextRequest;
+
+  /// No description provided for @ustatNoMakeup.
+  ///
+  /// In en, this message translates to:
+  /// **'What filled this request\'s context was not recorded (turn on Detailed recording).'**
+  String get ustatNoMakeup;
+
+  /// No description provided for @ustatMakeupNoDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Recorded before the breakdown by tool, MCP server and skill: requests from now on have it.'**
+  String get ustatMakeupNoDetail;
+
+  /// No description provided for @ustatMakeupShapeMissing.
+  ///
+  /// In en, this message translates to:
+  /// **'The breakdown of this request\'s tools and skills was not found.'**
+  String get ustatMakeupShapeMissing;
+
+  /// No description provided for @ustatMcpTools.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{instructions only} =1{1 tool} other{{count} tools}}'**
+  String ustatMcpTools(int count);
+
+  /// No description provided for @ustatMcpInstructions.
+  ///
+  /// In en, this message translates to:
+  /// **'Instructions'**
+  String get ustatMcpInstructions;
+
+  /// No description provided for @ustatSkillPlugin.
+  ///
+  /// In en, this message translates to:
+  /// **'plugin'**
+  String get ustatSkillPlugin;
+
+  /// No description provided for @ustatToolInputs.
+  ///
+  /// In en, this message translates to:
+  /// **'inputs {tokens}'**
+  String ustatToolInputs(String tokens);
+
+  /// No description provided for @ustatSwitchedHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved to Settings → Customize. The agent\'s next requests go without what was turned off.'**
+  String get ustatSwitchedHint;
+
+  /// No description provided for @ustatShowAuxiliary.
+  ///
+  /// In en, this message translates to:
+  /// **'Show auxiliary requests'**
+  String get ustatShowAuxiliary;
+
+  /// No description provided for @ustatShowAuxiliaryDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Count Claude Code\'s requests beside the conversation (suggesting the next prompt, naming the conversation, summing up a web page) in the charts and totals. They are kept either way.'**
+  String get ustatShowAuxiliaryDescription;
+
+  /// No description provided for @ustatTrace.
+  ///
+  /// In en, this message translates to:
+  /// **'Debug capture'**
+  String get ustatTrace;
+
+  /// No description provided for @ustatTraceDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Also keep every request to a custom upstream whole: as Claude Code sent it, as it went to the upstream, the upstream\'s raw answer and what went back; of Claude Code\'s own models, only their answers. Keys are masked. Takes a lot of space: turn it off when done.'**
+  String get ustatTraceDescription;
+
+  /// No description provided for @ustatTraceTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Raw exchange'**
+  String get ustatTraceTitle;
+
+  /// No description provided for @ustatTraceLoading.
+  ///
+  /// In en, this message translates to:
+  /// **'Reading…'**
+  String get ustatTraceLoading;
+
+  /// No description provided for @ustatTraceGone.
+  ///
+  /// In en, this message translates to:
+  /// **'The raw exchange was cleared.'**
+  String get ustatTraceGone;
+
+  /// No description provided for @ustatTraceNone.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing went this way (it was answered before).'**
+  String get ustatTraceNone;
+
+  /// No description provided for @ustatTraceRequestBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Request body'**
+  String get ustatTraceRequestBody;
+
+  /// No description provided for @ustatTraceRawResponse.
+  ///
+  /// In en, this message translates to:
+  /// **'Raw response'**
+  String get ustatTraceRawResponse;
+
+  /// No description provided for @ustatTraceToUpstream.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent upstream'**
+  String get ustatTraceToUpstream;
+
+  /// No description provided for @ustatTraceResponseHeaders.
+  ///
+  /// In en, this message translates to:
+  /// **'Response headers · {count}'**
+  String ustatTraceResponseHeaders(int count);
+
+  /// No description provided for @ustatTraceAnswerOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'As Claude Code printed it; the request to Anthropic is not seen'**
+  String get ustatTraceAnswerOnly;
+
+  /// No description provided for @ustatTraceTry.
+  ///
+  /// In en, this message translates to:
+  /// **'Try {n}'**
+  String ustatTraceTry(int n);
+
+  /// No description provided for @ustatTraceCopyAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy all'**
+  String get ustatTraceCopyAll;
+
+  /// No description provided for @ustatTraceCopyBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get ustatTraceCopyBody;
+
+  /// No description provided for @ustatTraceHeaders.
+  ///
+  /// In en, this message translates to:
+  /// **'Request headers · {count}'**
+  String ustatTraceHeaders(int count);
+
+  /// No description provided for @ustatTraceRaw.
+  ///
+  /// In en, this message translates to:
+  /// **'As sent'**
+  String get ustatTraceRaw;
+
+  /// No description provided for @ustatTraceFormatted.
+  ///
+  /// In en, this message translates to:
+  /// **'Formatted'**
+  String get ustatTraceFormatted;
+
+  /// No description provided for @ustatTraceEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'Empty'**
+  String get ustatTraceEmpty;
+
+  /// No description provided for @ustatTraceMore.
+  ///
+  /// In en, this message translates to:
+  /// **'Show more ({size} left)'**
+  String ustatTraceMore(String size);
+
+  /// No description provided for @ustatTraceTruncated.
+  ///
+  /// In en, this message translates to:
+  /// **'cut at 24M characters'**
+  String get ustatTraceTruncated;
+
+  /// No description provided for @ustatSpaceTraces.
+  ///
+  /// In en, this message translates to:
+  /// **'; raw exchanges {size} ({count})'**
+  String ustatSpaceTraces(String size, int count);
+
+  /// No description provided for @ustatClearTraces.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear the raw exchanges only'**
+  String get ustatClearTraces;
+
+  /// No description provided for @ustatClearTracesDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'The calls stay; their raw requests and answers are deleted from this computer.'**
+  String get ustatClearTracesDetail;
+
+  /// No description provided for @ustatColumnTotal.
+  ///
+  /// In en, this message translates to:
+  /// **'Total'**
+  String get ustatColumnTotal;
+
+  /// No description provided for @ustatColumnMix.
+  ///
+  /// In en, this message translates to:
+  /// **'Breakdown'**
+  String get ustatColumnMix;
+
+  /// No description provided for @ustatDeferred.
+  ///
+  /// In en, this message translates to:
+  /// **'deferred, {size}'**
+  String ustatDeferred(String size);
+
+  /// No description provided for @ustatSwitchedOff.
+  ///
+  /// In en, this message translates to:
+  /// **'turned off'**
+  String get ustatSwitchedOff;
+
+  /// No description provided for @usageUntilCompaction.
+  ///
+  /// In en, this message translates to:
+  /// **'{tokens} to auto-compact'**
+  String usageUntilCompaction(String tokens);
+
+  /// No description provided for @usageAgentDefinition.
+  ///
+  /// In en, this message translates to:
+  /// **'agent'**
+  String get usageAgentDefinition;
+
+  /// No description provided for @usageAttachments.
+  ///
+  /// In en, this message translates to:
+  /// **'Reminders & attachments'**
+  String get usageAttachments;
+
+  /// No description provided for @ustatCost.
+  ///
+  /// In en, this message translates to:
+  /// **'Cost'**
+  String get ustatCost;
+
+  /// No description provided for @ustatCostEstimated.
+  ///
+  /// In en, this message translates to:
+  /// **'At the prices as they are now'**
+  String get ustatCostEstimated;
+
+  /// No description provided for @ustatCostUnpriced.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 call unpriced} other{{count} calls unpriced}}'**
+  String ustatCostUnpriced(int count);
+
+  /// No description provided for @ustatCostNoPrices.
+  ///
+  /// In en, this message translates to:
+  /// **'No prices set'**
+  String get ustatCostNoPrices;
+
+  /// No description provided for @ustatPrices.
+  ///
+  /// In en, this message translates to:
+  /// **'Model prices'**
+  String get ustatPrices;
+
+  /// No description provided for @ustatPricesDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'A million tokens each. Costs are worked out at the prices as they are now, the calls before a change included.'**
+  String get ustatPricesDetail;
+
+  /// No description provided for @ustatPricesAgentHint.
+  ///
+  /// In en, this message translates to:
+  /// **'BaoCode can keep these for you: ask it in a chat to look up the current prices of these models and update them. It checks the upstream\'s own pricing page and writes them here.'**
+  String get ustatPricesAgentHint;
+
+  /// No description provided for @ustatPriceCurrency.
+  ///
+  /// In en, this message translates to:
+  /// **'Currency'**
+  String get ustatPriceCurrency;
+
+  /// No description provided for @ustatPriceAnyUpstream.
+  ///
+  /// In en, this message translates to:
+  /// **'any upstream'**
+  String get ustatPriceAnyUpstream;
+
+  /// No description provided for @ustatPriceSource.
+  ///
+  /// In en, this message translates to:
+  /// **'Where the price was read'**
+  String get ustatPriceSource;
+
+  /// No description provided for @ustatPriceUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'updated {when}'**
+  String ustatPriceUpdated(String when);
+
+  /// No description provided for @ustatPriceClear.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear the price'**
+  String get ustatPriceClear;
+
+  /// No description provided for @ustatPriceIncomplete.
+  ///
+  /// In en, this message translates to:
+  /// **'Fill in both the input and the output price'**
+  String get ustatPriceIncomplete;
+
+  /// No description provided for @ustatPriceSpent.
+  ///
+  /// In en, this message translates to:
+  /// **'In this time'**
+  String get ustatPriceSpent;
+
+  /// No description provided for @modelsAutoResetCreditsOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Off'**
+  String get modelsAutoResetCreditsOff;
+
+  /// No description provided for @modelsAutoResetCreditsLong.
+  ///
+  /// In en, this message translates to:
+  /// **'When the Week or Month Runs Out'**
+  String get modelsAutoResetCreditsLong;
+
+  /// No description provided for @modelsAutoResetCreditsAny.
+  ///
+  /// In en, this message translates to:
+  /// **'When Any Window Runs Out'**
+  String get modelsAutoResetCreditsAny;
+
+  /// No description provided for @modelsAutoResetCreditsOffDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'An account out of quota waits for it to start over.'**
+  String get modelsAutoResetCreditsOffDescription;
+
+  /// No description provided for @modelsAutoResetCreditsLongDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'An account out of its week (or month) uses a reset credit and goes on. Five hours running out is waited for: they start over soon.'**
+  String get modelsAutoResetCreditsLongDescription;
+
+  /// No description provided for @modelsAutoResetCreditsAnyDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'An account out of any window, five hours too, uses a reset credit at once and goes on. Credits go faster.'**
+  String get modelsAutoResetCreditsAnyDescription;
+
+  /// No description provided for @ustatQuota.
+  ///
+  /// In en, this message translates to:
+  /// **'Claude Plan'**
+  String get ustatQuota;
+
+  /// No description provided for @ustatQuotaDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'How much of the plan\'s limits Claude Code\'s own models took in this time, from the limits as they stood after each call.'**
+  String get ustatQuotaDetail;
+
+  /// No description provided for @ustatQuotaFiveHour.
+  ///
+  /// In en, this message translates to:
+  /// **'5-hour limit'**
+  String get ustatQuotaFiveHour;
+
+  /// No description provided for @ustatQuotaWeek.
+  ///
+  /// In en, this message translates to:
+  /// **'Weekly limit'**
+  String get ustatQuotaWeek;
+
+  /// No description provided for @ustatQuotaWeekOf.
+  ///
+  /// In en, this message translates to:
+  /// **'Weekly {model} limit'**
+  String ustatQuotaWeekOf(String model);
+
+  /// No description provided for @ustatQuotaUsed.
+  ///
+  /// In en, this message translates to:
+  /// **'{percent} used in this time'**
+  String ustatQuotaUsed(String percent);
+
+  /// No description provided for @ustatQuotaPeak.
+  ///
+  /// In en, this message translates to:
+  /// **'Peak {percent} in this time · reset {count, plural, =1{once} other{{count} times}}'**
+  String ustatQuotaPeak(String percent, int count);
+
+  /// No description provided for @ustatQuotaPerPercent.
+  ///
+  /// In en, this message translates to:
+  /// **'1% of the weekly limit ≈ {tokens} tokens'**
+  String ustatQuotaPerPercent(String tokens);
+
+  /// No description provided for @ustatQuotaPerPercentCost.
+  ///
+  /// In en, this message translates to:
+  /// **'≈ {cost} at API prices'**
+  String ustatQuotaPerPercentCost(String cost);
+
+  /// No description provided for @ustatCacheSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'{amount} saved'**
+  String ustatCacheSaved(String amount);
+
+  /// No description provided for @ustatCostIn.
+  ///
+  /// In en, this message translates to:
+  /// **'In {currency} only; the other currencies are in the totals'**
+  String ustatCostIn(String currency);
+
+  /// No description provided for @ustatPriceClaudeDefault.
+  ///
+  /// In en, this message translates to:
+  /// **'Claude Code\'s own models without a price of yours are priced at Anthropic\'s API prices: the grey figures.'**
+  String get ustatPriceClaudeDefault;
+
+  /// No description provided for @ustatContextUnpickHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Click again to unpick: back to the context as it is now'**
+  String get ustatContextUnpickHint;
+
+  /// Managed Codex CLI
+  String get codexInstallTitle;
+
+  /// Install or update an official Codex release in BaoCode’s data folder. Other installations, running sessions and SSH hosts are unchanged.
+  String get codexInstallDescription;
+
+  /// Install / update…
+  String get codexInstallAction;
+
+  /// Working…
+  String get codexInstallBusy;
+
+  /// Checking the latest official release…
+  String get codexInstallChecking;
+
+  /// Install and use this Codex release?
+  String get codexInstallConfirm;
+
+  /// Download this package from OpenAI’s GitHub releases, verify its SHA-256, extract it into BaoCode’s data folder, and check its version. On success, switch new local sessions to this executable. Existing versions and system PATH are not changed.
+  String get codexInstallConfirmDetail;
+
+  /// Install and use
+  String get codexInstallProceed;
+
+  /// Installed and selected for new local sessions.
+  String get codexInstallDone;
+
+  /// Codex installation failed. The selected executable was not changed.
+  String get codexInstallFailed;
+
+  /// Bot backends
+  String get botsBackendTitle;
+
+  /// Choose each bot’s backend while idle. Each backend keeps its own conversation; switching clears the model choice, not history. Codex uses only BaoCode’s gated tools and a read-only sandbox.
+  String get botsBackendDescription;
+
+  /// Wait for this bot to finish before switching.
+  String get botsBackendBusy;
+
+  /// Native Codex files and settings; commands are BaoCode prompts. Config edits apply to new sessions and depend on the installed Codex version. Project config, hooks and execution rules require a trusted project.
+  String get codexCustomizeNotice;
 }
 
 class _AppLocalizationsDelegate

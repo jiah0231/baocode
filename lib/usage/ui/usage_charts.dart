@@ -1,9 +1,12 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 
 import '../../chat/widgets/hover_builder.dart';
+import '../../l10n/l10n.dart';
 import '../../theme/app_theme.dart';
+import '../../theme/codicons.dart';
 import '../../theme/workbench_theme.dart' show themeColors;
 import 'usage_style.dart';
 
@@ -16,7 +19,7 @@ class UsageCard extends StatelessWidget {
     this.title,
     this.subtitle,
     this.trailing,
-    this.padding = const EdgeInsets.fromLTRB(16, 14, 16, 16),
+    this.padding = const EdgeInsets.fromLTRB(14, 12, 14, 12),
     this.color,
   });
 
@@ -69,7 +72,7 @@ class UsageCard extends StatelessWidget {
               ],
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
         ],
         child,
       ],
@@ -103,7 +106,7 @@ class UsageStatTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+    padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
     decoration: BoxDecoration(
       color: UsageCard.background,
       borderRadius: BorderRadius.circular(12),
@@ -128,36 +131,58 @@ class UsageStatTile extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 6),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Expanded(
-              child: Text(
-                value,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: UsageText.value,
+        const SizedBox(height: 4),
+        // The value whole, the sparkline in what room is left: narrower,
+        // or none.
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final text = TextPainter(
+              text: TextSpan(
+                text: value,
+                style: DefaultTextStyle.of(context).style
+                    .merge(UsageText.value),
               ),
-            ),
-            if (trend case final trend? when trend.length > 1)
-              Padding(
-                padding: const EdgeInsets.only(left: 8, bottom: 3),
-                child: SizedBox(
-                  width: 56,
-                  height: 18,
-                  child: CustomPaint(
-                    painter: _SparklinePainter(
-                      trend,
-                      line: AppColors.textFaint,
-                      last: AppColors.accent,
-                    ),
+              textDirection: TextDirection.ltr,
+              maxLines: 1,
+              textScaler: MediaQuery.textScalerOf(context),
+            )..layout();
+            final room = constraints.maxWidth - text.width - 8;
+            text.dispose();
+            final sparkline = math.min(60.0, room);
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  child: Text(
+                    value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: UsageText.value,
                   ),
                 ),
-              ),
-          ],
+                if (trend case final trend?
+                    when trend.length > 1 && sparkline >= 28)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 8, bottom: 2),
+                    child: SizedBox(
+                      width: sparkline,
+                      height: 26,
+                      child: CustomPaint(
+                        painter: _SparklinePainter(
+                          trend,
+                          color: tone ?? AppColors.accent,
+                        ),
+                      ),
+                    ),
+                  )
+                else
+                  // As tall as with one.
+                  const SizedBox(height: 28),
+              ],
+            );
+          },
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 2),
         Text(
           detail ?? '',
           maxLines: 1,
@@ -169,12 +194,13 @@ class UsageStatTile extends StatelessWidget {
   );
 }
 
+/// A trend as a small area: its line, and under it the area fading to
+/// nothing at the foot.
 class _SparklinePainter extends CustomPainter {
-  _SparklinePainter(this.values, {required this.line, required this.last});
+  _SparklinePainter(this.values, {required this.color});
 
   final List<double> values;
-  final Color line;
-  final Color last;
+  final Color color;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -183,27 +209,45 @@ class _SparklinePainter extends CustomPainter {
     final step = size.width / (values.length - 1);
     Offset at(int i) => Offset(
       i * step,
-      size.height - 2 - (values[i] / top) * (size.height - 4),
+      size.height - 1 - (values[i] / top) * (size.height - 4),
     );
-    final path = Path()..moveTo(at(0).dx, at(0).dy);
+    final line = Path()..moveTo(at(0).dx, at(0).dy);
     for (var i = 1; i < values.length; i++) {
-      path.lineTo(at(i).dx, at(i).dy);
+      line.lineTo(at(i).dx, at(i).dy);
     }
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = line
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5
-        ..strokeJoin = StrokeJoin.round
-        ..strokeCap = StrokeCap.round,
-    );
-    canvas.drawCircle(at(values.length - 1), 2.5, Paint()..color = last);
+    final area = Path.from(line)
+      ..lineTo(size.width, size.height)
+      ..lineTo(0, size.height)
+      ..close();
+    canvas
+      ..drawPath(
+        area,
+        Paint()
+          ..shader = LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              color.withValues(alpha: 0.32),
+              color.withValues(alpha: 0.10),
+              color.withValues(alpha: 0),
+            ],
+            stops: const [0, 0.55, 1],
+          ).createShader(Offset.zero & size),
+      )
+      ..drawPath(
+        line,
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.4
+          ..strokeJoin = StrokeJoin.round
+          ..strokeCap = StrokeCap.round,
+      );
   }
 
   @override
   bool shouldRepaint(_SparklinePainter old) =>
-      old.values != values || old.line != line || old.last != last;
+      !listEquals(old.values, values) || old.color != color;
 }
 
 /// Tiles in a grid as wide as it is: rows of as many as fit at
@@ -321,10 +365,18 @@ class UsageLegend extends StatelessWidget {
 /// The readout of a chart's hover: a heading, then each series' value
 /// (the value first, strong; its name after it, keyed by a short line).
 class UsageTooltip extends StatelessWidget {
-  const UsageTooltip({super.key, required this.title, required this.rows});
+  const UsageTooltip({
+    super.key,
+    required this.title,
+    required this.rows,
+    this.footer,
+  });
 
   final String title;
   final List<({Color? color, String value, String label})> rows;
+
+  /// Under the rows, faint: what a click does.
+  final String? footer;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -383,6 +435,10 @@ class UsageTooltip extends StatelessWidget {
               ],
             ),
           ),
+        if (footer case final footer?) ...[
+          const SizedBox(height: 6),
+          Text(footer, style: UsageText.faint),
+        ],
       ],
     ),
   );
@@ -443,6 +499,10 @@ class UsageColumnChart extends StatefulWidget {
     required this.format,
     this.height = 180,
     this.onTapColumn,
+    this.selected,
+    this.marks = const {},
+    this.hint,
+    this.selectedHint,
   });
 
   final List<UsageColumn> columns;
@@ -450,6 +510,18 @@ class UsageColumnChart extends StatefulWidget {
   final String Function(double value) format;
   final double height;
   final ValueChanged<int>? onTapColumn;
+
+  /// The column picked, kept lifted.
+  final int? selected;
+
+  /// Columns something happened at (a compaction), by index: a mark over
+  /// each, what it was in its readout.
+  final Map<int, String> marks;
+
+  /// Under a column's readout: what a click on it does; on the one
+  /// [selected], [selectedHint] (a click there unpicks it).
+  final String? hint;
+  final String? selectedHint;
 
   @override
   State<UsageColumnChart> createState() => _UsageColumnChartState();
@@ -507,6 +579,10 @@ class _UsageColumnChartState extends State<UsageColumnChart> {
                         colors: [for (final s in widget.series) s.color],
                         scale: scale,
                         hovered: hovered,
+                        selected: widget.selected,
+                        marks: widget.marks.keys.toSet(),
+                        mark: UsagePalette.marker,
+                        selection: AppColors.accent,
                         axisWidth: _axisWidth,
                         labelsHeight: _labelsHeight,
                         grid: UsagePalette.grid,
@@ -524,7 +600,16 @@ class _UsageColumnChartState extends State<UsageColumnChart> {
                         width: constraints.maxWidth,
                         tooltip: UsageTooltip(
                           title: columns[hovered].title,
+                          footer: hovered == widget.selected
+                              ? widget.selectedHint ?? widget.hint
+                              : widget.hint,
                           rows: [
+                            if (widget.marks[hovered] case final mark?)
+                              (
+                                color: UsagePalette.marker,
+                                value: '◆',
+                                label: mark,
+                              ),
                             for (final (i, s) in widget.series.indexed)
                               if (i < columns[hovered].values.length &&
                                   columns[hovered].values[i] > 0)
@@ -573,12 +658,20 @@ class _ColumnsPainter extends CustomPainter {
     required this.hover,
     required this.textStyle,
     required this.format,
+    this.selected,
+    this.marks = const {},
+    this.mark,
+    this.selection,
   });
 
   final List<UsageColumn> columns;
   final List<Color> colors;
   final ({double top, double step}) scale;
   final int? hovered;
+  final int? selected;
+  final Set<int> marks;
+  final Color? mark;
+  final Color? selection;
   final double axisWidth;
   final double labelsHeight;
   final Color grid;
@@ -587,13 +680,16 @@ class _ColumnsPainter extends CustomPainter {
   final TextStyle textStyle;
   final String Function(double value) format;
 
-  void _text(
+  /// Where it ends, at the right; not painted (null) where it would
+  /// start before [after].
+  double? _text(
     Canvas canvas,
     String text,
     Offset at, {
     TextAlign? align,
     double? left,
     double? right,
+    double? after,
   }) {
     final painter = TextPainter(
       text: TextSpan(text: text, style: textStyle),
@@ -608,15 +704,21 @@ class _ColumnsPainter extends CustomPainter {
     // Kept within the plot, off the values' axis.
     if (right != null) dx = math.min(dx, right - painter.width);
     if (left != null) dx = math.max(dx, left);
+    if (after != null && dx < after) {
+      painter.dispose();
+      return null;
+    }
     painter.paint(canvas, Offset(dx, at.dy - painter.height / 2));
+    final end = dx + painter.width;
     painter.dispose();
+    return end;
   }
 
   @override
   void paint(Canvas canvas, Size size) {
     final plot = Rect.fromLTRB(
       axisWidth,
-      6,
+      marks.isEmpty ? 6 : 12,
       size.width,
       size.height - labelsHeight,
     );
@@ -637,18 +739,78 @@ class _ColumnsPainter extends CustomPainter {
     }
     if (columns.isEmpty) return;
     final slot = plot.width / columns.length;
-    final width = math.min(24.0, math.max(2.0, slot * 0.64));
-    if (hovered case final i?) {
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(plot.left + slot * i, plot.top, slot, plot.height),
-          const Radius.circular(4),
+    final width = math.min(24.0, math.max(1.5, slot * 0.64));
+    if (selected case final i? when i < columns.length) {
+      final band = math.max(slot, 6.0);
+      // Square, as the columns' sides are.
+      canvas.drawRect(
+        Rect.fromLTWH(
+          plot.left + slot * (i + 0.5) - band / 2,
+          plot.top,
+          band,
+          plot.height,
+        ),
+        Paint()..color = (selection ?? hover).withValues(alpha: 0.16),
+      );
+    }
+    if (hovered case final i? when i != selected) {
+      final band = math.max(slot, 2.0);
+      canvas.drawRect(
+        Rect.fromLTWH(
+          plot.left + slot * (i + 0.5) - band / 2,
+          plot.top,
+          band,
+          plot.height,
         ),
         Paint()..color = hover,
       );
     }
+    // Spaced apart: those close to the one before left out, not heaped.
+    final markAt = <double>[];
+    for (final i in marks.toList()..sort()) {
+      if (i >= columns.length) continue;
+      final cx = plot.left + slot * (i + 0.5);
+      if (markAt.isEmpty || cx - markAt.last >= 12) markAt.add(cx);
+    }
     final gap = width >= 6 ? 2.0 : 0.0;
+    // More columns than pixels: a pixel's tallest a pixel wide, edge to
+    // edge, the run's outline (thinner columns side by side shimmer).
+    final dense = slot < 2;
+    if (dense) {
+      final pixels = plot.width.floor();
+      final paints = [
+        for (final color in colors)
+          Paint()
+            ..color = color
+            ..isAntiAlias = false,
+      ];
+      for (var b = 0; b < pixels; b++) {
+        final from = b * columns.length ~/ pixels;
+        final to = math.max(from + 1, (b + 1) * columns.length ~/ pixels);
+        UsageColumn? tallest;
+        var most = -1.0;
+        for (var i = from; i < to && i < columns.length; i++) {
+          final total = columns[i].values.fold(0.0, (sum, v) => sum + v);
+          if (total > most) {
+            most = total;
+            tallest = columns[i];
+          }
+        }
+        if (tallest == null) continue;
+        var y = plot.bottom;
+        for (final (s, value) in tallest.values.indexed) {
+          if (value <= 0) continue;
+          final h = value / scale.top * plot.height;
+          canvas.drawRect(
+            Rect.fromLTRB(plot.left + b, y - h, plot.left + b + 1, y),
+            paints[s % paints.length],
+          );
+          y -= h;
+        }
+      }
+    }
     for (final (i, column) in columns.indexed) {
+      if (dense) break;
       final x = plot.left + slot * i + (slot - width) / 2;
       var y = plot.bottom;
       final shown = [
@@ -668,24 +830,58 @@ class _ColumnsPainter extends CustomPainter {
             ),
             Paint()
               ..color = colors[s % colors.length].withValues(
-                alpha: hovered == null || hovered == i ? 1 : 0.55,
+                alpha: hovered == null || hovered == i || selected == i
+                    ? 1
+                    : 0.55,
               ),
           );
         }
         y -= h;
       }
     }
-    // The time under the columns: as many labels as fit.
-    final every = math.max(1, (64 / slot).ceil());
-    for (var i = 0; i < columns.length; i += every) {
-      _text(
-        canvas,
-        columns[i].label,
-        Offset(plot.left + slot * (i + 0.5), size.height - labelsHeight / 2),
-        align: TextAlign.center,
-        left: plot.left + 4,
-        right: plot.right,
+    // Something happened there: a diamond over it, at the plot's top.
+    for (final cx in markAt) {
+      final top = plot.top - 7;
+      canvas.drawPath(
+        Path()
+          ..moveTo(cx, top - 4)
+          ..lineTo(cx + 4, top)
+          ..lineTo(cx, top + 4)
+          ..lineTo(cx - 4, top)
+          ..close(),
+        Paint()..color = mark ?? hover,
       );
+    }
+    // The time under the columns: as many labels as fit, by the widest.
+    final widest = TextPainter(
+      text: TextSpan(
+        text: columns
+            .map((c) => c.label)
+            .reduce((a, b) => a.length >= b.length ? a : b),
+        style: textStyle,
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    final every = math.max(1, ((widest.width + 20) / slot).ceil());
+    widest.dispose();
+    // One pushed in off an edge may meet the next: that one left out.
+    double? end;
+    for (var i = 0; i < columns.length; i += every) {
+      end =
+          _text(
+            canvas,
+            columns[i].label,
+            Offset(
+              plot.left + slot * (i + 0.5),
+              size.height - labelsHeight / 2,
+            ),
+            align: TextAlign.center,
+            left: plot.left + 4,
+            right: plot.right,
+            after: end == null ? null : end + 12,
+          ) ??
+          end;
     }
   }
 
@@ -693,6 +889,7 @@ class _ColumnsPainter extends CustomPainter {
   bool shouldRepaint(_ColumnsPainter old) =>
       old.columns != columns ||
       old.hovered != hovered ||
+      old.selected != selected ||
       old.scale != scale ||
       old.colors.length != colors.length ||
       old.grid != grid;
@@ -1065,10 +1262,14 @@ class UsageRankItem {
     this.secondary,
     this.color,
     this.segments,
+    this.leading,
   });
 
   final String key;
   final String label;
+
+  /// Before its name: an upstream's, a model's icon.
+  final Widget? leading;
   final String? detail;
   final double value;
   final String valueText;
@@ -1084,7 +1285,8 @@ class UsageRankItem {
 }
 
 /// The largest first, each a bar of its share of the largest under its
-/// name; [limit] shown till Show All. A click picks one ([onTap]).
+/// name; [limit] shown till Show All (a page more at a time, of many). A
+/// click picks one ([onTap]).
 class UsageRankList extends StatefulWidget {
   const UsageRankList({
     super.key,
@@ -1112,7 +1314,10 @@ class UsageRankList extends StatefulWidget {
 }
 
 class _UsageRankListState extends State<UsageRankList> {
-  bool _all = false;
+  late int _shown = widget.limit;
+
+  /// Shown more at a time, where there are many more.
+  static const _page = 50;
 
   @override
   Widget build(BuildContext context) {
@@ -1124,7 +1329,23 @@ class _UsageRankListState extends State<UsageRankList> {
       );
     }
     final top = items.fold(0.0, (top, item) => math.max(top, item.value));
-    final shown = _all ? items : items.take(widget.limit).toList();
+    final shown = items.take(_shown).toList();
+    final left = items.length - shown.length;
+    Widget link(String label, VoidCallback onTap) => HoverBuilder(
+      cursor: SystemMouseCursors.click,
+      builder: (context, hovered) => GestureDetector(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.only(top: 6, left: 2, right: 12),
+          child: Text(
+            label,
+            style: UsageText.muted.copyWith(
+              color: hovered ? AppColors.text : null,
+            ),
+          ),
+        ),
+      ),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1137,26 +1358,24 @@ class _UsageRankListState extends State<UsageRankList> {
             onTap: widget.onTap == null ? null : () => widget.onTap!(item),
           ),
         if (items.length > widget.limit)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: HoverBuilder(
-              cursor: SystemMouseCursors.click,
-              builder: (context, hovered) => GestureDetector(
-                onTap: () => setState(() => _all = !_all),
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 6, left: 2),
-                  child: Text(
-                    _all
-                        ? (widget.lessLabel ?? '−')
-                        : (widget.moreLabel?.call(items.length) ??
-                              '+${items.length - widget.limit}'),
-                    style: UsageText.muted.copyWith(
-                      color: hovered ? AppColors.text : null,
-                    ),
-                  ),
+          Row(
+            children: [
+              if (left > _page)
+                link(
+                  context.l10n.ustatShowMoreCalls(left),
+                  () => setState(() => _shown += _page),
+                )
+              else if (left > 0)
+                link(
+                  widget.moreLabel?.call(items.length) ?? '+$left',
+                  () => setState(() => _shown = items.length),
                 ),
-              ),
-            ),
+              if (shown.length > widget.limit)
+                link(
+                  widget.lessLabel ?? '−',
+                  () => setState(() => _shown = widget.limit),
+                ),
+            ],
           ),
       ],
     );
@@ -1178,6 +1397,9 @@ class _RankRow extends StatelessWidget {
   final bool selected;
   final VoidCallback? onTap;
 
+  /// Wide enough for what follows the value on its row.
+  static const _inlineWidth = 460.0;
+
   @override
   Widget build(BuildContext context) => HoverBuilder(
     cursor: onTap == null ? MouseCursor.defer : SystemMouseCursors.click,
@@ -1185,7 +1407,7 @@ class _RankRow extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
         decoration: BoxDecoration(
           color: selected
               ? AppColors.accent.withValues(alpha: 0.10)
@@ -1194,11 +1416,21 @@ class _RankRow extends StatelessWidget {
               : Colors.transparent,
           borderRadius: BorderRadius.circular(6),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // Too narrow for all on its row: what follows the value on a
+            // line of its own, under the name.
+            final below =
+                item.secondary != null && constraints.maxWidth < _inlineWidth;
+            final secondaryStyle = UsageText.faint.copyWith(
+              fontFeatures: const [FontFeature.tabularFigures()],
+            );
+            final row = Row(
               children: [
+                if (item.leading case final leading?) ...[
+                  leading,
+                  const SizedBox(width: 6),
+                ],
                 Expanded(
                   child: Text.rich(
                     TextSpan(
@@ -1213,71 +1445,117 @@ class _RankRow extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Text(
-                  item.valueText,
-                  style: UsageText.tabular.copyWith(
-                    fontWeight: FontWeight.w600,
+                UsageMiniBar(
+                  fraction: fraction,
+                  color: color,
+                  segments: item.segments,
+                ),
+                const SizedBox(width: 8),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(minWidth: 40),
+                  child: Text(
+                    item.valueText,
+                    textAlign: TextAlign.right,
+                    style: UsageText.tabular.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-                if (item.secondary case final secondary?) ...[
-                  const SizedBox(width: 8),
+                if (item.secondary case final secondary? when !below) ...[
+                  const SizedBox(width: 6),
                   ConstrainedBox(
-                    constraints: const BoxConstraints(minWidth: 44),
+                    constraints: const BoxConstraints(minWidth: 40),
                     child: Text(
                       secondary,
                       textAlign: TextAlign.right,
-                      style: UsageText.faint.copyWith(
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
+                      style: secondaryStyle,
                     ),
                   ),
                 ],
               ],
-            ),
-            const SizedBox(height: 5),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final width = constraints.maxWidth * fraction.clamp(0, 1);
-                final segments = item.segments;
-                return Stack(
-                  children: [
-                    Container(
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: AppColors.hover,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    if (segments == null)
-                      Container(
-                        height: 4,
-                        width: math.max(2, width),
-                        decoration: BoxDecoration(
-                          color: color,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      )
-                    else
-                      SizedBox(
-                        width: math.max(2, width),
-                        height: 4,
-                        child: CustomPaint(
-                          painter: _StackPainter(
-                            segments,
-                            surface: UsageCard.background,
-                            radius: 2,
-                          ),
-                        ),
-                      ),
-                  ],
-                );
-              },
-            ),
-          ],
+            );
+            if (!below) return row;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                row,
+                Padding(
+                  padding: EdgeInsets.only(
+                    left: item.leading == null ? 0 : 19,
+                    top: 1,
+                  ),
+                  child: Text(
+                    item.secondary!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: secondaryStyle,
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     ),
   );
+}
+
+/// A share as a short bar on its row: of the largest, in one color or in
+/// parts ([segments]), on a faint track.
+class UsageMiniBar extends StatelessWidget {
+  const UsageMiniBar({
+    super.key,
+    required this.fraction,
+    required this.color,
+    this.segments,
+    this.width = 72,
+    this.height = 6,
+  });
+
+  final double fraction;
+  final Color color;
+  final List<(double, Color)>? segments;
+  final double width;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    final filled = math.max(2.0, width * fraction.clamp(0, 1));
+    final radius = height / 2;
+    return SizedBox(
+      width: width,
+      height: height,
+      child: Stack(
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              color: AppColors.hover,
+              borderRadius: BorderRadius.circular(radius),
+            ),
+          ),
+          SizedBox(
+            width: filled,
+            child: switch (segments) {
+              final segments? => CustomPaint(
+                size: Size(filled, height),
+                painter: _StackPainter(
+                  segments,
+                  surface: UsageCard.background,
+                  radius: radius,
+                ),
+              ),
+              null => Container(
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(radius),
+                ),
+              ),
+            },
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// A whole in parts, along a bar: a 2px gap of the surface between them,
@@ -1342,18 +1620,28 @@ class UsageStackBar extends StatefulWidget {
     this.columns = 2,
     this.selected = const {},
     this.onTap,
+    this.openable,
+    this.minColumnWidth = 200,
   });
 
   final List<UsagePart> parts;
   final double height;
 
-  /// The names under it, in this many columns.
+  /// The names under it, in up to this many columns, each at least
+  /// [minColumnWidth] wide.
   final int columns;
+  final double minColumnWidth;
 
   /// The parts picked (by index), marked; a click on a name toggles it
   /// when [onTap] is given.
   final Set<int> selected;
   final ValueChanged<int>? onTap;
+
+  /// The parts a click opens (their things shown under it), by index, a
+  /// chevron each: only those clicked. Null: all clicked, to pick them.
+  final Set<int>? openable;
+
+  bool _taps(int i) => onTap != null && (openable?.contains(i) ?? true);
 
   @override
   State<UsageStackBar> createState() => _UsageStackBarState();
@@ -1408,7 +1696,15 @@ class _UsageStackBarState extends State<UsageStackBar> {
         const SizedBox(height: 12),
         LayoutBuilder(
           builder: (context, constraints) {
-            final columns = constraints.maxWidth < 360 ? 1 : widget.columns;
+            // As many as fit, up to [columns].
+            final columns = math.max(
+              1,
+              math.min(
+                widget.columns,
+                ((constraints.maxWidth + 16) / (widget.minColumnWidth + 16))
+                    .floor(),
+              ),
+            );
             final width = (constraints.maxWidth - 16 * (columns - 1)) / columns;
             return Wrap(
               spacing: 16,
@@ -1417,16 +1713,14 @@ class _UsageStackBarState extends State<UsageStackBar> {
                 for (final (i, part) in parts.indexed)
                   if (part.value > 0)
                     MouseRegion(
-                      cursor: widget.onTap == null
-                          ? MouseCursor.defer
-                          : SystemMouseCursors.click,
+                      cursor: widget._taps(i)
+                          ? SystemMouseCursors.click
+                          : MouseCursor.defer,
                       onEnter: (_) => setState(() => _hovered = i),
                       onExit: (_) => setState(() => _hovered = null),
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
-                        onTap: widget.onTap == null
-                            ? null
-                            : () => widget.onTap!(i),
+                        onTap: widget._taps(i) ? () => widget.onTap!(i) : null,
                         child: Container(
                           width: width,
                           padding: const EdgeInsets.symmetric(
@@ -1436,7 +1730,7 @@ class _UsageStackBarState extends State<UsageStackBar> {
                           decoration: BoxDecoration(
                             color: widget.selected.contains(i)
                                 ? AppColors.accent.withValues(alpha: 0.14)
-                                : _hovered == i
+                                : _hovered == i && widget._taps(i)
                                 ? AppColors.hover
                                 : Colors.transparent,
                             borderRadius: BorderRadius.circular(4),
@@ -1480,6 +1774,19 @@ class _UsageStackBarState extends State<UsageStackBar> {
                                   ),
                                 ),
                               ),
+                              if (widget.openable case final openable?)
+                                SizedBox(
+                                  width: 16,
+                                  child: openable.contains(i)
+                                      ? Icon(
+                                          widget.selected.contains(i)
+                                              ? Codicons.chevronUp
+                                              : Codicons.chevronDown,
+                                          size: 11,
+                                          color: AppColors.textFaint,
+                                        )
+                                      : null,
+                                ),
                             ],
                           ),
                         ),

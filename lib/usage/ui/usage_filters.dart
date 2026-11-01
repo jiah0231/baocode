@@ -431,3 +431,118 @@ class UsageIconButton extends StatelessWidget {
     ),
   );
 }
+
+/// One of a [UsageTabs]': its value, its name, a count after it, a mark
+/// before it.
+typedef UsageTab<T> = ({T value, String label, String? count, Color? color});
+
+/// Views of one thing side by side, the one looked at raised: the main
+/// agent's and each subagent's, as a conversation switches between them.
+/// Wraps where there are more than fit.
+class UsageTabs<T> extends StatelessWidget {
+  const UsageTabs({
+    super.key,
+    required this.tabs,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final List<UsageTab<T>> tabs;
+  final T value;
+  final ValueChanged<T> onChanged;
+
+  @override
+  Widget build(BuildContext context) => Wrap(
+    spacing: 4,
+    runSpacing: 4,
+    children: [
+      for (final tab in tabs)
+        _Tab(
+          tab: tab,
+          selected: tab.value == value,
+          onTap: () => onChanged(tab.value),
+        ),
+    ],
+  );
+}
+
+class _Tab<T> extends StatelessWidget {
+  const _Tab({required this.tab, required this.selected, required this.onTap});
+
+  final UsageTab<T> tab;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    selected: selected,
+    child: HoverBuilder(
+      cursor: SystemMouseCursors.click,
+      builder: (context, hovered) => GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          height: 24,
+          padding: const EdgeInsets.symmetric(horizontal: 9),
+          decoration: BoxDecoration(
+            color: selected
+                ? AppColors.accent.withValues(alpha: 0.14)
+                : hovered
+                ? AppColors.hover
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: selected
+                  ? AppColors.accent.withValues(alpha: 0.5)
+                  : AppColors.border.withValues(alpha: 0.6),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (tab.color case final color?) ...[
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: color,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 180),
+                child: Text(
+                  tab.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: selected || hovered
+                        ? AppColors.text
+                        : AppColors.textMuted,
+                    fontSize: 11.5,
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                  ),
+                ),
+              ),
+              if (tab.count case final count?) ...[
+                const SizedBox(width: 5),
+                Text(
+                  count,
+                  style: TextStyle(
+                    color: AppColors.textFaint,
+                    fontSize: 10.5,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}

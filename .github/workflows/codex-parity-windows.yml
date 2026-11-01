@@ -45,6 +45,39 @@ jobs:
         env:
           BAOCODE_CODEX_OFFICIAL_SMOKE: '1'
         run: flutter test test/kernel/codex_official_smoke_test.dart --timeout 10m
+      - name: Test upstream edit ledger and legacy SSH compatibility
+        run: >-
+          flutter test
+          test/chat/change_review_test.dart
+          test/chat/checkpoints_tidy_test.dart
+          test/chat/legacy_review_import_test.dart
+          test/chat/line_diff_test.dart
+          test/chat/session_review_test.dart
+          test/remote/remote_review_compat_test.dart
+          test/remote/remote_server_test.dart
+          packages/bao_agent/test/engine/host_hooks_test.dart
+      - name: Test upstream chat, usage UI, search and editor integration
+        run: >-
+          flutter test
+          test/chat/composer_intercept_test.dart
+          test/chat/reset_credits_hint_test.dart
+          test/chat/side_panel/file_preview_agent_test.dart
+          test/chat/side_panel/side_panel_test.dart
+          test/ide/editor/ide_editor_agent_edits_test.dart
+          test/ide/git/log_details_copy_test.dart
+          test/ide/git/log_diff_test.dart
+          test/ide/search/text_search_test.dart
+          test/ide/workbench/ide_units_test.dart
+          test/usage_panel_test.dart
+          test/workspace/aside_test.dart
+          test/workspace/chat_branch_bar_test.dart
+          test/workspace/chat_quota_bar_test.dart
+      - name: Test full kernel integration and preserved phone protocol
+        run: flutter test test/kernel_test.dart test/link
+      # Requires a developer's live upstream account and is intentionally
+      # skipped when BAOCODE_LIVE_SETTINGS is unset in these offline builds.
+      - name: Load optional live review regression
+        run: flutter test test/e2e_review_real_test.dart
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
       # Use an already published remote server. A locally built unpublished

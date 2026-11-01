@@ -33,6 +33,8 @@ import 'package:baocode/kernel/mock/mock_kernels.dart';
 import 'package:baocode/kernel/queued_messages.dart';
 import 'package:baocode/kernel/transcript.dart';
 import 'package:baocode/settings/user_settings.dart';
+import 'package:baocode/usage/usage_ledger.dart';
+import 'package:baocode/usage/usage_prices.dart';
 
 /// Lines Claude Code 2.1.281 printed (recorded, with paths and account
 /// details replaced).
@@ -839,8 +841,7 @@ void main() {
     });
 
     test("a subagent's edits, sent without their patches, are told from "
-        'their input; its commands and its end, as files that may have '
-        'changed', () {
+        'their input', () {
       final events = <KernelEvent>[];
       var seq = 0;
       final translator = ClaudeTranslator(
@@ -919,25 +920,12 @@ void main() {
       expect((originals.last! as OriginalByEdits).edits, [
         (before: 'x', after: 'y\nz'),
       ]);
-      expect(events.whereType<FilesMayHaveChanged>(), isEmpty);
 
-      call('b1', 'Bash', {'command': 'echo c > c.txt'}, parent: 'agent-1');
-      expect(events.whereType<FilesMayHaveChanged>(), hasLength(1));
-      call(
-        'agent-1',
-        'Agent',
-        {'description': 'Make files', 'prompt': 'make them'},
-        result: {'status': 'completed', 'content': []},
-      );
-      expect(events.whereType<FilesMayHaveChanged>(), hasLength(2));
-
-      // A kept session's, replayed: nothing to look at.
+      // A kept session's, replayed: nothing to review.
       events.clear();
       translator.replaying = true;
       call('w2', 'Write', {'file_path': '/p/d.txt', 'content': 'd'});
-      call('b2', 'Bash', {'command': 'true'});
       expect(events.whereType<FileEdited>(), isEmpty);
-      expect(events.whereType<FilesMayHaveChanged>(), isEmpty);
     });
 
     test('each round of planning is one card; a plan sent back gives way '
@@ -3113,6 +3101,47 @@ void main() {
       expect(
         usage.segments.map((s) => s.kind).toSet(),
         containsAll([ContextKind.used, ContextKind.free, ContextKind.buffer]),
+      );
+      kernel.dispose();
+    });
+
+    test("keeps the calls on Claude Code's own models, timed, and priced "
+        "at Anthropic's as the CLI prices them", () async {
+      final ledger = UsageLedger.current = UsageLedger(MemoryUsageStorage());
+      addTearDown(
+        () => UsageLedger.current = UsageLedger(MemoryUsageStorage()),
+      );
+      final cli = FakeCli();
+      final (:kernel, transcript: _, events: _) = claude(cli);
+      kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+      await pumpEventQueue();
+      final messages = recorded('question');
+      final result = messages.indexWhere((m) => m['type'] == 'result');
+      for (final message in messages.take(result + 1)) {
+        if (message['type'] case 'control_response' || 'control_request') {
+          continue;
+        }
+        cli.push(message);
+      }
+      await pumpEventQueue();
+      ledger.flush();
+      final calls = await ledger.range();
+      // Its two requests; the CLI's totals no more than theirs.
+      expect(calls, hasLength(2));
+      expect(calls.map((c) => (c.provider, c.model)).toSet(), {
+        ('claude-code', 'claude-sonnet-5'),
+      });
+      expect(calls.map((c) => c.output), [122, 5]);
+      expect(calls.first.cacheWriteLong, 6455);
+      expect(calls.first.stopReason, 'tool_use');
+      expect(calls.first.firstToken, isNotNull);
+      expect(calls.first.toolCalls, isNotEmpty);
+      // The plan's limits, told between them.
+      expect(calls.last.quota, isNotEmpty);
+      // What the CLI said they cost (its modelUsage's costUSD).
+      expect(
+        UsagePrices().costOf(calls).byCurrency['USD'],
+        closeTo(0.0425954, 1e-9),
       );
       kernel.dispose();
     });
@@ -5967,38 +5996,50 @@ exec /usr/bin/env "\$@"
     void notify(String method, Map<String, Object?> params) =>
         server.push({'method': method, 'params': params});
 
-    test('coalesces command bursts and completes with every buffered byte', () async {
-      kernel.send(const KernelTurn(id: 't1', text: 'hi'));
-      await pumpEventQueue();
-      final item = <String, Object?>{
-        'type': 'commandExecution',
-        'id': 'burst',
-        'command': 'test',
-      };
-      notify('item/started', {'item': item});
-      for (var i = 0; i < 1000; i++) {
-        notify('item/commandExecution/outputDelta', {
-          'itemId': 'burst',
-          'delta': '$i\n',
+    test(
+      'coalesces command bursts and completes with every buffered byte',
+      () async {
+        kernel.send(const KernelTurn(id: 't1', text: 'hi'));
+        await pumpEventQueue();
+        final item = <String, Object?>{
+          'type': 'commandExecution',
+          'id': 'burst',
+          'command': 'test',
+        };
+        notify('item/started', {'item': item});
+        for (var i = 0; i < 1000; i++) {
+          notify('item/commandExecution/outputDelta', {
+            'itemId': 'burst',
+            'delta': '$i\n',
+          });
+        }
+        final before = events.whereType<ItemUpserted>().where(
+          (event) => event.id == 'burst',
+        );
+        expect(before, hasLength(2)); // Initial row and immediate first delta.
+        notify('item/completed', {
+          'item': {...item, 'exitCode': 0},
         });
-      }
-      final before = events.whereType<ItemUpserted>()
-          .where((event) => event.id == 'burst');
-      expect(before, hasLength(2)); // Initial row and immediate first delta.
-      notify('item/completed', {
-        'item': {...item, 'exitCode': 0},
-      });
-      final last = events.whereType<ItemUpserted>()
-          .lastWhere((event) => event.id == 'burst').item as TerminalItem;
-      expect(last.output, [for (var i = 0; i < 1000; i++) '$i\n'].join());
-      expect(last.status, CommandStatus.succeeded);
-    });
+        final last =
+            events
+                    .whereType<ItemUpserted>()
+                    .lastWhere((event) => event.id == 'burst')
+                    .item
+                as TerminalItem;
+        expect(last.output, [for (var i = 0; i < 1000; i++) '$i\n'].join());
+        expect(last.status, CommandStatus.succeeded);
+      },
+    );
 
     test('interrupting a command keeps the unpublished output tail', () async {
       kernel.send(const KernelTurn(id: 't1', text: 'hi'));
       await pumpEventQueue();
       notify('item/started', {
-        'item': {'type': 'commandExecution', 'id': 'stopped', 'command': 'test'},
+        'item': {
+          'type': 'commandExecution',
+          'id': 'stopped',
+          'command': 'test',
+        },
       });
       for (final delta in ['first', ' unpublished tail']) {
         notify('item/commandExecution/outputDelta', {
@@ -6007,8 +6048,12 @@ exec /usr/bin/env "\$@"
         });
       }
       kernel.cancel();
-      final last = events.whereType<ItemUpserted>()
-          .lastWhere((event) => event.id == 'stopped').item as TerminalItem;
+      final last =
+          events
+                  .whereType<ItemUpserted>()
+                  .lastWhere((event) => event.id == 'stopped')
+                  .item
+              as TerminalItem;
       expect(last.output, 'first unpublished tail');
       expect(last.status, CommandStatus.failed);
       // Let the server finish its interrupt response before disposing it.
@@ -6031,8 +6076,12 @@ exec /usr/bin/env "\$@"
         'itemId': 'search-burst',
         'delta': 'a.dart:1:match\nb.dart:2:match',
       });
-      ToolCallItem shown() => events.whereType<ItemUpserted>()
-          .lastWhere((event) => event.id == 'search-burst').item as ToolCallItem;
+      ToolCallItem shown() =>
+          events
+                  .whereType<ItemUpserted>()
+                  .lastWhere((event) => event.id == 'search-burst')
+                  .item
+              as ToolCallItem;
       expect(shown().results, ['a.dart:1', 'b.dart:2']);
       notify('item/commandExecution/outputDelta', {
         'itemId': 'search-burst',

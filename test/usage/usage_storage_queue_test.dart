@@ -94,11 +94,53 @@ void main() {
     await Directory(blocked.path).create();
     unavailable.append('2026-11-01', ['recovered']);
     await unavailable.drain();
+    expect(await File('${blocked.path}/2026-11-01.jsonl').readAsLines(), [
+      'recovered',
+    ]);
+  });
+
+  test('trace writes snapshot input and are included in exit drain', () async {
+    final request = <String, Object?>{'body': 'original'};
+    files.writeTrace('2026-11-01', 'abc', {
+      'id': 'abc',
+      't': 0,
+      'request': request,
+    });
+    final file = File('${folder.path}/traces/2026-11-01/abc.json.gz');
+    expect(file.existsSync(), isFalse);
+    request['body'] = 'mutated';
+    await files.drain();
+    expect(file.existsSync(), isTrue);
     expect(
-      await File('${blocked.path}/2026-11-01.jsonl').readAsLines(),
-      ['recovered'],
+      (await files.readTrace('2026-11-01', 'abc'))!.request!.body,
+      'original',
     );
   });
+
+  test('trace reads and sizes wait for another instance writing', () async {
+    final other = UsageFiles(folder.path);
+    files.writeTrace('2026-11-01', 'abc', {
+      'id': 'abc',
+      't': 0,
+      'request': {'body': 'ready'},
+    });
+    expect(
+      (await other.readTrace('2026-11-01', 'abc'))!.request!.body,
+      'ready',
+    );
+    expect((await other.traceSizes())['2026-11-01']!.count, 1);
+  });
+
+  test(
+    'trace deletion cannot race an earlier write back into existence',
+    () async {
+      files.writeTrace('2026-11-01', 'abc', {'id': 'abc', 't': 0});
+      await UsageFiles(folder.path).deleteTraces('2026-11-01');
+      await files.drain();
+      expect(await files.readTrace('2026-11-01', 'abc'), isNull);
+      expect(await files.traceSizes(), isEmpty);
+    },
+  );
 
   test('a disk lock does not block the caller event loop', () async {
     final path = '${folder.path}/2026-11-01.jsonl';
@@ -148,9 +190,7 @@ Future<void> main(List<String> args) async {
     await output.cancel();
     expect(await File(path).readAsLines(), ['after lock']);
   });
-
 }
-
 
 // flutter test runs flutter_tester rather than dart. Both executables live
 // under the SDK's cache; find its Dart VM without relying on a PATH command.

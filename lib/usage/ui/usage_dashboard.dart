@@ -6,16 +6,21 @@ import '../../ide/ide_button.dart';
 import '../../ide/ide_dialog.dart';
 import '../../ide/ide_menu.dart';
 import '../../l10n/l10n.dart';
+import '../../models/model_icons.dart';
 import '../../settings/pages/settings_dropdown.dart';
 import '../../settings/pages/settings_widgets.dart';
 import '../../theme/codicons.dart';
 import '../../workspace/workspace.dart';
 import '../usage_ledger.dart';
+import '../usage_prices.dart';
 import '../usage_query.dart';
 import '../usage_record.dart';
 import 'usage_calls.dart';
 import 'usage_charts.dart';
+import 'usage_context.dart';
 import 'usage_filters.dart';
+import 'usage_prices_card.dart';
+import 'usage_quota_section.dart';
 import 'usage_sections.dart';
 import 'usage_style.dart';
 
@@ -75,6 +80,7 @@ String usageSessionLabel(
 }) {
   final thread = workspace?.threads.where((t) => t.id == session).firstOrNull;
   if (thread != null) return thread.localizedTitle(context.l10n);
+  if (kept == 'New Chat') return context.l10n.agentUntitled;
   if (kept != null && kept.isNotEmpty) return kept;
   return session.length > 8 ? session.substring(0, 8) : session;
 }
@@ -115,6 +121,7 @@ class _UsageSettingsPageState extends State<UsageSettingsPage> {
   void initState() {
     super.initState();
     _ledger.addListener(_changed);
+    UsagePrices.current.addListener(_repriced);
     unawaited(_load());
   }
 
@@ -132,12 +139,17 @@ class _UsageSettingsPageState extends State<UsageSettingsPage> {
   void dispose() {
     _reload?.cancel();
     _ledger.removeListener(_changed);
+    UsagePrices.current.removeListener(_repriced);
     super.dispose();
   }
 
+  /// The costs, at the prices as they are now.
+  void _repriced() => setState(_summarize);
+
   void _changed() {
     if (_ledger.version == _loadedVersion) {
-      setState(() {});
+      // Its choices: those beside the conversation shown or not.
+      setState(_summarize);
       return;
     }
     // Calls come in bursts: read once they settle.
@@ -170,7 +182,7 @@ class _UsageSettingsPageState extends State<UsageSettingsPage> {
   void _summarize() {
     final time = _time;
     _summary = UsageSummary.of(
-      _calls,
+      _ledger.shown(_calls),
       _filter.copyWith(from: time.from, until: time.until, clearTime: true),
     );
   }
@@ -216,6 +228,19 @@ class _UsageSettingsPageState extends State<UsageSettingsPage> {
     );
     if (chosen != 0) return;
     await _ledger.clear(spec);
+    await _load();
+  }
+
+  Future<void> _clearTraces() async {
+    final l10n = context.l10n;
+    final chosen = await showIdeDialog(
+      context,
+      message: l10n.ustatClearConfirm(l10n.ustatClearTraces),
+      detail: l10n.ustatClearTracesDetail,
+      buttons: [l10n.ustatClear],
+    );
+    if (chosen != 0) return;
+    await _ledger.clearTraces();
     await _load();
   }
 
@@ -273,6 +298,13 @@ class _UsageSettingsPageState extends State<UsageSettingsPage> {
           ],
           [
             IdeMenuAction(
+              l10n.ustatClearTraces,
+              enabled: (_space?.traces ?? 0) > 0,
+              onSelected: () => unawaited(_clearTraces()),
+            ),
+          ],
+          [
+            IdeMenuAction(
               l10n.ustatClearAll,
               onSelected: () =>
                   unawaited(_clear(const UsageClearSpec(), l10n.ustatClearAll)),
@@ -294,7 +326,7 @@ class _UsageSettingsPageState extends State<UsageSettingsPage> {
     final filter = _filter;
     final sessions = UsageSummary.ranked(
       UsageSummary.of(
-        _calls,
+        _ledger.shown(_calls),
         UsageFilter(from: _time.from, until: _time.until),
       ).bySession,
     );
@@ -397,21 +429,15 @@ class _UsageSettingsPageState extends State<UsageSettingsPage> {
     final sessionSummary = session == null ? null : summary;
     return [
       UsageOverview(summary: summary),
-      UsageTimeSection(summary: summary, onPickBucket: _pin),
+      UsageTimeSection(summary: summary, height: 160, onPickBucket: _pin),
+      if (UsageQuotaSection.of(summary) case final quota?)
+        UsageQuotaSection(quota: quota),
       UsageColumns(
         children: [
-          UsageClassSection(
+          UsageRankCard(
             summary: summary,
-            selected: filter.classes,
-            onToggle: (kind) {
-              final classes = {...filter.classes};
-              if (!classes.remove(kind)) classes.add(kind);
-              _setFilter(filter.copyWith(classes: classes));
-            },
-          ),
-          UsageCard(
             title: l10n.ustatByUpstream,
-            child: UsageRankList(
+            builder: (context, byCost) => UsageRankList(
               selected: filter.providers,
               onTap: (item) {
                 final picked = {...filter.providers};
@@ -420,19 +446,21 @@ class _UsageSettingsPageState extends State<UsageSettingsPage> {
               },
               moreLabel: (n) => l10n.ustatShowAll(n),
               lessLabel: l10n.ustatShowLess,
-              items: [
-                for (final group in UsageSummary.ranked(summary.byProvider))
-                  rankOf(context, group),
-              ],
+              items: UsageRanking(summary.byProvider.values, byCost: byCost)
+                  .items(
+                    (group, rank) => rankOf(
+                      context,
+                      group,
+                      rank: rank,
+                      leading: ProviderIcon(group.key, size: 13),
+                    ),
+                  ),
             ),
           ),
-        ],
-      ),
-      UsageColumns(
-        children: [
-          UsageCard(
+          UsageRankCard(
+            summary: summary,
             title: l10n.ustatByModel,
-            child: UsageRankList(
+            builder: (context, byCost) => UsageRankList(
               selected: filter.models,
               onTap: (item) {
                 final picked = {...filter.models};
@@ -441,44 +469,55 @@ class _UsageSettingsPageState extends State<UsageSettingsPage> {
               },
               moreLabel: (n) => l10n.ustatShowAll(n),
               lessLabel: l10n.ustatShowLess,
-              items: [
-                for (final group in UsageSummary.ranked(summary.byModel))
-                  rankOf(context, group),
-              ],
-            ),
-          ),
-          UsageCard(
-            title: l10n.ustatByConversation,
-            child: UsageRankList(
-              selected: {?session},
-              onTap: (item) => _setFilter(
-                filter.copyWith(
-                  session: item.key == session ? null : item.key,
-                  clearSession: true,
+              items: UsageRanking(summary.byModel.values, byCost: byCost).items(
+                (group, rank) => rankOf(
+                  context,
+                  group,
+                  rank: rank,
+                  leading: ModelIcon(
+                    provider: group.provider ?? '',
+                    model: group.key,
+                    size: 13,
+                  ),
                 ),
               ),
-              empty: l10n.ustatNoConversations,
-              moreLabel: (n) => l10n.ustatShowAll(n),
-              lessLabel: l10n.ustatShowLess,
-              items: [
-                for (final group in UsageSummary.ranked(summary.bySession))
-                  rankOf(
-                    context,
-                    group,
-                    label: _sessionLabel(group.key, kept: group.label),
-                  ),
-              ],
             ),
           ),
         ],
       ),
-      if (sessionSummary != null) ...[
+      UsageRankCard(
+        summary: summary,
+        title: l10n.ustatByConversation,
+        builder: (context, byCost) => UsageRankList(
+          selected: {?session},
+          onTap: (item) => _setFilter(
+            filter.copyWith(
+              session: item.key == session ? null : item.key,
+              clearSession: true,
+            ),
+          ),
+          empty: l10n.ustatNoConversations,
+          moreLabel: (n) => l10n.ustatShowAll(n),
+          lessLabel: l10n.ustatShowLess,
+          items: UsageRanking(summary.bySession.values, byCost: byCost).items(
+            (group, rank) => rankOf(
+              context,
+              group,
+              rank: rank,
+              label: _sessionLabel(group.key, kept: group.label),
+            ),
+          ),
+        ),
+      ),
+      if (sessionSummary != null)
         UsageContextSection(
           summary: sessionSummary,
-          agentLabel: (agent) => sessionSummary.byAgent[agent]?.label ?? agent,
+          agentLabel: (agent) {
+            final type = sessionSummary.byAgent[agent]?.label;
+            final short = agent.length > 6 ? agent.substring(0, 6) : agent;
+            return type == null ? short : '$type · $short';
+          },
         ),
-        UsageMakeupSection(summary: sessionSummary),
-      ],
       UsageToolsSection(summary: summary),
       UsageCard(
         title: l10n.ustatRecentCalls,
@@ -486,12 +525,19 @@ class _UsageSettingsPageState extends State<UsageSettingsPage> {
         child: UsageCallsList(
           calls: summary.calls,
           showSession: session == null,
+          ledger: _ledger,
           sessionLabel: (call) => switch (call.session) {
-            final id? => _sessionLabel(id, kept: call.sessionTitle),
+            // Its conversation's title, as last kept: a call's own is
+            // only on its first of the day.
+            final id? => _sessionLabel(
+              id,
+              kept: summary.bySession[id]?.label ?? call.sessionTitle,
+            ),
             null => '',
           },
         ),
       ),
+      UsagePricesCard(summary: summary),
     ];
   }
 
@@ -501,9 +547,14 @@ class _UsageSettingsPageState extends State<UsageSettingsPage> {
     final ledger = _ledger;
     final summary = _summary;
     final space = _space;
+    // None kept (shown) in the time picked, filters aside.
+    final none = ledger.shown(_calls).isEmpty;
     return SettingsPage(
       title: l10n.settingsSectionUsage,
-      description: l10n.ustatDescription,
+      // Its filters with its title, as the dashboard scrolls under them.
+      // Its filters with its title, as the dashboard scrolls under them;
+      // their room kept while the calls are read.
+      pinned: summary == null ? const SizedBox(height: 30) : _filters(summary),
       children: [
         if (!ledger.enabled)
           SettingsCard(
@@ -519,7 +570,6 @@ class _UsageSettingsPageState extends State<UsageSettingsPage> {
             ],
           ),
         if (summary != null) ...[
-          _filters(summary),
           AnimatedOpacity(
             duration: const Duration(milliseconds: 150),
             opacity: _loading ? 0.5 : 1,
@@ -527,10 +577,10 @@ class _UsageSettingsPageState extends State<UsageSettingsPage> {
                 ? UsageCard(
                     child: UsageEmpty(
                       icon: Codicons.graph,
-                      title: _calls.isEmpty
+                      title: none
                           ? l10n.ustatEmptyTitle
                           : l10n.ustatEmptyFiltered,
-                      detail: _calls.isEmpty ? l10n.ustatEmptyDetail : null,
+                      detail: none ? l10n.ustatEmptyDetail : null,
                     ),
                   )
                 : Column(
@@ -568,6 +618,22 @@ class _UsageSettingsPageState extends State<UsageSettingsPage> {
                 ledger.save(UsageLedger.detailedKey, on ? null : false),
               ),
             ),
+            SettingsSwitchRow(
+              label: l10n.ustatShowAuxiliary,
+              description: l10n.ustatShowAuxiliaryDescription,
+              value: ledger.showAuxiliary,
+              onChanged: (on) => unawaited(
+                ledger.save(UsageLedger.auxiliaryKey, on ? true : null),
+              ),
+            ),
+            SettingsSwitchRow(
+              label: l10n.ustatTrace,
+              description: l10n.ustatTraceDescription,
+              value: ledger.trace,
+              onChanged: (on) => unawaited(
+                ledger.save(UsageLedger.traceKey, on ? true : null),
+              ),
+            ),
             SettingsRow(
               label: l10n.ustatRetention,
               description: l10n.ustatRetentionDescription,
@@ -593,7 +659,14 @@ class _UsageSettingsPageState extends State<UsageSettingsPage> {
               label: l10n.ustatSpace(UsageFormat.bytes(space?.bytes ?? 0)),
               description: space == null || space.days == 0
                   ? l10n.ustatSpaceEmpty
-                  : l10n.ustatSpaceDetail(space.days, space.oldest ?? ''),
+                  : [
+                      l10n.ustatSpaceDetail(space.days, space.oldest ?? ''),
+                      if (space.traces > 0)
+                        l10n.ustatSpaceTraces(
+                          UsageFormat.bytes(space.traceBytes),
+                          space.traces,
+                        ),
+                    ].join(),
               trailing: Builder(
                 builder: (context) => IdeButton(
                   label: l10n.ustatClearEllipsis,

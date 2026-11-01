@@ -759,8 +759,7 @@ class RemoteClient {
 
   // --- Review ----------------------------------------------------------------
 
-  /// The review store of the project at [root] there; null where there is
-  /// none (no Git there, or no such folder).
+  /// The review store of the files there.
   Future<ReviewStore?> openReview(String root) async {
     final opened = await peer.request(RemoteProtocol.reviewOpen, {
       'root': root,
@@ -769,7 +768,8 @@ class RemoteClient {
     return RemoteReviewStore(
       peer,
       opened['id'] as int,
-      opened['root'] as String,
+      root: opened['root'] as String? ?? root,
+      legacy: opened['ledgerVersion'] != 4,
     );
   }
 
