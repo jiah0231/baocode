@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/theme/code_font.dart';
+import 'package:baocode/theme/material_file_icons.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 /// The app bundles icon glyphs only. On the Windows visual CI runner load its
 /// actual desktop text fonts explicitly: widget tests otherwise paint Ahem.
@@ -10,6 +12,18 @@ Future<void> loadLearningVisualFonts() async {
   final icons = FontLoader('codicon')
     ..addFont(rootBundle.load('assets/codicons/codicon.ttf'));
   await icons.load();
+  final material = FontLoader('MaterialIcons')
+    ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'));
+  await material.load();
+  // Resolve the file-icon manifest and predecode the exact synthetic file's
+  // SVG outside widget fake time. An allocated icon box is not a painted SVG.
+  await MaterialFileIcons.instance.load();
+  final psIcon = MaterialFileIcons.instance.fileIcon('tm_diag2.ps1');
+  final psLoader = SvgAssetLoader(MaterialFileIcons.asset(psIcon));
+  await svg.cache.putIfAbsent(
+    psLoader.cacheKey(null),
+    () => psLoader.loadBytes(null),
+  );
   if (!const bool.fromEnvironment('BAOCODE_LEARNING_VISUALS')) return;
   if (!Platform.isWindows) {
     throw StateError('Visual fixtures require the Windows desktop font set');

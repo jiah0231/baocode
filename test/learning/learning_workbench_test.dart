@@ -66,7 +66,11 @@ class _Generator implements LearningGenerator {
       'why': lesson.why,
       'concept': lesson.concept,
       'tradeoff': lesson.tradeoff,
-      'evidenceIds': [request.evidence.first.id],
+      'evidenceIds': [
+        request.evidence
+            .firstWhere((e) => e.sourceItemId == 'synthetic-diagnostic')
+            .id,
+      ],
     };
   }
 }
@@ -162,6 +166,8 @@ void main() {
           await tester.tap(find.text('查看原操作').first);
           await tester.pump();
           expect(session.operationReveal.value?.id, 'local-only');
+          events.add(const ItemRemoved(4, 'local-only'));
+          await tester.pumpAndSettle();
         }
         await preferences.configure(
           modelRef: '@synthetic/teaching',
@@ -176,17 +182,36 @@ void main() {
             UserMessageItem(text: '检查诊断脚本的日志查询范围。'),
           ),
         );
+        session.learning.setPaused(true);
         events.add(
-          const ItemUpserted(12, 'synthetic-diagnostic', teachingDiff),
+          const ItemUpserted(
+            12,
+            'fixture-inspect',
+            TerminalItem(
+              command: 'echo synthetic-inspection',
+              output: 'Synthetic fixture: query had no explicit result limit.',
+              description: '检查日志查询范围（合成示例）',
+              status: CommandStatus.succeeded,
+            ),
+          ),
+        );
+        session.learning.setPaused(false);
+        events.add(
+          const ItemUpserted(13, 'synthetic-diagnostic', teachingDiff),
         );
         events.add(
           const FileEdited(
-            13,
+            14,
             FileChange(path: 'synthetic/tm_diag2.ps1', added: 2, removed: 2),
             sourceItemId: 'synthetic-diagnostic',
           ),
         );
-        events.add(const TurnEnded(14, 'fixture-turn'));
+        events.add(const TurnEnded(15, 'fixture-turn'));
+        expect(session.workTrace.entries, hasLength(2));
+        expect(
+          session.workTrace.entries.map((entry) => entry.sourceItemId),
+          containsAll(['fixture-inspect', 'synthetic-diagnostic']),
+        );
         await tester.pump(const Duration(seconds: 25));
         await tester.pumpAndSettle();
         expect(generator.calls, 1);
