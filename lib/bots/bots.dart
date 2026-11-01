@@ -82,7 +82,13 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
 
   /// The settings its agent runs with: full access, nothing asked (see
   /// [BotPermissions]); and works as an agent, not in Plan.
-  static const settings = {'mode': 'agent', 'permission': 'bypassPermissions'};
+  static const settings = {
+    'mode': 'agent',
+    'permission': 'bypassPermissions',
+    // A bot's backend may differ from the last desktop chat's. Never
+    // inherit that chat's (or Settings → Models') model across backends.
+    'model': 'default',
+  };
 
   List<Bot> _bots = [];
   List<Bot> get bots => List.unmodifiable(_bots);

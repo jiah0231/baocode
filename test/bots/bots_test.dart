@@ -391,6 +391,61 @@ void main() {
       },
     );
 
+    test(
+      'bot models do not inherit the desktop model across backends',
+      () async {
+        KernelDescriptor descriptor(String id) {
+          late KernelDescriptor descriptor;
+          descriptor = KernelDescriptor(
+            id: id,
+            label: id,
+            icon: Icons.auto_awesome,
+            description: '',
+            create: (context) {
+              return ClaudeCodeKernel(
+                descriptor,
+                context,
+                start: MockClaudeCodeTransport.start,
+              );
+            },
+          );
+          return descriptor;
+        }
+
+        final isolated = Workspace(
+          kernels: [descriptor('claude-code'), descriptor('codex')],
+          preferences: MemoryPreferenceStore({
+            'settings': {'model': 'gpt-desktop-only'},
+          }),
+        );
+        final ownBots = Bots(
+          workspace: isolated,
+          folders: MemoryBotFolders(),
+          computer: () async => 'test',
+        );
+        addTearDown(() {
+          ownBots.dispose();
+          isolated.dispose();
+        });
+        await isolated.load();
+        await ownBots.start();
+        final original = ownBots.bots.single;
+        final first = ownBots.threadFor(original);
+        expect(first.session.kernelContext.settings['model'], 'default');
+
+        ownBots.setModel(original, 'opus');
+        ownBots.setKernel(ownBots.bots.single, 'codex');
+        final switched = ownBots.threadFor(ownBots.bots.single);
+        expect(switched.kernel.id, 'codex');
+        expect(switched.session.kernelContext.settings['model'], 'default');
+        ownBots.setModel(ownBots.bots.single, 'gpt-bot-explicit');
+        expect(
+          isolated.agentSetup!(original.folder)!.settings['model'],
+          'gpt-bot-explicit',
+        );
+      },
+    );
+
     test('its agent is told who it is, with its own tools only', () async {
       final bot = bots.bots.single;
       bots.threadFor(bot).session.send(const ComposerMessage(text: '在吗'));

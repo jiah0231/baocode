@@ -50,8 +50,9 @@ Future<({String data, List<ReviewBlob> blobs})?> importLegacyReview(
     }
     if (!const LineSplitter()
         .convert(utf8.decode(listed.stdout as List<int>))
-        .contains(ref))
+        .contains(ref)) {
       continue;
+    }
     final commit = await git(['cat-file', 'commit', ref]);
     if (commit.exitCode != 0) {
       throw const ReviewUnavailable(
@@ -60,8 +61,9 @@ Future<({String data, List<ReviewBlob> blobs})?> importLegacyReview(
     }
     final body = utf8.decode(commit.stdout as List<int>);
     final separator = body.indexOf('\n\n');
-    if (separator < 0)
+    if (separator < 0) {
       throw const ReviewUnavailable('The old review session is incomplete.');
+    }
     final json = jsonDecode(body.substring(separator + 2));
     if (json is! Map || json['version'] != 3 || json['entries'] is! Map) {
       throw const ReviewUnavailable(
@@ -141,8 +143,9 @@ Future<({String data, List<ReviewBlob> blobs})?> importLegacyReview(
 
 String _legacyName(String session) {
   if (RegExp(r'^[A-Za-z0-9_-][A-Za-z0-9._-]*$').hasMatch(session) &&
-      !session.endsWith('.lock'))
+      !session.endsWith('.lock')) {
     return session;
+  }
   var hash = 0xcbf29ce4 << 32 | 0x84222325;
   for (final byte in utf8.encode(session)) {
     hash ^= byte;

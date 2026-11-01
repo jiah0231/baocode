@@ -3063,7 +3063,6 @@ class CodexKernel
         _startedAt.remove(id);
       case 'fileChange':
         _fileChanges(id, item['changes'] as List? ?? const []);
-        emit(FilesMayHaveChanged(nextSeq));
       default:
         _mcpCalls.remove(id);
         final chat = _toolItem(item, done: true);
