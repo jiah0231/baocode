@@ -15,6 +15,7 @@ import 'package:baocode/network/proxy_settings.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   test('a question alone goes on stdin, its answer one JSON result', () {
     final arguments = claudeHaikuArguments('Be brief.');
     expect(arguments, isNot(contains('--input-format')));
@@ -110,9 +111,12 @@ void main() {
   group('on BaoCode\'s own core', () {
     late FakeApi api;
     late Directory root;
+    HttpOverrides? previousHttpOverrides;
     final previous = ModelProviders.current;
 
     setUp(() async {
+      previousHttpOverrides = HttpOverrides.current;
+      HttpOverrides.global = _LoopbackHttpOverrides();
       root = Directory.systemTemp.createTempSync('baocode-haiku-');
       api = await FakeApi.start(errands: (_) => Reply.text('Short answer'));
       // The machine's own setup: a key and a Haiku of its own.
@@ -134,8 +138,12 @@ void main() {
     tearDown(() async {
       ModelProviders.current = previous;
       ClaudeEnvironment.use(null);
-      await api.close();
-      root.deleteSync(recursive: true);
+      try {
+        await api.close();
+        await root.delete(recursive: true);
+      } finally {
+        HttpOverrides.global = previousHttpOverrides;
+      }
     });
 
     test('no upstream: not asked of the machine\'s own setup', () async {
@@ -176,4 +184,24 @@ void main() {
       expect(api.headers.map((h) => h['x-api-key']).toSet(), {'sk-up'});
     }, timeout: const Timeout(Duration(minutes: 1)));
   });
+}
+
+/// These fixtures speak real HTTP only to their in-process FakeApi/proxy.
+/// The widget test binding's blanket 400 client is inappropriate here, but
+/// removing it must not accidentally allow a test to call a real model API.
+class _LoopbackHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    final client = super.createHttpClient(context);
+    client.connectionFactory = (uri, proxyHost, proxyPort) {
+      final address = uri.host == 'localhost'
+          ? InternetAddress.loopbackIPv4
+          : InternetAddress.tryParse(uri.host);
+      if (proxyHost != null || address == null || !address.isLoopback) {
+        throw StateError('Fixture HTTP must stay on loopback: $uri');
+      }
+      return Socket.startConnect(address, uri.port);
+    };
+    return client;
+  }
 }

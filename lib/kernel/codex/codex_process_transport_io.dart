@@ -104,17 +104,11 @@ class CodexProcessTransport implements CodexTransport {
     }
     final proxy = await NetworkProxy.instance.environment();
     try {
-      final process = await Process.start(
+      final process = await _startExecutable(
         executable,
-        const ['app-server'],
+        'app-server',
         workingDirectory: launch.cwd,
         environment: {...environment, ...proxy, ...?launch.env},
-        // The login shell's environment is the whole of it; on Windows it
-        // is the app's own, and the child needs the parent's beside it for
-        // what `cmd.exe` itself runs on (COMSPEC, PATHEXT, …).
-        includeParentEnvironment: Platform.isWindows,
-        // An npm shim is a `.cmd`, which only the shell can run.
-        runInShell: Platform.isWindows,
       );
       return CodexProcessTransport._(process, executable: executable);
     } on ProcessException catch (error) {
@@ -195,6 +189,49 @@ class CodexProcessTransport implements CodexTransport {
     return null;
   }
 
+  /// Run native executables directly. A Windows npm shim needs cmd, but
+  /// `runInShell` feeds the path to cmd's command-line quote stripping: an
+  /// ampersand in a quoted path can then turn into a command separator.
+  /// Expand a quoted environment value instead, after that initial parse.
+  /// No CALL (second expansion) or delayed expansion: literal % and ! in a
+  /// path must remain literal, and no path is interpolated into shell text.
+  static Future<Process> _startExecutable(
+    String executable,
+    String argument, {
+    required Map<String, String> environment,
+    String? workingDirectory,
+  }) {
+    if (argument != 'app-server' && argument != '--version') {
+      throw ArgumentError.value(argument, 'argument');
+    }
+    final extension = p.extension(executable).toLowerCase();
+    if (Platform.isWindows && (extension == '.cmd' || extension == '.bat')) {
+      if (executable.contains(RegExp('["\\r\\n]'))) {
+        throw const CodexUnavailable('Invalid Codex executable path');
+      }
+      final windows =
+          Platform.environment['SystemRoot'] ??
+          Platform.environment['SYSTEMROOT'] ??
+          r'C:\Windows';
+      return Process.start(
+        p.join(windows, 'System32', 'cmd.exe'),
+        ['/d', '/v:off', '/c', '%baocode_codex_executable%', argument],
+        workingDirectory: workingDirectory,
+        environment: {
+          ...environment,
+          'baocode_codex_executable': '"$executable"',
+        },
+      );
+    }
+    return Process.start(
+      executable,
+      [argument],
+      workingDirectory: workingDirectory,
+      environment: environment,
+      includeParentEnvironment: Platform.isWindows,
+    );
+  }
+
   /// Inspect the same executable local sessions use. Never install anything.
   static Future<LocalCodexStatus?> status() async {
     try {
@@ -204,12 +241,10 @@ class CodexProcessTransport implements CodexTransport {
         configuredPath: CodexPathSetting.current(),
       );
       if (executable == null) return const LocalCodexMissing();
-      final process = await Process.start(
+      final process = await _startExecutable(
         executable,
-        const ['--version'],
+        '--version',
         environment: environment,
-        includeParentEnvironment: Platform.isWindows,
-        runInShell: Platform.isWindows,
       );
       final output = process.stdout.transform(_decoder).join();
       final errors = process.stderr.transform(_decoder).join();

@@ -125,8 +125,9 @@ void main() {
   test(
     'Windows npm shim runs from a path containing spaces and ampersands',
     () async {
-      final bin = Directory(p.join(root.path, 'my codex & tools'))
-        ..createSync();
+      final bin = Directory(
+        p.join(root.path, 'my codex & tools ! literal %PATH%'),
+      )..createSync();
       final args = File(p.join(bin.path, 'args.txt'));
       final named = File(p.join(bin.path, 'codex.cmd'))
         ..writeAsStringSync(
@@ -136,6 +137,7 @@ void main() {
           '  exit /b 0\r\n'
           ')\r\n'
           'echo %~1>"%~dp0args.txt"\r\n'
+          'cd >"%~dp0cwd.txt"\r\n'
           'exit /b 0\r\n',
         );
       CodexPathSetting.current = () => named.path;
@@ -162,16 +164,22 @@ void main() {
         ),
         named.path,
       );
+      final status = await localCodexStatus();
       expect(
-        await localCodexStatus(),
+        status,
         isA<LocalCodexFound>()
             .having((s) => s.path, 'path', named.path)
             .having((s) => s.version, 'version', 'codex-cli 1.2.3'),
+        reason: status is LocalCodexFailed ? status.message : null,
       );
       final transport = await startCodexProcess(CodexLaunch(cwd: root.path));
       await transport.exited.timeout(const Duration(seconds: 10));
       await CodexProcessTransport.registry.flush();
       expect(args.readAsStringSync().trim(), 'app-server');
+      expect(
+        File(p.join(bin.path, 'cwd.txt')).readAsStringSync().trim(),
+        root.path,
+      );
     },
     skip: !Platform.isWindows ? 'Exercises the Windows npm shim.' : false,
   );

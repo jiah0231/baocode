@@ -29,13 +29,19 @@ import '../kernel_test.dart' show shown;
 const _model = 'claude-sonnet-4-5';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   late FakeApi api;
   late String root;
   late String cwd;
   late String config;
   late ModelProviders providers;
+  HttpOverrides? previousHttpOverrides;
+  final opened = <ClaudeCodeKernel>[];
 
   setUp(() async {
+    previousHttpOverrides = HttpOverrides.current;
+    HttpOverrides.global = _LoopbackHttpOverrides();
+    opened.clear();
     root = Directory.systemTemp
         .createTempSync('baocode-core-e2e-')
         .resolveSymbolicLinksSync();
@@ -96,10 +102,23 @@ void main() {
   });
 
   tearDown(() async {
-    ClaudeEnvironment.use(null);
-    ModelProviders.current = providers;
-    await api.close();
-    Directory(root).deleteSync(recursive: true);
+    try {
+      // Failed assertions must not leave an isolate writing into a folder
+      // being deleted (especially on Windows, where open files are locked).
+      for (final kernel in opened) {
+        kernel.dispose();
+      }
+      await Future.wait([
+        for (final kernel in opened)
+          kernel.stopped.timeout(const Duration(seconds: 10)),
+      ]);
+      await api.close();
+      await Directory(root).delete(recursive: true);
+    } finally {
+      ClaudeEnvironment.use(null);
+      ModelProviders.current = providers;
+      HttpOverrides.global = previousHttpOverrides;
+    }
   });
 
   /// Every request went to the upstream's model, with its key.
@@ -116,6 +135,7 @@ void main() {
     // As the app makes it: the core picked in settings, on this machine.
     final kernel =
         KernelRegistry.claudeCode.create(context) as ClaudeCodeKernel;
+    opened.add(kernel);
     final transcript = Transcript();
     final asked = <String>[];
     kernel.events.listen((event) {
@@ -406,11 +426,6 @@ void main() {
 
   test('a subagent on the Haiku tier, set to another upstream\'s model: '
       'there, with that one\'s key, through the proxy', () async {
-    // The proxy is in this isolate: real sockets, not the test binding's
-    // 400s.
-    final overrides = HttpOverrides.current;
-    HttpOverrides.global = null;
-    addTearDown(() => HttpOverrides.global = overrides);
     final other = await FakeApi.start(
       script: [Reply.text('nothing here')],
       errands: (_) => Reply.text('Looking around'),
@@ -464,9 +479,6 @@ void main() {
 
   test('an OpenAI upstream\'s Claude at its Messages API: the session '
       'there, through the proxy, untranslated', () async {
-    final overrides = HttpOverrides.current;
-    HttpOverrides.global = null;
-    addTearDown(() => HttpOverrides.global = overrides);
     await ModelProviders.current.save(
       ModelProviders.current
           .provider('up')!
@@ -535,4 +547,24 @@ void main() {
     kernel.dispose();
     await kernel.stopped;
   });
+}
+
+/// These fixtures speak real HTTP only to their in-process FakeApi/proxy.
+/// The widget test binding's blanket 400 client is inappropriate here, but
+/// removing it must not accidentally allow a test to call a real model API.
+class _LoopbackHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    final client = super.createHttpClient(context);
+    client.connectionFactory = (uri, proxyHost, proxyPort) {
+      final address = uri.host == 'localhost'
+          ? InternetAddress.loopbackIPv4
+          : InternetAddress.tryParse(uri.host);
+      if (proxyHost != null || address == null || !address.isLoopback) {
+        throw StateError('Fixture HTTP must stay on loopback: $uri');
+      }
+      return Socket.startConnect(address, uri.port);
+    };
+    return client;
+  }
 }

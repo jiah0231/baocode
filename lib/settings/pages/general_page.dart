@@ -840,7 +840,9 @@ class _CodexPathSettingState extends State<_CodexPathSetting> {
         IdeButton(
           label: l10n.codexPathRefresh,
           secondary: true,
-          onPressed: () => setState(() => _status = widget.status()),
+          onPressed: () => setState(() {
+            _status = widget.status();
+          }),
         ),
       ],
       trailing: SettingsTextField(
