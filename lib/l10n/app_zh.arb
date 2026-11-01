@@ -3540,5 +3540,16 @@
   "ustatClearShownFiltered": "清理当前筛选出的数据",
   "ustatClearAll": "全部清理",
   "ustatClearConfirm": "{what}？",
-  "ustatClearDetail": "这些调用记录会从本机删除，无法恢复。"
+  "ustatClearDetail": "这些调用记录会从本机删除，无法恢复。",
+  "mobileAddresses": "地址",
+  "mobileAddressesDescription": "手机按此顺序尝试连接这台电脑：先局域网，再公网。",
+  "mobileAddressesNone": "未找到可用的网络。",
+  "mobileAddressesRefresh": "刷新",
+  "mobilePort": "端口",
+  "mobilePortDescription": "手机连接的端口。在路由器上转发此端口，即可从公网访问这台电脑。",
+  "mobilePortInvalid": "不是有效端口：{text}。请填写 1 到 65535 之间的数字。",
+  "mobilePublicAddress": "公网地址",
+  "mobilePublicAddressDescription": "可从公网访问这台电脑的域名或 IP（需转发端口），会写入二维码；多个用逗号分隔。经只收 HTTPS 的代理（如 Cloudflare Tunnel）访问时，写成 wss://域名。公网 IPv6 地址会自动加入。",
+  "mobileRelayUnavailable": "暂不可用",
+  "mobileStatusListening": "正在监听端口 {port}"
 }

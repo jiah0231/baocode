@@ -1,6 +1,6 @@
-/// The link over the network (iroh, through `bao_iroh`): a [LinkNode] bound
-/// as this device's key.
+/// The link's sockets over `dart:io`: a desktop's server, a phone's
+/// connector, and the addresses a desktop can be reached at.
 library;
 
 export 'bao_link.dart';
-export 'src/iroh_link.dart';
+export 'src/io.dart';

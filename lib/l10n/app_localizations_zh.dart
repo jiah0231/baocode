@@ -12342,4 +12342,42 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get ustatClearDetail => '这些调用记录会从本机删除，无法恢复。';
+
+  @override
+  String get mobileAddresses => '地址';
+
+  @override
+  String get mobileAddressesDescription => '手机按此顺序尝试连接这台电脑：先局域网，再公网。';
+
+  @override
+  String get mobileAddressesNone => '未找到可用的网络。';
+
+  @override
+  String get mobileAddressesRefresh => '刷新';
+
+  @override
+  String get mobilePort => '端口';
+
+  @override
+  String get mobilePortDescription => '手机连接的端口。在路由器上转发此端口，即可从公网访问这台电脑。';
+
+  @override
+  String mobilePortInvalid(String text) {
+    return '不是有效端口：$text。请填写 1 到 65535 之间的数字。';
+  }
+
+  @override
+  String get mobilePublicAddress => '公网地址';
+
+  @override
+  String get mobilePublicAddressDescription =>
+      '可从公网访问这台电脑的域名或 IP（需转发端口），会写入二维码；多个用逗号分隔。经只收 HTTPS 的代理（如 Cloudflare Tunnel）访问时，写成 wss://域名。公网 IPv6 地址会自动加入。';
+
+  @override
+  String get mobileRelayUnavailable => '暂不可用';
+
+  @override
+  String mobileStatusListening(int port) {
+    return '正在监听端口 $port';
+  }
 }

@@ -8416,5 +8416,18 @@
   "ustatClearAll": "Clear everything",
   "ustatClearConfirm": "{what}?",
   "@ustatClearConfirm": {"placeholders": {"what": {"type": "String"}}},
-  "ustatClearDetail": "The calls are deleted from this computer. This cannot be undone."
+  "ustatClearDetail": "The calls are deleted from this computer. This cannot be undone.",
+  "mobileAddresses": "Addresses",
+  "mobileAddressesDescription": "Where phones reach this computer, in the order they try them: the local network first, then the internet.",
+  "mobileAddressesNone": "No network found.",
+  "mobileAddressesRefresh": "Refresh",
+  "mobilePort": "Port",
+  "mobilePortDescription": "The port phones connect to. Forward it on the router to reach this computer from the internet.",
+  "mobilePortInvalid": "Not a port: {text}. Enter a number from 1 to 65535.",
+  "@mobilePortInvalid": {"placeholders": {"text": {"type": "String"}}},
+  "mobilePublicAddress": "Public Address",
+  "mobilePublicAddressDescription": "A domain or IP this computer can be reached at from the internet (with the port forwarded), put in the QR code; several separated by commas. Behind a proxy that only takes HTTPS (such as a Cloudflare Tunnel), write it as wss://domain. Public IPv6 addresses are found by themselves.",
+  "mobileRelayUnavailable": "Not Available Yet",
+  "mobileStatusListening": "Listening on port {port}",
+  "@mobileStatusListening": {"placeholders": {"port": {"type": "int"}}}
 }

@@ -21302,6 +21302,72 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The calls are deleted from this computer. This cannot be undone.'**
   String get ustatClearDetail;
+
+  /// No description provided for @mobileAddresses.
+  ///
+  /// In en, this message translates to:
+  /// **'Addresses'**
+  String get mobileAddresses;
+
+  /// No description provided for @mobileAddressesDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Where phones reach this computer, in the order they try them: the local network first, then the internet.'**
+  String get mobileAddressesDescription;
+
+  /// No description provided for @mobileAddressesNone.
+  ///
+  /// In en, this message translates to:
+  /// **'No network found.'**
+  String get mobileAddressesNone;
+
+  /// No description provided for @mobileAddressesRefresh.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh'**
+  String get mobileAddressesRefresh;
+
+  /// No description provided for @mobilePort.
+  ///
+  /// In en, this message translates to:
+  /// **'Port'**
+  String get mobilePort;
+
+  /// No description provided for @mobilePortDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'The port phones connect to. Forward it on the router to reach this computer from the internet.'**
+  String get mobilePortDescription;
+
+  /// No description provided for @mobilePortInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Not a port: {text}. Enter a number from 1 to 65535.'**
+  String mobilePortInvalid(String text);
+
+  /// No description provided for @mobilePublicAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Public Address'**
+  String get mobilePublicAddress;
+
+  /// No description provided for @mobilePublicAddressDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'A domain or IP this computer can be reached at from the internet (with the port forwarded), put in the QR code; several separated by commas. Behind a proxy that only takes HTTPS (such as a Cloudflare Tunnel), write it as wss://domain. Public IPv6 addresses are found by themselves.'**
+  String get mobilePublicAddressDescription;
+
+  /// No description provided for @mobileRelayUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Not Available Yet'**
+  String get mobileRelayUnavailable;
+
+  /// No description provided for @mobileStatusListening.
+  ///
+  /// In en, this message translates to:
+  /// **'Listening on port {port}'**
+  String mobileStatusListening(int port);
 }
 
 class _AppLocalizationsDelegate

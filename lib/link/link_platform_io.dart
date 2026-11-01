@@ -11,7 +11,8 @@ import 'link_platform.dart';
 
 LinkPlatform? currentLinkPlatform() => IoLinkPlatform();
 
-/// This machine's: an iroh node, the data folder's `state/mobile.json`.
+/// This machine's: `dart:io`'s server and addresses, the data folder's
+/// `state/mobile.json`.
 class IoLinkPlatform implements LinkPlatform {
   /// The file at [path] instead, e.g. under test.
   IoLinkPlatform({this.path});
@@ -51,16 +52,11 @@ class IoLinkPlatform implements LinkPlatform {
   }
 
   @override
-  Future<LinkNode> bind(
-    LinkIdentity identity, {
-    required List<String> relays,
-    required int port,
-  }) => IrohLinkNode.bind(
-    identity: identity,
-    relays: relays,
-    port: port,
-    accept: true,
-  );
+  Future<LinkListener> listen(int port) async =>
+      _Listener(await LinkServer.bind(port));
+
+  @override
+  Future<List<DirectEndpoint>> endpoints(int port) => localEndpoints(port);
 
   @override
   Future<LinkAdvertising?> advertise(LinkAdvert advert) async {
@@ -214,4 +210,19 @@ class _Advertising implements LinkAdvertising {
       // Gone already.
     }
   }
+}
+
+class _Listener implements LinkListener {
+  _Listener(this._server);
+
+  final LinkServer _server;
+
+  @override
+  int get port => _server.port;
+
+  @override
+  Stream<LinkSocket> get sockets => _server.sockets;
+
+  @override
+  Future<void> close() => _server.close();
 }

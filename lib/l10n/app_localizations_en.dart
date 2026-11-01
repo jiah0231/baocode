@@ -13020,4 +13020,44 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get ustatClearDetail =>
       'The calls are deleted from this computer. This cannot be undone.';
+
+  @override
+  String get mobileAddresses => 'Addresses';
+
+  @override
+  String get mobileAddressesDescription =>
+      'Where phones reach this computer, in the order they try them: the local network first, then the internet.';
+
+  @override
+  String get mobileAddressesNone => 'No network found.';
+
+  @override
+  String get mobileAddressesRefresh => 'Refresh';
+
+  @override
+  String get mobilePort => 'Port';
+
+  @override
+  String get mobilePortDescription =>
+      'The port phones connect to. Forward it on the router to reach this computer from the internet.';
+
+  @override
+  String mobilePortInvalid(String text) {
+    return 'Not a port: $text. Enter a number from 1 to 65535.';
+  }
+
+  @override
+  String get mobilePublicAddress => 'Public Address';
+
+  @override
+  String get mobilePublicAddressDescription =>
+      'A domain or IP this computer can be reached at from the internet (with the port forwarded), put in the QR code; several separated by commas. Behind a proxy that only takes HTTPS (such as a Cloudflare Tunnel), write it as wss://domain. Public IPv6 addresses are found by themselves.';
+
+  @override
+  String get mobileRelayUnavailable => 'Not Available Yet';
+
+  @override
+  String mobileStatusListening(int port) {
+    return 'Listening on port $port';
+  }
 }
