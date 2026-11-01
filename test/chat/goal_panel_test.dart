@@ -46,6 +46,23 @@ void main() {
     expect(find.text('Waiting'), findsOneWidget);
   });
 
+  testWidgets('native paused goal is not shown working during another turn', (
+    tester,
+  ) async {
+    await pump(
+      tester,
+      KernelGoal(
+        'all tests pass',
+        statusLabel: 'Paused',
+        setAt: DateTime.now().subtract(const Duration(seconds: 27)),
+      ),
+    );
+    expect(find.text('Paused'), findsOneWidget);
+    expect(find.text('In progress'), findsNothing);
+    expect(find.text(' · 27s'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('counts the time it has been worked toward', (tester) async {
     await pump(
       tester,

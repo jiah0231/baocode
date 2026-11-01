@@ -27,6 +27,7 @@ import '../../workspace/main_window.dart';
 import '../shell_command_actions.dart';
 import '../user_settings.dart';
 import 'settings_dropdown.dart';
+import 'codex_install_controls.dart';
 import 'settings_widgets.dart';
 
 /// Settings → General: what the app shows at launch
@@ -441,6 +442,13 @@ class GeneralSettingsPage extends StatelessWidget {
                           CodexPathSetting.parse(path),
                         ),
                       ),
+                      if (settings != null)
+                        CodexInstallControls(
+                          onInstalled: (path) => settings.update(
+                            CodexPathSetting.settingKey,
+                            path,
+                          ),
+                        ),
                     ],
                   ),
                 ],

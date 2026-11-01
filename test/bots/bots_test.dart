@@ -337,6 +337,44 @@ void main() {
       expect(workspace.agentSetup!(app), isNull);
     });
 
+    test(
+      'backend selection keeps separate histories and persists its card',
+      () {
+        late KernelDescriptor codex;
+        codex = KernelDescriptor(
+          id: 'codex',
+          label: 'Codex',
+          icon: Icons.auto_awesome,
+          description: '',
+          create: (context) => ClaudeCodeKernel(
+            codex,
+            context,
+            start: MockClaudeCodeTransport.start,
+          ),
+        );
+        workspace.kernels.add(codex);
+        final original = bots.bots.single;
+        final oldThread = bots.threadFor(original);
+        bots.setModel(original, 'opus');
+        bots.setKernel(bots.bots.single, 'codex');
+        final selected = bots.bots.single;
+        expect(selected.kernel, 'codex');
+        expect(selected.model, isNull);
+        final newThread = bots.threadFor(selected);
+        expect(newThread, isNot(same(oldThread)));
+        expect(newThread.kernel.id, 'codex');
+        expect(workspace.threads, contains(oldThread));
+        expect(
+          workspace.agentSetup!(selected.folder)!.settings['permission'],
+          'read-only',
+        );
+        final card = utf8.decode(folders.files['${selected.folder}/BOT.md']!);
+        expect(BotFiles.read(selected.folder, card)!.kernel, 'codex');
+        bots.setKernel(selected, 'claude-code');
+        expect(bots.threadFor(bots.bots.single), same(oldThread));
+      },
+    );
+
     test('its agent is told who it is, with its own tools only', () async {
       final bot = bots.bots.single;
       bots.threadFor(bot).session.send(const ComposerMessage(text: '在吗'));

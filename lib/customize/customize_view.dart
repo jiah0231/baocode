@@ -30,6 +30,7 @@ import '../workspace/editor_launcher.dart';
 import '../workspace/title_bar_double_click.dart';
 import '../workspace/workspace.dart';
 import 'customization_store.dart';
+import 'codex_customization_store.dart';
 import 'customizations.dart';
 import 'mcp_probe.dart';
 
@@ -83,10 +84,16 @@ class CustomizeView extends StatefulWidget {
     this.onOpenFile,
     this.host,
     this.showTitleBar = true,
+    this.codexStore,
+    this.codexInitially = false,
   });
 
   /// The customizations of the machine shown: this one's, or [host]'s.
   final CustomizationStore store;
+
+  /// The same host's Codex settings; remote callers must supply its disk.
+  final CodexCustomizationStore? codexStore;
+  final bool codexInitially;
 
   /// The remote host whose customizations these are, as the sidebar names
   /// it; null for this machine's.
@@ -131,6 +138,27 @@ class CustomizeView extends StatefulWidget {
 }
 
 class CustomizeViewState extends State<CustomizeView> {
+  bool _codexChanging = false;
+  late bool _useCodex = widget.codexInitially;
+  final _localCodex = CodexCustomizationStore();
+  CodexCustomizationStore? get _codexStore =>
+      widget.codexStore ?? (widget.host == null ? _localCodex : null);
+  CustomizationStore get _store =>
+      _useCodex && _codexStore != null ? _codexStore! : widget.store;
+
+  void _selectEngine(bool codex) {
+    if (_open != null || _codexChanging || codex == _useCodex) return;
+    setState(() {
+      _useCodex = codex;
+      _items = null;
+      _error = null;
+      _switched = null;
+      _expanded.clear();
+      _probes.clear();
+    });
+    unawaited(_load());
+  }
+
   late CustomizationKind _kind = widget.kind;
   late Project? _project = widget.project;
   final TextEditingController _query = TextEditingController();
@@ -156,7 +184,8 @@ class CustomizeViewState extends State<CustomizeView> {
   @override
   void didUpdateWidget(CustomizeView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.store, widget.store)) {
+    if (!identical(oldWidget.store, widget.store) ||
+        !identical(oldWidget.codexStore, widget.codexStore)) {
       // Another machine's: from its own projects, the list again.
       _project = widget.project;
       _open = null;
@@ -176,7 +205,7 @@ class CustomizeViewState extends State<CustomizeView> {
   };
 
   /// How paths are spelled where the customizations are.
-  p.Context get _paths => widget.store.isLocal ? p.context : p.posix;
+  p.Context get _paths => _store.isLocal ? p.context : p.posix;
 
   @override
   void dispose() {
@@ -198,7 +227,7 @@ class CustomizeViewState extends State<CustomizeView> {
   Future<void> _load() async {
     final generation = ++_generation;
     try {
-      final items = await widget.store.list(_kind, project: _projectPath);
+      final items = await _store.list(_kind, project: _projectPath);
       if (!mounted || generation != _generation) return;
       setState(() {
         _items = items;
@@ -239,7 +268,8 @@ class CustomizeViewState extends State<CustomizeView> {
       item.kind == CustomizationKind.mcps &&
       item.server != null &&
       item.enabled != false &&
-      widget.store.isLocal &&
+      _store.isLocal &&
+      _store is! CodexCustomizationStore &&
       CustomizeView.mcpProber != null;
 
   /// Where [item], an MCP server, stands; null for none to show.
@@ -326,6 +356,28 @@ class CustomizeViewState extends State<CustomizeView> {
 
   /// [item]'s switch, an MCP server's or a skill's; null for none.
   Widget? _switchOf(Customization item) {
+    if (_store case final CodexCustomizationStore store) {
+      if (!store.canToggle(item)) return null;
+      final enabled = item.enabled != false;
+      return _RowSwitch(
+        value: enabled,
+        enabled: !_codexChanging,
+        label: item.name,
+        tooltip: enabled ? context.l10n.mcpDisable : context.l10n.mcpEnable,
+        onChanged: (value) => unawaited(() async {
+          if (_codexChanging) return;
+          setState(() => _codexChanging = true);
+          try {
+            await store.setEnabled(item, value);
+            if (mounted) await _load();
+          } on Object catch (error) {
+            if (mounted) setState(() => _error = error);
+          } finally {
+            if (mounted) setState(() => _codexChanging = false);
+          }
+        }()),
+      );
+    }
     if (!_switchable) return null;
     final switches = _switches;
     final l10n = context.l10n;
@@ -367,7 +419,7 @@ class CustomizeViewState extends State<CustomizeView> {
     );
     if (name == null || !mounted) return;
     try {
-      final path = await widget.store.create(
+      final path = await _store.create(
         _kind,
         scope,
         name,
@@ -393,7 +445,7 @@ class CustomizeViewState extends State<CustomizeView> {
     );
     if (choice != 0 || !mounted) return;
     try {
-      await widget.store.delete(item);
+      await _store.delete(item);
     } on Object catch (error) {
       if (mounted) setState(() => _error = error);
     }
@@ -413,12 +465,12 @@ class CustomizeViewState extends State<CustomizeView> {
               ? _CustomizationEditor(
                   key: ObjectKey(open),
                   item: open,
-                  store: widget.store,
+                  store: _store,
                   onBack: () {
                     setState(() => _open = null);
                     unawaited(_load());
                   },
-                  onOpenFile: widget.store.isLocal ? widget.onOpenFile : null,
+                  onOpenFile: _store.isLocal ? widget.onOpenFile : null,
                   menu: () => _menu(open, opened: true),
                   status: switch (_statusOf(open)) {
                     final status? => _McpStatusPanel(
@@ -495,7 +547,7 @@ class CustomizeViewState extends State<CustomizeView> {
   }
 
   Widget _buildList(AppLocalizations l10n) {
-    if (!widget.store.supported) {
+    if (!_store.supported) {
       return Center(
         child: Text(
           l10n.customizeUnsupported,
@@ -505,7 +557,10 @@ class CustomizeViewState extends State<CustomizeView> {
     }
     final items = _shown;
     final scopes = [
-      if (_kind == CustomizationKind.plugins)
+      if (_store is CodexCustomizationStore) ...[
+        CustomizationScope.user,
+        if (_project != null) CustomizationScope.project,
+      ] else if (_kind == CustomizationKind.plugins)
         CustomizationScope.plugin
       else ...[
         CustomizationScope.user,
@@ -525,6 +580,32 @@ class CustomizeViewState extends State<CustomizeView> {
       controller: _scroll,
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
       children: [
+        if (_codexStore != null) ...[
+          Wrap(
+            spacing: 6,
+            children: [
+              _Chip(
+                selected: !_useCodex,
+                onTap: () => _selectEngine(false),
+                child: const Text('Claude Code'),
+              ),
+              _Chip(
+                selected: _useCodex,
+                onTap: () => _selectEngine(true),
+                child: const Text('Codex'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (_useCodex)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Text(
+                l10n.codexCustomizeNotice,
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+              ),
+            ),
+        ],
         _SearchBox(controller: _query),
         const SizedBox(height: 12),
         _buildChips(l10n),
@@ -618,10 +699,13 @@ class CustomizeViewState extends State<CustomizeView> {
     List<Customization> items,
   ) {
     final creatable =
-        _kind.creatable &&
+        (_store is CodexCustomizationStore
+            ? (_store as CodexCustomizationStore).canCreate(_kind)
+            : _kind.creatable) &&
         (scope == CustomizationScope.user ||
             scope == CustomizationScope.project);
-    final configurable = _kind.configuredIn(scope);
+    final configurable =
+        _store is! CodexCustomizationStore && _kind.configuredIn(scope);
     // Where none are, what is said of adding some is shown: all but those
     // synced from claude.ai.
     final shownEmpty =
@@ -762,11 +846,13 @@ class CustomizeViewState extends State<CustomizeView> {
     final tools = item.kind == CustomizationKind.mcps
         ? _probes[_probeKey(item)]?.tools
         : null;
-    final on = switch (item.kind) {
-      CustomizationKind.mcps => _switches.serverEnabled(item.name),
-      CustomizationKind.skills => _switches.skillEnabled(item.name),
-      _ => true,
-    };
+    final on = _store is CodexCustomizationStore
+        ? item.enabled != false
+        : switch (item.kind) {
+            CustomizationKind.mcps => _switches.serverEnabled(item.name),
+            CustomizationKind.skills => _switches.skillEnabled(item.name),
+            _ => true,
+          };
     return _ItemRow(
       item: item,
       status: _statusOf(item),
@@ -821,24 +907,26 @@ class CustomizeViewState extends State<CustomizeView> {
 
   /// What a group with none says: where some come from.
   String _emptyText(AppLocalizations l10n, CustomizationScope scope) =>
-      switch ((_kind, scope)) {
-        (CustomizationKind.plugins, _) => l10n.customizeEmptyPlugins,
-        (CustomizationKind.mcps, CustomizationScope.user) =>
-          l10n.customizeEmptyMcpsUser,
-        (CustomizationKind.mcps, CustomizationScope.local) =>
-          l10n.customizeEmptyMcpsLocal,
-        (CustomizationKind.mcps, _) => l10n.customizeEmptyMcpsProject,
-        (CustomizationKind.hooks, _) => l10n.customizeEmptyHooks(
-          _configName(scope),
-        ),
-        _ => l10n.customizeEmpty,
-      };
+      _store is CodexCustomizationStore
+      ? l10n.customizeEmpty
+      : switch ((_kind, scope)) {
+          (CustomizationKind.plugins, _) => l10n.customizeEmptyPlugins,
+          (CustomizationKind.mcps, CustomizationScope.user) =>
+            l10n.customizeEmptyMcpsUser,
+          (CustomizationKind.mcps, CustomizationScope.local) =>
+            l10n.customizeEmptyMcpsLocal,
+          (CustomizationKind.mcps, _) => l10n.customizeEmptyMcpsProject,
+          (CustomizationKind.hooks, _) => l10n.customizeEmptyHooks(
+            _configName(scope),
+          ),
+          _ => l10n.customizeEmpty,
+        };
 
   /// Opens the file [_kind] is kept in for [scope], as it is or, not there
   /// yet, as it would start.
   Future<void> _openConfig(CustomizationScope scope) async {
     final project = _projectPath;
-    final path = await widget.store.configFile(_kind, scope, project: project);
+    final path = await _store.configFile(_kind, scope, project: project);
     if (path == null || !mounted) return;
     setState(
       () => _open = Customization(
@@ -858,7 +946,7 @@ class CustomizeViewState extends State<CustomizeView> {
   List<SidebarMenuItem> _menu(Customization item, {bool opened = false}) {
     final l10n = context.l10n;
     // A remote host's files are neither opened nor shown here.
-    final local = widget.store.isLocal;
+    final local = _store.isLocal;
     return [
       if (!opened)
         SidebarMenuItem(

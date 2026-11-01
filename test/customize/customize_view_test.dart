@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,6 +11,8 @@ import 'package:bao_editor/monaco/flutter/editor_surface_controller.dart';
 import 'package:baocode/chat/chat_screen.dart';
 import 'package:baocode/chat/side_panel/side_panel_view.dart';
 import 'package:baocode/customize/customization_store.dart';
+import 'package:baocode/customize/codex_customization_store.dart';
+
 import 'package:baocode/customize/customizations.dart';
 import 'package:baocode/customize/customize_view.dart';
 import 'package:baocode/customize/mcp_probe.dart';
@@ -144,7 +148,82 @@ String _editorText(WidgetTester tester) => _editor(tester).document.text;
 MarkdownEditor _markdown(WidgetTester tester) =>
     tester.widget<MarkdownEditor>(_inView(find.byType(MarkdownEditor)));
 
+class _CodexStore extends CodexCustomizationStore {
+  bool enabled = true;
+  int writes = 0;
+  Completer<void>? pending;
+  @override
+  Future<List<Customization>> list(
+    CustomizationKind kind, {
+    String? project,
+  }) async => [
+    Customization(
+      kind: kind,
+      scope: CustomizationScope.user,
+      name: 'native-skill',
+      path: '/skills/native/SKILL.md',
+      enabled: enabled,
+    ),
+  ];
+  @override
+  bool canToggle(Customization item) => true;
+  @override
+  Future<void> setEnabled(Customization item, bool value) async {
+    writes++;
+    if (pending case final wait?) await wait.future;
+    enabled = value;
+  }
+}
+
 void main() {
+  testWidgets(
+    'Codex engine isolates Claude and serializes failed/retried native toggles',
+    (tester) async {
+      final codex = _CodexStore();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: CustomizeView(
+              store: _MemoryStore(),
+              codexStore: codex,
+              projects: const [],
+              onClose: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('pdf'), findsOneWidget);
+      await tester.tap(find.text('Codex'));
+      await tester.pumpAndSettle();
+      expect(find.text('native-skill'), findsOneWidget);
+      expect(find.text('pdf'), findsNothing);
+      final toggle = find.byWidgetPredicate(
+        (w) => w is IdeSwitch && w.semanticLabel == 'native-skill',
+      );
+      codex.pending = Completer<void>();
+      await tester.tap(toggle);
+      await tester.pump();
+      expect(tester.widget<IdeSwitch>(toggle).enabled, false);
+      expect(codex.writes, 1);
+      codex.pending!.completeError(StateError('unsupported installed version'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('unsupported installed version'),
+        findsOneWidget,
+      );
+      expect(tester.widget<IdeSwitch>(toggle).value, true);
+      codex.pending = null;
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(tester.widget<IdeSwitch>(toggle).value, false);
+      expect(codex.writes, 2);
+      await tester.tap(find.text('Claude Code'));
+      await tester.pumpAndSettle();
+      expect(find.text('pdf'), findsOneWidget);
+      expect(find.text('native-skill'), findsNothing);
+    },
+  );
   testWidgets('Customize lists the skills, in place of the chat', (
     tester,
   ) async {

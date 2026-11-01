@@ -8432,5 +8432,19 @@
   "@mobileStatusListening": {"placeholders": {"port": {"type": "int"}}},
   "codexPathSettingDescription": "Absolute path to the local Codex CLI (codex.exe or codex.cmd on Windows). Leave empty to find it on PATH. Applies to new local sessions and history requests, not SSH hosts. Nothing is downloaded automatically. (codex.path)",
   "codexPathMissing": "Codex was not found. Install it with npm install -g @openai/codex, or choose its executable above.",
-  "codexPathRefresh": "Check again"
+  "codexPathRefresh": "Check again",
+  "codexInstallTitle": "Managed Codex CLI",
+  "codexInstallDescription": "Install or update an official Codex release in BaoCode’s data folder. Other installations, running sessions and SSH hosts are unchanged.",
+  "codexInstallAction": "Install / update…",
+  "codexInstallBusy": "Working…",
+  "codexInstallChecking": "Checking the latest official release…",
+  "codexInstallConfirm": "Install and use this Codex release?",
+  "codexInstallConfirmDetail": "Download this package from OpenAI’s GitHub releases, verify its SHA-256, extract it into BaoCode’s data folder, and check its version. On success, switch new local sessions to this executable. Existing versions and system PATH are not changed.",
+  "codexInstallProceed": "Install and use",
+  "codexInstallDone": "Installed and selected for new local sessions.",
+  "codexInstallFailed": "Codex installation failed. The selected executable was not changed.",
+  "botsBackendTitle": "Bot backends",
+  "botsBackendDescription": "Choose each bot’s backend while idle. Each backend keeps its own conversation; switching clears the model choice, not history. Codex uses only BaoCode’s gated tools and a read-only sandbox.",
+  "botsBackendBusy": "Wait for this bot to finish before switching.",
+  "codexCustomizeNotice": "Native Codex files and settings; commands are BaoCode prompts. Config edits apply to new sessions and depend on the installed Codex version. Project config, hooks and execution rules require a trusted project."
 }

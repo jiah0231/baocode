@@ -6136,7 +6136,9 @@ exec /usr/bin/env "\$@"
         'initialize',
         'model/list',
         'skills/list',
+        'config/read',
         'thread/start',
+        'thread/goal/get',
         'turn/start',
       ]);
       final turnStart = server.written.last['params'] as Map;

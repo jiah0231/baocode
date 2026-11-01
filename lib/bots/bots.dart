@@ -12,7 +12,6 @@ import '../chat/chat_session.dart';
 import '../images/image_tools.dart' show ImageTools;
 import '../kernel/agent_kernel.dart';
 import '../kernel/claude_code/claude_sdk_tools.dart';
-import '../kernel/kernel_registry.dart';
 import '../kernel/queued_messages.dart';
 import '../link/chat_codec.dart';
 import '../link/link_platform.dart';
@@ -279,6 +278,7 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
           style: bot.style,
           abilities: had?.abilities ?? const {},
           model: bot.model,
+          kernel: had?.kernel ?? 'claude-code',
           assistant: had?.assistant ?? false,
           created: bot.created ?? had?.created ?? _clock(),
         );
@@ -475,8 +475,12 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
         queuedMessages: QueuedMessages.duringTurn,
         queuedInPlace: true,
       ),
-      settings: {...settings, 'model': ?bot.model},
-      kernel: KernelRegistry.claudeCode.id,
+      settings: {
+        ...settings,
+        if (bot.kernel == 'codex') 'permission': 'read-only',
+        'model': ?bot.model,
+      },
+      kernel: bot.kernel,
     ),
     null => null,
   };
@@ -514,7 +518,10 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
   AgentThread? threadOf(Bot bot) {
     AgentThread? latest;
     for (final thread in workspace.threads) {
-      if (thread.project.path != bot.folder || thread.archived) continue;
+      if (thread.project.path != bot.folder ||
+          thread.archived ||
+          thread.kernel.id != bot.kernel)
+        continue;
       if (latest == null || thread.updatedAt.isAfter(latest.updatedAt)) {
         latest = thread;
       }
@@ -866,6 +873,34 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
     final index = _bots.indexWhere((b) => b.id == bot.id);
     if (index < 0 || _bots[index].model == model) return;
     _writeBot(_bots[index] = _bots[index].copyWith(model: model));
+    notifyListeners();
+  }
+
+  /// Switch backend only while idle. Histories stay separate and are kept;
+  /// returning to a backend resumes its own latest conversation. No foreign
+  /// session id or model choice is passed to a different backend.
+  bool canSwitchKernel(Bot bot) {
+    final thread = threadOf(bot);
+    return thread == null || !thread.isOpen || !thread.session.isStreaming;
+  }
+
+  void setKernel(Bot bot, String kernel) {
+    if (kernel != 'claude-code' && kernel != 'codex') {
+      throw ArgumentError.value(kernel, 'kernel');
+    }
+    if (!workspace.kernels.any((k) => k.id == kernel)) {
+      throw StateError('Backend is unavailable: $kernel');
+    }
+    final index = _bots.indexWhere((b) => b.id == bot.id);
+    if (index < 0 || _bots[index].kernel == kernel) return;
+    if (!canSwitchKernel(_bots[index])) {
+      throw StateError('Wait for the bot to finish before switching backend.');
+    }
+    final changed = _bots[index].copyWith(kernel: kernel, clearModel: true);
+    _writeBot(_bots[index] = changed);
+    _seen.remove(bot.id);
+    _restartWhenIdle.remove(bot.id);
+    threadFor(changed);
     notifyListeners();
   }
 

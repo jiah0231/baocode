@@ -35,6 +35,7 @@ import 'chat/side_panel/side_panel_view.dart';
 import 'chat/side_panel/web_page_opener.dart';
 import 'chat/widgets/hover_scroll_text.dart';
 import 'customize/customization_store.dart';
+import 'customize/codex_customization_store.dart';
 import 'customize/customizations.dart';
 import 'customize/customize_view.dart';
 import 'extensions/theme_extensions.dart';
@@ -1259,6 +1260,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
   /// The customizations of each remote host the sidebar has been on.
   final Map<String, CustomizationStore> _hostCustomizations = {};
+  final Map<String, CodexCustomizationStore> _codexCustomizations = {};
 
   void _showCustomize([CustomizationKind? kind]) {
     _closeDrawer();
@@ -4316,6 +4318,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     final project = _paletteProject;
     return CustomizeView(
       key: _customizeKey,
+      codexStore: host == null
+          ? null
+          : _codexCustomizations[host] ??= CodexCustomizationStore(
+              disk: RemoteCustomizationDisk(SshHosts.instance[host]),
+              location: 'ssh://$host/',
+            ),
       store: host == null
           ? store
           : _hostCustomizations[host] ??= CustomizationStore(

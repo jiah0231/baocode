@@ -4,12 +4,20 @@ import '../../remote/remote_codex.dart';
 import '../../remote/remote_location.dart';
 import '../agent_kernel.dart';
 import 'codex_transport.dart';
+import 'codex_session_locations.dart';
 
 /// The conversations Codex keeps (`thread/list`), read from a short-lived
 /// `codex app-server`: no process stays up for the list. A remote project's
 /// are read on its host, where Codex keeps them.
-class CodexCatalog implements SessionCatalog {
-  const CodexCatalog({this.startServer = startCodexCatalogServerFor});
+class CodexCatalog implements SessionCatalog, MovesSessions {
+  const CodexCatalog({
+    this.startServer = startCodexCatalogServerFor,
+    this.locations,
+  });
+
+  final CodexSessionLocations? locations;
+  CodexSessionLocations get _locations =>
+      locations ?? CodexSessionLocations.current;
 
   /// Injectable for catalog tests; production uses the local or SSH host.
   final Future<CodexTransport> Function(String? location) startServer;
@@ -19,7 +27,11 @@ class CodexCatalog implements SessionCatalog {
 
   @override
   Future<List<ProjectRecord>> projects() => _withServer(null, (server) async {
-    final sessions = await _list(server);
+    final aliases = await _locations.snapshot();
+    final sessions = [
+      for (final session in await _list(server))
+        CodexSessionLocations.apply(aliases, session),
+    ];
     for (final session in sessions) {
       _locationOf[session.id] = session.cwd;
     }
@@ -44,21 +56,73 @@ class CodexCatalog implements SessionCatalog {
 
   @override
   Future<List<SessionRecord>> sessionsIn(String location) =>
-      _withServer(location, (server) async {
-        final host = RemoteLocation.hostOf(location);
-        final path = RemoteLocation.pathOf(location);
-        final sessions = await _list(server, cwd: path, host: host);
-        for (final session in sessions) {
-          _locationOf[session.id] = session.cwd;
+      _sessionsIn(location);
+
+  Future<List<SessionRecord>> _sessionsIn(
+    String location, {
+    bool strict = false,
+  }) => _withServer(
+    location,
+    (server) async {
+      final host = RemoteLocation.hostOf(location);
+      final aliases = await _locations.snapshot();
+      final byId = <String, SessionRecord>{};
+      for (final source in CodexSessionLocations.sources(aliases, location)) {
+        for (final raw in await _list(
+          server,
+          cwd: RemoteLocation.pathOf(source),
+          host: host,
+        )) {
+          final session = CodexSessionLocations.apply(aliases, raw);
+          if (CodexSessionLocations.sameLocation(session.cwd, location)) {
+            byId[session.id] = session;
+          }
         }
-        return sessions..sort(_newestFirst);
-      }, const []);
+      }
+      final sessions = byId.values.toList();
+      for (final session in sessions) {
+        _locationOf[session.id] = session.cwd;
+      }
+      return sessions..sort(_newestFirst);
+    },
+    const [],
+    ignoreUnavailable: !strict,
+  );
+
+  /// Preserve history under the new project without rewriting Codex state.
+  /// The kernel resumes these records with the supported cwd override.
+  @override
+  Future<int> moveSessions(String from, String to) async {
+    if (RemoteLocation.hostOf(from) != RemoteLocation.hostOf(to)) {
+      throw ArgumentError('Codex sessions cannot move between hosts');
+    }
+    if (CodexSessionLocations.sameLocation(from, to)) return 0;
+    final aliases = await _locations.snapshot();
+    final known =
+        _locationOf.values.any(
+          (location) => CodexSessionLocations.sameLocation(location, from),
+        ) ||
+        aliases.values.any(
+          (value) =>
+              value is Map &&
+              value['to'] is String &&
+              CodexSessionLocations.sameLocation(value['to'] as String, from),
+        );
+    // Every registered catalog is asked during project relocation, even
+    // for Claude-only projects on a machine with no Codex installed. An
+    // unavailable catalog is harmless only if it has no known history here.
+    final sessions = await _sessionsIn(from, strict: known);
+    if (sessions.isEmpty) return 0;
+    await _locations.move(sessions, to);
+    return sessions.length;
+  }
 
   @override
   Future<void> delete(String id) async {
     final location = _locationOf[id];
     await _withServer(location, (server) async {
       await server.request('thread/delete', {'threadId': id});
+      await _locations.remove(id, location ?? '');
       _locationOf.remove(id);
       return true;
     }, false);
@@ -139,12 +203,14 @@ class CodexCatalog implements SessionCatalog {
   Future<T> _withServer<T>(
     String? location,
     Future<T> Function(_Server server) body,
-    T empty,
-  ) async {
+    T empty, {
+    bool ignoreUnavailable = true,
+  }) async {
     final CodexTransport transport;
     try {
       transport = await startServer(location);
     } on CodexUnavailable {
+      if (!ignoreUnavailable) rethrow;
       // Nothing to list where Codex cannot run (the web).
       return empty;
     }
@@ -155,6 +221,7 @@ class CodexCatalog implements SessionCatalog {
       });
       return await body(server);
     } on CodexUnavailable {
+      if (!ignoreUnavailable) rethrow;
       // A Codex that will not answer has no sessions to show.
       return empty;
     } finally {

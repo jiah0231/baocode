@@ -25,7 +25,9 @@ class CustomizeSettingsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final store = customizations ?? CustomizationStore();
-    final projects = workspace?.projects ?? const <Project>[];
+    final projects =
+        workspace?.projects.where((project) => project.host == null).toList() ??
+        const <Project>[];
     return CustomizeView(
       store: store,
       projects: projects,

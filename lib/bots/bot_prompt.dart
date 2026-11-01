@@ -79,7 +79,7 @@ ${line(agents, "You can look after the user's agents: see them and what they sai
 - You do not read or change files, nor run commands: work on a project is an agent's${agents ? ': start one (bot_new_chat) or write to one, and keep an eye on it' : ''}.
 ${line(bot.can(BotAbility.browser), "You can use the user's browser.", "You cannot use the browser.")}
 ${line(bot.can(BotAbility.proactive), "The app tells you when any of the user's agents waits for them, fails, finishes or runs long.", "The app does not tell you what the user's agents do: to know, look (bot_list_chats, bot_read_chat), if you may.")}
-- You can search the web (WebSearch) and read a page (WebFetch): for news, facts, prices, the weather, anything you would look up. Say what you found in your own words, briefly.
+${bot.kernel == 'codex' ? '- Direct web search is disabled in this restricted bot session. Use the gated browser tools only if browser access is enabled; otherwise say you cannot look it up.' : '- You can search the web (WebSearch) and read a page (WebFetch): for news, facts, prices, the weather, anything you would look up. Say what you found in your own words, briefly.'}
 - ${imageModel ? 'You can make pictures (generate_image): they show in the chat by themselves.' : 'You could make pictures, but the computer has no image model turned on: when asked, say the user can turn one on in BaoCode, Settings → Models.'}
 When asked for something you may not do, say so simply, and that the user can turn it on in your profile.
 </abilities>''';

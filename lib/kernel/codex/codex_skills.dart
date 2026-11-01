@@ -21,7 +21,7 @@ class CodexSkill {
     Map<String, Object?> response, {
     required String? cwd,
     p.Context? paths,
-    Set<String> reserved = const {'review', 'init', 'diff'},
+    Set<String> reserved = const {'review', 'init', 'diff', 'goal'},
   }) {
     // The caller knows the server host: SSH paths stay POSIX even when
     // BaoCode itself runs on Windows. Do not infer style from this OS.

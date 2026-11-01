@@ -6,6 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
 import '../../chat/chat_models.dart';
+import '../../customize/codex_customization_store.dart';
+import '../../customize/codex_prompts.dart';
+import '../../remote/remote_customization_disk.dart';
+import '../../remote/ssh_host.dart';
 import '../../chat/review/unpatch.dart';
 import '../../icons/brand_logos.dart';
 import '../../models/launch_environment.dart'
@@ -22,7 +26,9 @@ import '../claude_code/claude_elicitation.dart';
 import '../kernel_event.dart';
 import '../kernel_types.dart';
 import '../prompt_suggestions.dart';
+import 'codex_app_tools.dart';
 import 'codex_output_meter.dart';
+import 'codex_goals.dart';
 import 'codex_process_transport.dart';
 import 'codex_transport.dart';
 import 'codex_skills.dart';
@@ -309,12 +315,21 @@ class CodexKernel
     ),
   ];
 
+  List<CodexPrompt> _prompts = const [];
+  int _promptsLoad = 0;
+  bool _promptsErrorShown = false;
   List<CodexSkill> _skills = const [];
   int _skillsLoad = 0;
 
   @override
   List<KernelCommand> get commands => [
     ..._builtInCommands,
+    for (final prompt in _availablePrompts)
+      KernelCommand(
+        prompt.name,
+        prompt.description,
+        Icons.description_outlined,
+      ),
     for (final skill in _skills)
       KernelCommand(skill.name, skill.description, Icons.auto_awesome_outlined),
   ];
@@ -331,7 +346,59 @@ class CodexKernel
       Icons.description_outlined,
     ),
     KernelCommand('diff', 'Show the git diff', Icons.difference_outlined),
+    KernelCommand(
+      'goal',
+      'Set a native Codex goal; pause, resume, status, clear',
+      Icons.flag_outlined,
+    ),
   ];
+
+  List<CodexPrompt> get _availablePrompts {
+    final reserved = {
+      ..._builtInCommands.map((c) => c.name),
+      ..._skills.map((s) => s.name),
+    };
+    return CodexPrompt.available(_prompts, reserved);
+  }
+
+  Future<void> _loadPrompts() async {
+    final generation = ++_promptsLoad;
+    final transport = _transport;
+    try {
+      final host = _host;
+      final prompts = await CodexPrompt.load(
+        CodexCustomizationStore(
+          disk: host is SshHost ? RemoteCustomizationDisk(host) : null,
+          request: (method, params) => _request(method, params),
+        ),
+        project: _projectPath,
+      );
+      if (_disposed || generation != _promptsLoad || transport != _transport) {
+        return;
+      }
+      _prompts = prompts;
+      emitInfoChanged();
+    } on Object catch (error) {
+      if (_disposed || generation != _promptsLoad || transport != _transport) {
+        return;
+      }
+      _prompts = const [];
+      if (!_promptsErrorShown) {
+        _promptsErrorShown = true;
+        emit(
+          ItemUpserted(
+            nextSeq,
+            'codex-prompts-unavailable',
+            NoticeItem(
+              NoticeKind.info,
+              'Codex custom prompts unavailable: $error',
+            ),
+          ),
+        );
+      }
+      emitInfoChanged();
+    }
+  }
 
   Future<void> _loadSkills({bool forceReload = false}) async {
     final cwd = _projectPath;
@@ -388,6 +455,14 @@ class CodexKernel
   CodexTransport? _transport;
   StreamSubscription<Map<String, Object?>>? _subscription;
   Future<void>? _starting;
+  Future<void>? _threadStarting;
+  late final _goals = CodexGoals(
+    request: (method, params) => _request(method, params),
+    report: (goal) {
+      if (!_disposed) emit(GoalReported(nextSeq, goal));
+    },
+  );
+  Future<void> _goalControl = Future.value();
 
   KernelHealth _health = KernelHealth.idle;
   String? _sessionId;
@@ -518,10 +593,61 @@ class CodexKernel
   ProjectHost get _host =>
       ProjectHost.of(_context.cwd ?? _context.resume?.cwd ?? '');
 
+  String? _serverUserAgent;
+
+  bool get _restrictedWorkspace => _context.workspace?.call()?.tools != null;
+
+  late final _appTools = CodexAppTools(
+    _context.cwd ?? _context.resume?.cwd ?? '',
+  );
+
+  Future<Map<String, Object?>> _workspaceOptions({required bool start}) async {
+    final workspace = _context.workspace?.call();
+    if (workspace == null) return const {};
+    return {
+      ...CodexAppTools.instructions(workspace),
+      if (start && _restrictedWorkspace)
+        'dynamicTools': await _appTools.specs(),
+    };
+  }
+
+  Future<Map<String, Object?>?> _threadConfig(
+    Map<String, Object?>? proxy,
+  ) async {
+    if (!_restrictedWorkspace) return proxy;
+    if (!CodexAppTools.supportsRestrictedBots(_serverUserAgent)) {
+      throw const CodexUnavailable(
+        'Codex bots require the reviewed stable Codex 0.166.x release. Select a compatible Codex path in Settings; ordinary Codex chats remain available.',
+      );
+    }
+    final response = await _request('config/read', {
+      'includeLayers': false,
+      'cwd': ?_projectPath,
+    });
+    final config = response['config'];
+    if (config is! Map) {
+      throw const CodexUnavailable(
+        'Cannot verify the restricted bot configuration',
+      );
+    }
+    final restricted = CodexAppTools.restrictedConfig(
+      config.cast<String, Object?>(),
+    );
+    return {
+      ...?proxy,
+      ...restricted,
+      'features': {
+        ...?(proxy?['features'] as Map?)?.cast<String, Object?>(),
+        ...(restricted['features'] as Map).cast<String, Object?>(),
+      },
+    };
+  }
+
   /// `never` where nothing is to be asked: read-only sandboxes turn the
   /// commands down anyway, and full access is the user's say-so.
   String get _approvalPolicy =>
-      _modeId == 'ask' ||
+      _restrictedWorkspace ||
+          _modeId == 'ask' ||
           _modeId == 'plan' ||
           _permissionId == 'read-only' ||
           _permissionId == 'danger-full-access'
@@ -529,7 +655,9 @@ class CodexKernel
       : 'on-request';
 
   String get _sandboxMode =>
-      _modeId == 'ask' || _modeId == 'plan' ? 'read-only' : _permissionId;
+      _restrictedWorkspace || _modeId == 'ask' || _modeId == 'plan'
+      ? 'read-only'
+      : _permissionId;
 
   Map<String, Object?> get _sandboxPolicy => switch (_sandboxMode) {
     'read-only' => const {'type': 'readOnly'},
@@ -567,12 +695,14 @@ class CodexKernel
   }
 
   void _teardown() {
+    _appTools.cancel();
     final subscription = _subscription;
     _subscription = null;
     if (subscription != null) unawaited(subscription.cancel());
     _transport?.close();
     _transport = null;
     _initialized = false;
+    _serverUserAgent = null;
     final stopped = StateError('Codex stopped');
     for (final response in _responses.values) {
       if (!response.isCompleted) response.completeError(stopped);
@@ -617,14 +747,22 @@ class CodexKernel
       );
       // An older process ending later must not unset the one now running.
       unawaited(transport.exited.then((_) => _transportGone(transport)));
-      await _request('initialize', {
+      final initialized = await _request('initialize', {
         'clientInfo': {'name': 'baocode', 'version': '1.0.0'},
         // The MCP list, predictions, file search and paging are behind it.
         'capabilities': {'experimentalApi': true},
       });
+      _serverUserAgent = initialized['userAgent'] as String?;
+      if (_restrictedWorkspace &&
+          !CodexAppTools.supportsRestrictedBots(_serverUserAgent)) {
+        throw const CodexUnavailable(
+          'Codex bots require the reviewed stable Codex 0.166.x release. Select a compatible Codex path in Settings; ordinary Codex chats remain available.',
+        );
+      }
       _initialized = true;
       await _loadModels();
       await _loadSkills();
+      await _loadPrompts();
       // A new chat starts its thread with its first message, so no empty
       // one is kept for a chat the user only looked at.
       if (_sessionId != null) await _resumeThread();
@@ -1025,7 +1163,7 @@ class CodexKernel
         // The server's own tools go to OpenAI, unasked: an upstream of
         // another's would refuse them.
         'web_search': 'disabled',
-        'features': {'multi_agent': false, 'goals': false},
+        'features': {'multi_agent': false},
       },
     );
   }
@@ -1036,14 +1174,19 @@ class CodexKernel
   /// staying on its own.
   Future<void> _forkToProvider(String threadId) async {
     final proxied = await _proxyThread();
+    final config = await _threadConfig(proxied?.config);
+    final workspaceOptions = await _workspaceOptions(start: false);
     final Map<String, Object?>? thread;
     try {
       final result = await _request('thread/fork', {
         'threadId': threadId,
+        'approvalPolicy': _approvalPolicy,
+        'sandbox': _sandboxMode,
         // None for Default: the server's own pick.
         'model': ?_modelForServer,
         if (proxied != null) 'modelProvider': proxied.modelProvider,
-        if (proxied != null) 'config': proxied.config,
+        'config': ?config,
+        ...workspaceOptions,
       });
       thread = (result['thread'] as Map?)?.cast<String, Object?>();
     } on CodexRpcError catch (error) {
@@ -1063,16 +1206,21 @@ class CodexKernel
     }
     _threadId = id;
     _sessionId = id;
+    _goals.attach(id);
+    unawaited(_goals.refresh());
     _threadProvider = _providerOf(_modelId);
   }
 
   Future<void> _startThread() async {
     final proxied = await _proxyThread();
+    final config = await _threadConfig(proxied?.config);
+    final workspaceOptions = await _workspaceOptions(start: true);
     final result = await _request('thread/start', {
       'cwd': ?_projectPath,
       'model': ?_modelForServer,
       if (proxied != null) 'modelProvider': proxied.modelProvider,
-      if (proxied != null) 'config': proxied.config,
+      'config': ?config,
+      ...workspaceOptions,
       if (proxied == null) 'serviceTier': ?_fastTier,
       'approvalPolicy': _approvalPolicy,
       'sandbox': _sandboxMode,
@@ -1085,12 +1233,15 @@ class CodexKernel
     final id = _sessionId;
     if (id == null) return _startThread();
     final proxied = await _proxyThread();
+    final config = await _threadConfig(proxied?.config);
+    final workspaceOptions = await _workspaceOptions(start: false);
     final result = await _request('thread/resume', {
       'threadId': id,
       'cwd': ?_projectPath,
       'model': ?_modelForServer,
       if (proxied != null) 'modelProvider': proxied.modelProvider,
-      if (proxied != null) 'config': proxied.config,
+      'config': ?config,
+      ...workspaceOptions,
       if (proxied == null) 'serviceTier': ?_fastTier,
       'approvalPolicy': _approvalPolicy,
       'sandbox': _sandboxMode,
@@ -1121,6 +1272,10 @@ class CodexKernel
     // The thread is what the catalog lists and resume takes, not the
     // session the server keeps with it.
     _sessionId = _threadId;
+    if (_threadId case final id?) {
+      _goals.attach(id);
+      unawaited(_goals.refresh());
+    }
     final model = thread['model'] as String?;
     if (model != null && model.isNotEmpty) {
       // One of BaoCode's comes back as its proxy is asked for it: with
@@ -1161,6 +1316,17 @@ class CodexKernel
   @override
   void send(KernelTurn turn) {
     if (_disposed || !_sentTurns.add(turn.id)) return;
+    if (CodexGoals.isCommand(turn.text)) {
+      emit(
+        ItemUpserted(
+          nextSeq,
+          turn.id,
+          UserMessageItem(text: turn.text, sentAt: DateTime.now()),
+        ),
+      );
+      _goalControl = _goalControl.then((_) => _runGoalCommand(turn));
+      return;
+    }
     _turns[turn.id] = turn;
     _usageLimited = false;
     if (_suggestion != null) {
@@ -1189,6 +1355,29 @@ class CodexKernel
       unawaited(_startAfterStop(turn));
     } else if (turn.now) {
       sendQueuedNow(turn.id);
+    }
+  }
+
+  Future<void> _runGoalCommand(KernelTurn turn) async {
+    try {
+      if (_disposed) return;
+      await _ensureStarted();
+      await _ensureThread();
+      if (_disposed) return;
+      await _goals.execute(turn.text);
+    } on Object catch (error) {
+      if (!_disposed) {
+        emit(
+          ItemUpserted(
+            nextSeq,
+            'goal-error:${turn.id}',
+            NoticeItem(
+              NoticeKind.error,
+              'Codex goal command failed: $error. Native goals require a supported Codex version with goals enabled. Ordinary chat is still available.',
+            ),
+          ),
+        );
+      }
     }
   }
 
@@ -1239,6 +1428,19 @@ class CodexKernel
       }
       await _ensureThread();
       if (_stoppedTurns.contains(turn.id) || _turn != turn.id) return;
+      // A native goal may start work while thread/resume is pending.
+      // Add this user's input to that real turn rather than starting a
+      // second concurrent turn or silently dropping the message.
+      if (_serverTurn case final active?) {
+        await _request('turn/steer', {
+          'threadId': _threadId,
+          'expectedTurnId': active,
+          'input': _input(turn),
+        });
+        _turnOfItem[turn.id] = active;
+        _clientTurns[active] = turn.id;
+        return;
+      }
       final result = await _request('turn/start', {
         'threadId': _threadId,
         'input': _input(turn),
@@ -1275,8 +1477,17 @@ class CodexKernel
     }
   }
 
-  Future<void> _ensureThread() async {
-    if (_threadId != null) return;
+  Future<void> _ensureThread() {
+    if (_threadId != null) return Future.value();
+    if (_threadStarting case final pending?) return pending;
+    late final Future<void> pending;
+    pending = _createThread().whenComplete(() {
+      if (identical(_threadStarting, pending)) _threadStarting = null;
+    });
+    return _threadStarting = pending;
+  }
+
+  Future<void> _createThread() async {
     if (_sessionId != null) {
       await _resumeThread();
     } else {
@@ -1301,7 +1512,11 @@ class CodexKernel
     ],
     for (final note in turn.notes) {'type': 'text', 'text': note},
     if (CodexSkill.invoked(turn.text, _skills) case final skill?) skill.input,
-    if (turn.text.isNotEmpty) {'type': 'text', 'text': _prompt(turn.text)},
+    if (turn.text.isNotEmpty)
+      {
+        'type': 'text',
+        'text': _prompt(CodexPrompt.expandInput(turn.text, _availablePrompts)),
+      },
   ];
 
   void _failTurn(String turnId, Object error) {
@@ -1957,6 +2172,7 @@ class CodexKernel
     if (threadId is String && _threadId != null && threadId != _threadId) {
       return;
     }
+    if (_goals.notification(method, params)) return;
     final turnId = params['turnId'];
     if (turnId is String && _serverTurn != null && turnId != _serverTurn) {
       return;
@@ -1964,7 +2180,14 @@ class CodexKernel
     switch (method) {
       case 'turn/started':
         final turn = (params['turn'] as Map?)?.cast<String, Object?>();
-        _serverTurn = turn?['id'] as String?;
+        final nativeId = turn?['id'];
+        if (nativeId is String &&
+            _turn == null &&
+            threadId == _threadId &&
+            _threadId != null) {
+          _beginTurn('codex:$nativeId');
+        }
+        _serverTurn = nativeId is String ? nativeId : null;
       case 'turn/completed':
         if (_turn case final ours?) {
           final turn = (params['turn'] as Map?)?.cast<String, Object?>();
@@ -2068,6 +2291,7 @@ class CodexKernel
         );
       case 'skills/changed':
         unawaited(_loadSkills(forceReload: true));
+        unawaited(_loadPrompts());
       case 'mcpServer/startupStatus/updated':
         _mcpStatus(params);
       case 'mcpServer/oauthLogin/completed':
@@ -2313,6 +2537,49 @@ class CodexKernel
     String method,
     Map<String, Object?> params,
   ) {
+    if (method == 'item/tool/call') {
+      final transport = _transport;
+      final thread = _threadId;
+      if (!_restrictedWorkspace ||
+          thread == null ||
+          params['threadId'] != thread ||
+          params['turnId'] != _serverTurn ||
+          _serverTurn == null) {
+        transport?.write({
+          'id': rpcId,
+          'result': {
+            'success': false,
+            'contentItems': [
+              {
+                'type': 'inputText',
+                'text': 'Foreign or inactive BaoCode tool call.',
+              },
+            ],
+          },
+        });
+        return;
+      }
+      unawaited(
+        _appTools.call(params, threadId: thread).then((result) {
+          if (identical(transport, _transport)) {
+            transport?.write({'id': rpcId, 'result': result});
+          }
+        }),
+      );
+      return;
+    }
+    if (_restrictedWorkspace) {
+      // A bot cannot grant native execution/filesystem/network access or
+      // answer MCP prompts. Its gated BaoCode tools are handled above.
+      _transport?.write({
+        'id': rpcId,
+        'error': {
+          'code': -32601,
+          'message': 'Unavailable in a restricted bot session',
+        },
+      });
+      return;
+    }
     switch (method) {
       case 'item/commandExecution/requestApproval':
         _approval(
@@ -2556,6 +2823,8 @@ class CodexKernel
         emit(ItemUpserted(nextSeq, id, _commandItem(item, done: false)));
       case 'fileChange':
         _fileChanges(id, item['changes'] as List? ?? const [], record: false);
+      case 'dynamicToolCall':
+        emit(ItemUpserted(nextSeq, id, CodexAppTools.item(item, done: false)));
       case 'mcpToolCall':
         _mcpCalls[id] = item;
         final chat = _toolItem(item, done: false);
@@ -2809,6 +3078,8 @@ class CodexKernel
   /// images shown, and subagents.
   ChatItem? _toolItem(Map<String, Object?> item, {required bool done}) {
     switch (item['type']) {
+      case 'dynamicToolCall':
+        return CodexAppTools.item(item, done: done);
       case 'mcpToolCall':
         final result = item['result'] is Map
             ? (item['result'] as Map).cast<String, Object?>()
@@ -3111,6 +3382,7 @@ class CodexKernel
   void _endTurn(String turn, {required bool interrupted}) {
     // Ended once: a late word of the server about it changes nothing.
     if (_turn != turn) return;
+    _appTools.cancel();
     final usage = _output.finish();
     _reportOutput(force: true);
     _turn = null;

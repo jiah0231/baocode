@@ -3554,5 +3554,19 @@
   "mobileStatusListening": "正在监听端口 {port}",
   "codexPathSettingDescription": "本机 Codex CLI 的绝对路径（Windows 为 codex.exe 或 codex.cmd）。留空则从 PATH 查找。对新的本机会话和历史查询生效，不影响 SSH 主机；不会自动下载。（codex.path）",
   "codexPathMissing": "未找到 Codex。请运行 npm install -g @openai/codex 安装，或在上方填写可执行文件路径。",
-  "codexPathRefresh": "重新检查"
+  "codexPathRefresh": "重新检查",
+  "codexInstallTitle": "托管 Codex CLI",
+  "codexInstallDescription": "在 BaoCode 数据目录安装或更新官方 Codex 版本。不改变其他安装、正在运行的会话或 SSH 主机。",
+  "codexInstallAction": "安装 / 更新…",
+  "codexInstallBusy": "处理中…",
+  "codexInstallChecking": "正在检查最新官方版本…",
+  "codexInstallConfirm": "安装并使用此 Codex 版本？",
+  "codexInstallConfirmDetail": "从 OpenAI 的 GitHub 发布页下载此软件包，校验 SHA-256，解压到 BaoCode 数据目录并检查版本。成功后，新建本机会话将使用该可执行文件。不修改已有版本或系统 PATH。",
+  "codexInstallProceed": "安装并使用",
+  "codexInstallDone": "已安装并选为新建本机会话使用的版本。",
+  "codexInstallFailed": "Codex 安装失败，未更改选中的可执行文件。",
+  "botsBackendTitle": "机器人内核",
+  "botsBackendDescription": "空闲时选择各机器人的内核。不同内核保留各自的对话；切换会清除模型选择，不会删除历史。Codex 仅使用 BaoCode 授权工具及只读沙箱。",
+  "botsBackendBusy": "请等待此机器人结束回复后切换。",
+  "codexCustomizeNotice": "Codex 原生文件与设置；命令是 BaoCode 提示词。配置编辑在新会话生效，功能取决于已安装的 Codex 版本。项目配置、hooks 和执行规则需要项目已受信任。"
 }

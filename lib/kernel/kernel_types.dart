@@ -368,6 +368,7 @@ class KernelGoal {
     this.state = GoalState.active,
     this.checks = 0,
     this.lastReason,
+    this.statusLabel,
     this.setAt,
     this.duration,
     this.tokens,
@@ -382,6 +383,10 @@ class KernelGoal {
   /// Why the last check found it not met (or, once met, why it is).
   final String? lastReason;
 
+  /// Native pending state (e.g. paused), overriding generic activity text.
+  /// Null preserves the evaluator/turn-based presentation.
+  final String? statusLabel;
+
   /// When it was set, as far as is known.
   final DateTime? setAt;
 
@@ -395,6 +400,7 @@ class KernelGoal {
     GoalState? state,
     int? checks,
     String? lastReason,
+    String? statusLabel,
     Duration? duration,
     int? tokens,
   }) => KernelGoal(
@@ -402,6 +408,7 @@ class KernelGoal {
     state: state ?? this.state,
     checks: checks ?? this.checks,
     lastReason: lastReason ?? this.lastReason,
+    statusLabel: statusLabel ?? this.statusLabel,
     setAt: setAt,
     duration: duration ?? this.duration,
     tokens: tokens ?? this.tokens,
@@ -414,6 +421,7 @@ class KernelGoal {
       other.state == state &&
       other.checks == checks &&
       other.lastReason == lastReason &&
+      other.statusLabel == statusLabel &&
       other.setAt == setAt &&
       other.duration == duration &&
       other.tokens == tokens;
@@ -424,6 +432,7 @@ class KernelGoal {
     state,
     checks,
     lastReason,
+    statusLabel,
     setAt,
     duration,
     tokens,

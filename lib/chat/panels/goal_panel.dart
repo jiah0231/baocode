@@ -118,6 +118,7 @@ class _GoalPanelState extends State<GoalPanel> {
   void _tick() {
     final counting =
         widget.goal.state == GoalState.active &&
+        widget.goal.statusLabel == null &&
         widget.activity != GoalActivity.waiting &&
         widget.goal.setAt != null &&
         TickerMode.valuesOf(context).enabled;
@@ -299,6 +300,16 @@ class _GoalPanelState extends State<GoalPanel> {
     final l10n = context.l10n;
     final goal = widget.goal;
     final style = TextStyle(color: AppColors.textMuted, fontSize: 12);
+    // A native paused/blocked goal is not working merely because an
+    // unrelated chat turn is streaming. Do not run its elapsed clock.
+    if (goal.statusLabel case final label?) {
+      return Text(
+        label,
+        style: style,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
     final state = switch (goal.state) {
       GoalState.met => Text(
         [

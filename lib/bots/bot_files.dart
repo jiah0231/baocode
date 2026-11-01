@@ -40,6 +40,7 @@ abstract final class BotFiles {
     ('signature', bot.signature),
     for (final ability in shownAbilities) (ability.name, '${bot.can(ability)}'),
     ('model', bot.model),
+    if (bot.kernel != 'claude-code') ('kernel', bot.kernel),
     if (bot.assistant) ('assistant', 'true'),
     (
       'created',
@@ -87,6 +88,7 @@ abstract final class BotFiles {
             ability,
       },
       model: text('model').isEmpty ? null : text('model'),
+      kernel: text('kernel') == 'codex' ? 'codex' : 'claude-code',
       assistant: assistant,
       created:
           DateTime.tryParse(text('created')) ?? createdIn(p.basename(folder)),
