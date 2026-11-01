@@ -13,6 +13,7 @@ Future<void> showLearningSettingsDialog(
   BuildContext context, {
   required LearningPreferences preferences,
   required ModelProviders providers,
+  required VoidCallback onDisable,
   Rect? anchor,
 }) async {
   final chinese = Localizations.maybeLocaleOf(context)?.languageCode == 'zh';
@@ -76,12 +77,12 @@ Future<void> showLearningSettingsDialog(
         t('节奏', 'Pace'),
         submenu: [
           IdeMenuAction(
-            t('从容 · 合并更多步骤', 'Calm · Group more steps'),
+            t('从容 · 最快每24秒', 'Calm · At most once every 24s'),
             checked: preferences.pace == LearningPace.calm,
             onSelected: () => pace = LearningPace.calm,
           ),
           IdeMenuAction(
-            t('均衡 · 及时整理要点', 'Balanced · Timely takeaways'),
+            t('均衡 · 最快每12秒', 'Balanced · At most once every 12s'),
             checked: preferences.pace == LearningPace.balanced,
             onSelected: () => pace = LearningPace.balanced,
           ),
@@ -91,7 +92,12 @@ Future<void> showLearningSettingsDialog(
         const IdeMenuSeparator(),
         IdeMenuAction(
           t('关闭讲解', 'Turn learning off'),
-          onSelected: () => disable = true,
+          onSelected: () {
+            // Stop/cancel and clear locally before the preference write; a
+            // failed save must not leave explanation requests running.
+            onDisable();
+            disable = true;
+          },
         ),
       ],
     ],

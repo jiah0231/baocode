@@ -2948,7 +2948,14 @@ class CodexKernel
         emit(FilesMayHaveChanged(nextSeq));
         _startedAt.remove(id);
       case 'fileChange':
-        _fileChanges(id, item['changes'] as List? ?? const []);
+        // A completed notification can carry a failed or declined attempt.
+        // Keep its preview, but never claim the file was actually edited.
+        // Older servers omitted status on successful completed items.
+        _fileChanges(
+          id,
+          item['changes'] as List? ?? const [],
+          record: item['status'] == null || item['status'] == 'completed',
+        );
         emit(FilesMayHaveChanged(nextSeq));
       default:
         _mcpCalls.remove(id);
@@ -3337,6 +3344,7 @@ class CodexKernel
         ),
         turnId: _turn,
         original: original,
+        sourceItemId: id,
       ),
     );
   }

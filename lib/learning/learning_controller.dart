@@ -18,9 +18,11 @@ class LearningController extends ChangeNotifier {
   static const maxContextCharacters = 6000;
   final _queue = ListQueue<LearningEvidence>();
   // Diff items can be previews awaiting permission (not completed edits).
-  // Retain only minimized candidates until a FileEdited confirms the path.
+  // Retain only minimized candidates until a FileEdited confirms the exact operation ID and path.
   final _diffCandidates = <String, LearningEvidence>{};
   final _seen = <String>{};
+  final _itemFingerprints = <String, String>{};
+  String? _busyItemId;
   final _cards = <LearningCard>[];
   LearningGenerator? _generator;
   LearningCancellation? _cancellation;
@@ -42,6 +44,16 @@ class LearningController extends ChangeNotifier {
   bool get active => _active;
   bool get paused => _paused;
   bool get busy => _busy;
+  String? get busyItemId => _busyItemId;
+
+  /// Never infer a bubble anchor from a filename, position or adjacent card.
+  LearningCard? cardForItem(String itemId) {
+    for (final card in _cards.reversed) {
+      if (card.sourceItemId == itemId) return card;
+    }
+    return null;
+  }
+
   String? get error => _error;
   bool get budgetReached => _requests >= maxRequestsPerSession;
   LearningDepth get depth => _depth;
@@ -108,6 +120,7 @@ class LearningController extends ChangeNotifier {
     _invalidate();
     _cards.clear();
     _seen.clear();
+    _itemFingerprints.clear();
     _requests = 0;
     _error = null;
     notifyListeners();
@@ -125,7 +138,11 @@ class LearningController extends ChangeNotifier {
 
   /// Call only for newly applied LIVE events, never restored history. For
   /// ItemCompleted with no item, the host can supply its resolved item.
-  void observe(KernelEvent event, {ChatItem? completedItem}) {
+  void observe(
+    KernelEvent event, {
+    ChatItem? completedItem,
+    bool allowGeneration = true,
+  }) {
     if (_disposed) return;
     if (event is Rewound || event is ChangesReverted) {
       _invalidate();
@@ -133,13 +150,24 @@ class LearningController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (!_enabled || !_active || _paused || budgetReached) return;
     if (event is TurnEnded) {
       _diffCandidates.clear();
       return;
     }
+    // Outside a known live turn, revisions may invalidate a retained bubble,
+    // but restored/history events must never create a paid request.
+    if (!allowGeneration || !_enabled || !_active || _paused) {
+      final id = switch (event) {
+        ItemCompleted(:final id) ||
+        ItemUpserted(:final id) ||
+        ItemRemoved(:final id) => id,
+        _ => null,
+      };
+      if (id != null) _forgetItem(id);
+      return;
+    }
     if (event is ItemRemoved) {
-      _diffCandidates.removeWhere((_, item) => item.sourceItemId == event.id);
+      _forgetItem(event.id);
       return;
     }
     final reportedItem = switch (event) {
@@ -147,61 +175,68 @@ class LearningController extends ChangeNotifier {
       ItemUpserted(:final item) => item,
       _ => null,
     };
+    final reportedId = switch (event) {
+      ItemCompleted(:final id) || ItemUpserted(:final id) => id,
+      _ => null,
+    };
+    if (reportedId != null &&
+        (reportedItem is TerminalItem &&
+                reportedItem.status == CommandStatus.running ||
+            reportedItem is ToolCallItem &&
+                reportedItem.status != ToolStatus.succeeded &&
+                reportedItem.status != ToolStatus.failed)) {
+      _forgetItem(reportedId);
+    }
     if (reportedItem is ToolCallItem &&
         reportedItem.kind == ToolKind.edit &&
         (reportedItem.status == ToolStatus.denied ||
             reportedItem.status == ToolStatus.failed)) {
       // A denied/failed edit cannot confirm any staged preview.
-      _diffCandidates.clear();
+      if (reportedId != null) _forgetItem(reportedId);
       return;
     }
     LearningEvidence? evidence;
     if (event is ItemCompleted) {
       evidence = _fromItem(event.id, event.item ?? completedItem);
-    } else if (event is ItemUpserted && !event.streaming) {
+    } else if (event is ItemUpserted &&
+        (!event.streaming || event.item is CodeDiffItem)) {
       evidence = _fromItem(event.id, event.item);
     } else if (event is FileEdited && !event.change.binary) {
       final change = event.change;
-      if (!_sensitivePath(change.path)) {
-        evidence =
-            _diffCandidates.remove(_pathKey(change.path)) ??
-            LearningEvidence(
-              id: 'edit:${event.seq}',
-              kind: 'file-summary',
-              label: _safeLabel(change.fileName),
-              path: change.path,
-              excerpt:
-                  'Reported ${change.kind.name}: +${change.added} / -${change.removed} lines. Code and intent are not available in this record.',
-            );
+      final sourceId = event.sourceItemId;
+      if (sourceId == null || _sensitivePath(change.path)) return;
+      final candidate = _diffCandidates.remove(sourceId);
+      if (candidate != null &&
+          _pathKey(candidate.path!) != _pathKey(change.path)) {
+        return;
+      }
+      evidence =
+          candidate ??
+          LearningEvidence(
+            id: 'edit:${event.seq}',
+            kind: 'file-summary',
+            label: _safeLabel(change.fileName),
+            sourceItemId: sourceId,
+            path: change.path,
+            excerpt:
+                'Reported ${change.kind.name}: +${change.added} / -${change.removed} lines. Code and intent are not available in this record.',
+          );
+    }
+    if (evidence == null || evidence.sourceItemId == null) return;
+    final fingerprint = _fingerprint(evidence);
+    final itemId = evidence.sourceItemId!;
+    if (_itemFingerprints[itemId] != fingerprint) {
+      _forgetItem(itemId);
+      _itemFingerprints[itemId] = fingerprint;
+      if (_itemFingerprints.length > 512) {
+        _forgetItem(_itemFingerprints.keys.first);
       }
     }
-    if (evidence == null) return;
+    if (budgetReached) return;
     if (evidence.kind == 'diff' && event is! FileEdited) {
       _stageDiff(evidence);
       return;
     }
-    // Prefer actual changed code to its nearby file-count notification.
-    final pendingEvidence = evidence;
-    if (pendingEvidence.path != null) {
-      if (pendingEvidence.kind == 'file-summary' &&
-          _queue.any(
-            (e) => e.path == pendingEvidence.path && e.kind == 'diff',
-          )) {
-        return;
-      }
-      if (pendingEvidence.kind == 'diff') {
-        _queue.removeWhere(
-          (e) => e.path == pendingEvidence.path && e.kind == 'file-summary',
-        );
-      }
-    }
-    final fingerprint = sha256
-        .convert(
-          utf8.encode(
-            '${evidence.kind}\n${evidence.label}\n${evidence.excerpt}',
-          ),
-        )
-        .toString();
     if (!_seen.add(fingerprint)) return;
     if (_seen.length > 512) _seen.remove(_seen.first);
     if (_queue.length >= maxQueue) _queue.removeFirst();
@@ -210,9 +245,8 @@ class LearningController extends ChangeNotifier {
   }
 
   void _stageDiff(LearningEvidence evidence) {
-    final path = evidence.path;
-    if (path == null) return;
-    final key = _pathKey(path);
+    final key = evidence.sourceItemId;
+    if (key == null || evidence.path == null) return;
     _diffCandidates.remove(key);
     _diffCandidates[key] = evidence;
     // Bound both count and serialized context, not just number of files.
@@ -224,6 +258,24 @@ class LearningController extends ChangeNotifier {
             maxContextCharacters) {
       _diffCandidates.remove(_diffCandidates.keys.first);
     }
+  }
+
+  static String _fingerprint(LearningEvidence evidence) => sha256
+      .convert(
+        utf8.encode(
+          '${evidence.sourceItemId}\n${evidence.kind}\n${evidence.path}\n${evidence.label}\n${evidence.excerpt}',
+        ),
+      )
+      .toString();
+
+  void _forgetItem(String itemId) {
+    _itemFingerprints.remove(itemId);
+    _diffCandidates.remove(itemId);
+    _queue.removeWhere((item) => item.sourceItemId == itemId);
+    final hadCard = _cards.any((card) => card.sourceItemId == itemId);
+    _cards.removeWhere((card) => card.sourceItemId == itemId);
+    if (_busyItemId == itemId) _cancellation?.cancel();
+    if (hadCard) notifyListeners();
   }
 
   static String _pathKey(String path) => path.replaceAll(r'\', '/');
@@ -336,7 +388,7 @@ class LearningController extends ChangeNotifier {
     _cancellation = cancellation;
     final evidence = <LearningEvidence>[];
     var characters = 0;
-    while (_queue.isNotEmpty && evidence.length < 3) {
+    while (_queue.isNotEmpty && evidence.isEmpty) {
       final next = _queue.first;
       final size = jsonEncode(next.toJson()).length;
       if (characters + size > maxContextCharacters) break;
@@ -349,6 +401,7 @@ class LearningController extends ChangeNotifier {
       return;
     }
     _busy = true;
+    _busyItemId = evidence.single.sourceItemId;
     _requests++;
     if (budgetReached) {
       _queue.clear();
@@ -368,7 +421,12 @@ class LearningController extends ChangeNotifier {
       if (_disposed || generation != _generation || cancellation.isCancelled) {
         return;
       }
+      if (_itemFingerprints[evidence.single.sourceItemId] !=
+          _fingerprint(evidence.single)) {
+        return;
+      }
       final card = _validate(output, evidence);
+      _cards.removeWhere((old) => old.sourceItemId == card.sourceItemId);
       _cards.add(card);
       if (_cards.length > maxCards) _cards.removeAt(0);
     } catch (_) {
@@ -381,6 +439,7 @@ class LearningController extends ChangeNotifier {
       }
     } finally {
       _busy = false;
+      _busyItemId = null;
       if (identical(_cancellation, cancellation)) _cancellation = null;
       if (!_disposed) {
         notifyListeners();
@@ -405,7 +464,9 @@ class LearningController extends ChangeNotifier {
         output[name] == null ? null : field(name, 900);
     final ids = output['evidenceIds'];
     final known = {for (final item in evidence) item.id: item};
-    if (ids is! List ||
+    if (evidence.length != 1 ||
+        evidence.single.sourceItemId == null ||
+        ids is! List ||
         ids.isEmpty ||
         ids.length > evidence.length ||
         ids.any((id) => id is! String || !known.containsKey(id))) {
@@ -430,6 +491,7 @@ class LearningController extends ChangeNotifier {
     _invalidate();
     _cards.clear();
     _seen.clear();
+    _itemFingerprints.clear();
     super.dispose();
   }
 }

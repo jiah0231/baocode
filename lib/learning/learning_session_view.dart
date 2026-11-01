@@ -1,55 +1,140 @@
-import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/widgets.dart';
 
 import '../chat/chat_session.dart';
-import '../chat/side_panel/file_open.dart';
 import '../chat/side_panel/side_panel_controller.dart';
-import '../models/model_providers.dart';
+import '../settings/user_settings.dart';
 import 'learning_backend.dart';
 import 'learning_controller.dart';
+import 'learning_controls.dart';
 import 'learning_models.dart';
-import 'learning_panel.dart';
 import 'learning_preferences.dart';
-import 'learning_settings_dialog.dart';
+import 'learning_scope.dart';
 
-/// Binds the opt-in teaching projection to the visible conversation only.
-/// Cards are session-owned, while leaving this page cancels background work.
-class LearningSessionView extends StatefulWidget {
-  const LearningSessionView({
+export 'learning_controls.dart';
+export 'learning_scope.dart';
+
+/// Owns the consent-gated projection while the actual chat is visible, not
+/// while an optional side panel is open. Only ChatSession's LIVE event hook
+/// supplies evidence: mounting this binding never scans a transcript.
+class LearningSessionBinding extends StatefulWidget {
+  const LearningSessionBinding({
     super.key,
     required this.session,
-    required this.panel,
+    required this.child,
+    this.settings,
+    this.active = true,
+    this.preferences,
+    this.generator,
   });
+
   final ChatSession session;
-  final AgentSidePanel panel;
+  final Widget child;
+  final UserSettings? settings;
+
+  /// False for a hidden/offstage or unfocused task. The chat host supplies its
+  /// focus state so background panes do not spend explanation requests.
+  final bool active;
+
+  /// Optional test/host-owned preferences. The binding never disposes these.
+  final LearningPreferences? preferences;
+
+  /// Fake transport seam for tests. Consent is still required before enabling.
+  final LearningGenerator? generator;
 
   @override
-  State<LearningSessionView> createState() => _LearningSessionViewState();
+  State<LearningSessionBinding> createState() => _LearningSessionBindingState();
 }
 
-class _LearningSessionViewState extends State<LearningSessionView> {
-  // Weak keys: closing a conversation does not leave its reading state in a
-  // process-wide map, while a file preview can temporarily replace this view.
-  static final _readingStates = Expando<LearningReadingState>();
-  LearningReadingState get _readingState =>
-      _readingStates[widget.session] ??= LearningReadingState();
+class _LearningSessionBindingState extends State<LearningSessionBinding> {
+  // Multiple views of one task may coexist. Closing one must not cancel a
+  // second visible view; weak session keys do not retain closed conversations.
+  static final _visibleOwners = Expando<Set<Object>>();
+  final Object _owner = Object();
+  late ChatSession _session;
+  late String _scopeKey;
   late LearningPreferences _preferences;
+  bool _ownsPreferences = false;
   String? _configuration;
   String _languageCode = 'en';
-  LearningController get _controller => widget.session.learning;
+  LearningController get _controller => _session.learning;
 
   @override
   void initState() {
     super.initState();
-    final settings = widget.panel.settings;
-    final scope =
-        widget.session.root ?? 'session:${identityHashCode(widget.session)}';
-    _preferences = settings == null
-        ? LearningPreferences.memory(scope: scope)
-        : LearningPreferences.settings(settings, scope: scope);
+    _attach();
+  }
+
+  void _attach() {
+    _session = widget.session;
+    final settings = widget.settings;
+    _scopeKey = _projectScope(_session);
+    _ownsPreferences = widget.preferences == null;
+    _preferences =
+        widget.preferences ??
+        (settings == null
+            ? LearningPreferences.memory(scope: _scopeKey)
+            : LearningPreferences.settings(settings, scope: _scopeKey));
     _preferences.addListener(_configure);
-    _controller.setActive(true);
+    _session.addListener(_sessionChanged);
+    _configuration = null;
+    _setVisibility();
+  }
+
+  String _projectScope(ChatSession session) {
+    final location = session.kernelContext.cwd;
+    final root = session.root;
+    // Preserve the remote host identity, not only its /path component.
+    return location == null && root == null
+        ? 'session:${identityHashCode(session)}'
+        : jsonEncode([location, root]);
+  }
+
+  void _sessionChanged() {
+    if (_projectScope(_session) == _scopeKey) return;
+    // Moving to another project/review root revokes sharing before any new
+    // consent; existing cards remain owned by the conversation.
+    _detach();
+    _attach();
+    _configure();
+  }
+
+  void _setVisibility() {
+    final owners = _visibleOwners[_session] ??= <Object>{};
+    if (widget.active) {
+      owners.add(_owner);
+    } else {
+      owners.remove(_owner);
+    }
+    _controller.setActive(owners.isNotEmpty);
+  }
+
+  void _detach() {
+    _session.removeListener(_sessionChanged);
+    final owners = _visibleOwners[_session];
+    owners?.remove(_owner);
+    _controller.setActive(owners?.isNotEmpty ?? false);
+    _preferences.removeListener(_configure);
+    if (_ownsPreferences) _preferences.dispose();
+  }
+
+  @override
+  void didUpdateWidget(LearningSessionBinding oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.session != widget.session ||
+        oldWidget.settings != widget.settings ||
+        oldWidget.preferences != widget.preferences) {
+      _detach();
+      _attach();
+      _configure();
+    } else {
+      if (oldWidget.active != widget.active) _setVisibility();
+      if (oldWidget.generator != widget.generator) {
+        _configuration = null;
+        _configure();
+      }
+    }
   }
 
   @override
@@ -66,68 +151,50 @@ class _LearningSessionViewState extends State<LearningSessionView> {
     final paused = _controller.paused;
     if (_preferences.enabled) {
       _controller.enable(
-        LearningBackend(preferences: _preferences),
+        widget.generator ?? LearningBackend(preferences: _preferences),
         depth: _preferences.depth,
         languageCode: _languageCode,
         interval: _preferences.interval,
       );
       if (paused) _controller.setPaused(true);
     } else {
-      // Revoked consent stops sharing without discarding this session's cards.
-      // The explicit Turn off action below is the only clearing action.
       _controller.disable(clearCards: false);
     }
     if (mounted) setState(() {});
   }
 
-  void _openEvidence(LearningEvidence evidence) {
-    // Never open a model-generated path: only exact host-observed anchors.
-    if (evidence.path case final path?) {
-      widget.panel.open(
-        widget.session,
-        FileOpenRequest(path, preview: true, readOnly: true),
-      );
-    }
-  }
-
   @override
   void dispose() {
-    _controller.setActive(false);
-    _preferences.removeListener(_configure);
-    _preferences.dispose();
+    _detach();
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) => ListenableBuilder(
-    listenable: _controller,
-    builder: (context, _) => LearningPanel(
-      cards: _controller.cards,
-      enabled: _controller.enabled,
-      paused: _controller.paused,
-      busy: _controller.busy,
-      budgetReached: _controller.budgetReached,
-      error: _controller.error,
-      modelLabel: LearningBackend.modelLabel(
-        _preferences.modelRef,
-        ModelProviders.current,
-      ),
-      sessionKey: '${identityHashCode(widget.session)}',
-      readingState: _readingState,
-      onConfigure: () => unawaited(
-        showLearningSettingsDialog(
-          context,
-          preferences: _preferences,
-          providers: ModelProviders.current,
-        ),
-      ),
-      onTogglePause: () => _controller.setPaused(!_controller.paused),
-      onDisable: () {
-        // Cancel immediately, even if saving preferences is slow or fails.
-        _controller.disable();
-        unawaited(_preferences.disable().catchError((Object _) {}));
-      },
-      onOpenEvidence: _openEvidence,
-    ),
+  Widget build(BuildContext context) => LearningScope(
+    controller: _controller,
+    preferences: _preferences,
+    modelLabel: learningModelLabel(_preferences),
+    child: widget.child,
   );
+}
+
+/// Compatibility surface only. The old rail no longer owns activation or
+/// displays a second feed; explanations are attached to their chat operation.
+class LearningSessionView extends StatelessWidget {
+  const LearningSessionView({
+    super.key,
+    required this.session,
+    required this.panel,
+  });
+  final ChatSession session;
+  final AgentSidePanel panel;
+
+  @override
+  Widget build(BuildContext context) {
+    if (LearningScope.maybeOf(context) == null) return const SizedBox.shrink();
+    return const Align(
+      alignment: Alignment.topRight,
+      child: LearningControls(),
+    );
+  }
 }

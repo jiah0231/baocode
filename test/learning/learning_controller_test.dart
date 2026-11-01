@@ -37,7 +37,7 @@ ItemUpserted command(int seq, {String output = 'All checks passed'}) =>
       TerminalItem(command: 'flutter test check_$seq.dart', output: output),
     );
 Future<void> settle() async {
-  for (var i = 0; i < 4; i++) {
+  for (var i = 0; i < 8; i++) {
     await Future<void>.delayed(Duration.zero);
   }
 }
@@ -86,6 +86,46 @@ void main() {
       expect(controller.cards, hasLength(1));
       controller.disable();
       expect(controller.cards, isEmpty);
+      controller.dispose();
+    },
+  );
+
+  test(
+    'consent-disabled retained card is invalidated by source revision',
+    () async {
+      final controller = LearningController();
+      final generator = FakeGenerator();
+      controller.enable(generator, interval: Duration.zero);
+      controller.observe(command(1));
+      await settle();
+      controller.disable(clearCards: false);
+      expect(controller.cardForItem('step-1'), isNotNull);
+      controller.observe(
+        command(1, output: 'Revised while sharing is disabled'),
+      );
+      await settle();
+      expect(controller.cardForItem('step-1'), isNull);
+      expect(generator.requests, hasLength(1));
+      controller.dispose();
+    },
+  );
+
+  test(
+    'out-of-turn updates invalidate exact bubbles without paid replay',
+    () async {
+      final controller = LearningController();
+      final generator = FakeGenerator();
+      controller.enable(generator, interval: Duration.zero);
+      controller.observe(command(1));
+      await settle();
+      controller.observe(
+        command(1, output: 'Changed outside turn'),
+        allowGeneration: false,
+      );
+      controller.observe(command(2), allowGeneration: false);
+      await settle();
+      expect(controller.cards, isEmpty);
+      expect(generator.requests, hasLength(1));
       controller.dispose();
     },
   );
@@ -154,7 +194,7 @@ void main() {
   );
 
   test(
-    'coalesces and deduplicates completed operations with bounded evidence',
+    'paces separate anchored operations and deduplicates repeated events',
     () async {
       final controller = LearningController();
       final generator = FakeGenerator();
@@ -164,9 +204,11 @@ void main() {
       }
       controller.observe(command(1));
       await settle();
-      expect(generator.requests.length, 2);
-      expect(generator.requests.first.evidence.length, 3);
-      expect(controller.cards.length, 2);
+      expect(generator.requests.length, 4);
+      expect(generator.requests.every((r) => r.evidence.length == 1), isTrue);
+      expect(controller.cards.length, 4);
+      expect(controller.cardForItem('step-2')!.sourceItemId, 'step-2');
+      expect(controller.cardForItem('missing'), isNull);
       expect(controller.cards.first.evidence.first.sourceItemId, 'step-1');
       expect(generator.requests.first.systemInstruction, contains('untrusted'));
       controller.dispose();
@@ -273,6 +315,7 @@ void main() {
       const FileEdited(
         3,
         FileChange(path: 'lib/main.dart', added: 1, removed: 0),
+        sourceItemId: 'preview',
       ),
     );
     await settle();
@@ -318,6 +361,7 @@ void main() {
         const FileEdited(
           3,
           FileChange(path: 'lib/main.dart', added: 1, removed: 0),
+          sourceItemId: 'later-operation',
         ),
       );
       await settle();
@@ -353,6 +397,7 @@ void main() {
         const FileEdited(
           21,
           FileChange(path: 'lib/file0.dart', added: 1, removed: 0),
+          sourceItemId: 'preview-0',
         ),
       );
       await settle();
@@ -362,6 +407,7 @@ void main() {
         const FileEdited(
           23,
           FileChange(path: 'lib/file19.dart', added: 2, removed: 0),
+          sourceItemId: 'preview-19',
         ),
       );
       await settle();
@@ -383,6 +429,7 @@ void main() {
         const FileEdited(
           25,
           FileChange(path: 'lib/paused.dart', added: 3, removed: 0),
+          sourceItemId: 'paused-preview',
         ),
       );
       await settle();
@@ -417,21 +464,134 @@ void main() {
         const FileEdited(
           5,
           FileChange(path: 'lib/large0.dart', added: 20, removed: 0),
+          sourceItemId: 'large-0',
         ),
       );
       controller.observe(
         const FileEdited(
           6,
           FileChange(path: 'lib/large3.dart', added: 20, removed: 0),
+          sourceItemId: 'large-3',
         ),
       );
       await settle();
-      final evidence = generator.requests.single.evidence;
-      expect(evidence.first.kind, 'file-summary');
-      expect(evidence.last.kind, 'diff');
+      expect(generator.requests.length, 2);
+      expect(generator.requests.first.evidence.single.kind, 'file-summary');
+      expect(generator.requests.last.evidence.single.kind, 'diff');
       controller.dispose();
     },
   );
+
+  test('same filename never correlates different operations', () async {
+    final controller = LearningController();
+    final generator = FakeGenerator();
+    controller.enable(generator, interval: Duration.zero);
+    controller.observe(
+      const ItemUpserted(
+        1,
+        'preview-a',
+        CodeDiffItem(
+          fileName: 'main.dart',
+          directory: 'lib',
+          lines: [DiffLine(DiffLineType.added, 1, 'not operation b')],
+        ),
+      ),
+    );
+    controller.observe(
+      const FileEdited(
+        2,
+        FileChange(path: 'lib/main.dart', added: 1, removed: 0),
+      ),
+    );
+    await settle();
+    expect(generator.requests, isEmpty);
+    controller.observe(
+      const FileEdited(
+        3,
+        FileChange(path: 'lib/main.dart', added: 1, removed: 0),
+        sourceItemId: 'operation-b',
+      ),
+    );
+    await settle();
+    expect(controller.cardForItem('preview-a'), isNull);
+    expect(
+      controller.cardForItem('operation-b')!.evidence.single.kind,
+      'file-summary',
+    );
+    expect(
+      generator.requests.single.evidence.single.excerpt,
+      isNot(contains('not operation b')),
+    );
+    controller.dispose();
+  });
+
+  test('revised operation discards in-flight old explanation', () async {
+    final controller = LearningController();
+    final generator = FakeGenerator()
+      ..pending = Completer<Map<String, Object?>>();
+    controller.enable(generator, interval: Duration.zero);
+    controller.observe(command(1));
+    await settle();
+    expect(controller.busyItemId, 'step-1');
+    controller.observe(command(1, output: 'A different observed result'));
+    expect(generator.cancellations.first.isCancelled, isTrue);
+    generator.pending!.complete(valid(generator.requests.first));
+    generator.pending = null;
+    await settle();
+    expect(controller.cards, hasLength(1));
+    expect(
+      controller.cardForItem('step-1')!.evidence.single.excerpt,
+      contains('different observed result'),
+    );
+    expect(controller.busyItemId, isNull);
+    controller.observe(const ItemRemoved(3, 'step-1'));
+    expect(controller.cardForItem('step-1'), isNull);
+    controller.dispose();
+  });
+
+  test('same-path revised previews retain only their exact own code', () async {
+    final controller = LearningController();
+    final generator = FakeGenerator();
+    controller.enable(generator, interval: Duration.zero);
+    for (final id in ['first', 'second']) {
+      controller.observe(
+        ItemUpserted(
+          1,
+          id,
+          CodeDiffItem(
+            fileName: 'main.dart',
+            directory: 'lib',
+            lines: [DiffLine(DiffLineType.added, 1, 'code for $id')],
+          ),
+        ),
+      );
+    }
+    controller.observe(
+      const FileEdited(
+        2,
+        FileChange(path: 'lib/main.dart', added: 1, removed: 0),
+        sourceItemId: 'first',
+      ),
+    );
+    controller.observe(
+      const FileEdited(
+        3,
+        FileChange(path: 'lib/main.dart', added: 1, removed: 0),
+        sourceItemId: 'second',
+      ),
+    );
+    await settle();
+    expect(generator.requests, hasLength(2));
+    expect(
+      controller.cardForItem('first')!.evidence.single.excerpt,
+      contains('code for first'),
+    );
+    expect(
+      controller.cardForItem('second')!.evidence.single.excerpt,
+      contains('code for second'),
+    );
+    controller.dispose();
+  });
 
   test('excludes sensitive paths and bounds selected code context', () async {
     final controller = LearningController();
@@ -469,6 +629,7 @@ void main() {
       const FileEdited(
         4,
         FileChange(path: 'lib/main.dart', added: 10000, removed: 0),
+        sourceItemId: 'code',
       ),
     );
     await settle();

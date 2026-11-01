@@ -15,6 +15,7 @@ import '../diagnostics/frame_watch.dart';
 import '../ide/ide_find_widget.dart';
 import '../ide/ide_hover.dart';
 import '../l10n/l10n.dart';
+import '../learning/learning_scope.dart';
 import '../theme/app_theme.dart';
 import '../theme/workbench_theme.dart' show themeColors;
 import 'chat_column.dart';
@@ -91,6 +92,11 @@ class ChatHistoryView extends StatefulWidget {
   /// when given (a search's), its first match brought into view.
   static void find(GlobalKey key, {String? query}) =>
       (key.currentState as _ChatHistoryViewState?)?._find.show(query: query);
+
+  /// Opens containing folds and reveals an exact locally identified operation.
+  /// The caller resolves the current session's source ID to [index].
+  static void reveal(GlobalKey key, int index) =>
+      (key.currentState as _ChatHistoryViewState?)?._revealOperation(index);
 }
 
 /// Where a history was left, read up from its end: the row shown first and
@@ -604,6 +610,26 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
 
   /// The last of [ChatFind.reveals] seen.
   int _findReveals = 0;
+
+  void _revealOperation(int index) {
+    if (index < 0 || index >= _feed.itemCount) return;
+    final feed = _feed;
+    final source = _sourceItemId(index);
+    _setAnchored(false);
+    setState(() {
+      for (final fold in [?_folds.workAt(index), ?_folds.stepsAt(index)]) {
+        _foldOpen[fold.key] = true;
+      }
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted &&
+          identical(feed, _feed) &&
+          index < _feed.itemCount &&
+          (source == null || _sourceItemId(index) == source)) {
+        _seek(index, 0);
+      }
+    });
+  }
 
   void _findChanged() {
     if (_find.visible != _findShown) {
@@ -2126,6 +2152,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
         left: _columnLeft,
         room: _room,
         roomFrom: ChatMinimap.roomFrom,
+        trailing: _learningTrailing(index),
         child: Padding(
           // All but the user's messages a little narrower than those.
           padding: EdgeInsets.only(
@@ -2139,6 +2166,18 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
           ),
         ),
       );
+
+  String? _sourceItemId(int index) => switch (_feed) {
+    final ChatSession session => session.itemIdAt(index),
+    _ => null,
+  };
+
+  double _learningTrailing(int index) {
+    if (!isLearningOperation(_shownAt(index))) return 0;
+    final id = _sourceItemId(index);
+    if (id == null) return 0;
+    return LearningScope.maybeOf(context)?.cardForItem(id) == null ? 0 : 260;
+  }
 
   /// The rows folded away, as last built, by what they were built from.
   final Map<int, (Object, Widget)> _hiddenRows = {};
@@ -2198,6 +2237,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
       final view = ChatItemView(
         key: item is LiveStatusItem ? _statusKey : ValueKey(index),
         item: item,
+        sourceItemId: _sourceItemId(index),
         expanded: _isExpanded(index),
         onToggle: () => _toggle(index),
         onEdit: item is UserMessageItem ? () => _startEditing(index) : null,

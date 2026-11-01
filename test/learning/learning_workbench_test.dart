@@ -1,64 +1,99 @@
-import 'dart:io';
-import 'dart:ui' as ui;
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:baocode/chat/chat_screen.dart';
 import 'package:baocode/chat/chat_session.dart';
-import 'package:baocode/chat/side_panel/side_panel_controller.dart';
-import 'package:baocode/chat/side_panel/side_panel_view.dart';
-import 'package:baocode/ide/ide_notifications.dart';
+import 'package:baocode/chat/chat_models.dart';
+import 'package:baocode/chat/widgets/edit_step.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
-import 'package:baocode/learning/learning_panel.dart';
+import 'package:baocode/kernel/kernel_event.dart';
+import 'package:baocode/learning/learning_bubble.dart';
+import 'package:baocode/learning/work_trace_panel.dart';
 import 'package:baocode/learning/learning_models.dart';
+import 'package:baocode/learning/learning_preferences.dart';
+import 'package:baocode/models/model_provider.dart';
+import 'package:baocode/models/model_providers.dart';
 import 'package:baocode/theme/app_theme.dart';
 import 'package:baocode/theme/workbench_theme.dart';
 
-import '../ide/workbench/fake_files.dart';
+import 'learning_bubble_test.dart'
+    show teachingDiff, bubbleLesson, captureBubble;
 import 'learning_visual_fonts.dart';
 
-LearningCard visibleRangeLesson() => LearningCard(
-  id: 'synthetic-visible-range',
-  title: '只为可见的列表行构建界面',
-  summary: '代码把全量范围计算换成 viewport 提供的惰性范围。',
-  why: '这可能是为了减少滚动时的重复计算；列表很大时，避免逐项扫描尤其重要。',
-  concept: '虚拟列表的工作量应尽量随屏幕可见内容增长，而不是随全部数据量增长。',
-  tradeoff: '仍需维护完整的滚动范围，并验证动态行高变化时的位置是否稳定。',
-  example: '十万条数据不必同时构建；先构建当前屏幕附近需要显示的行。',
-  evidence: const [
-    LearningEvidence(
-      id: 'synthetic-main-diff',
-      kind: 'diff',
-      label: 'main.dart',
-      path: '/synthetic/lib/main.dart',
-      excerpt: '- final visibleRange = calculateRange(scrollOffset);\n+ final visibleRange = viewport.lazyRange(scrollOffset);',
-    ),
-  ],
-  createdAt: DateTime(2026, 1, 1),
-);
+class _Kernel implements AgentKernel {
+  _Kernel(this.descriptor, this.events);
+  @override
+  final KernelDescriptor descriptor;
+  @override
+  final Stream<KernelEvent> events;
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null;
+}
+
+class _Generator implements LearningGenerator {
+  int calls = 0;
+  @override
+  Future<Map<String, Object?>> generate(
+    LearningRequest request,
+    LearningCancellation cancellation,
+  ) async {
+    calls++;
+    final lesson = bubbleLesson();
+    return {
+      'title': lesson.title,
+      'summary': lesson.summary,
+      'why': lesson.why,
+      'concept': lesson.concept,
+      'tradeoff': lesson.tradeoff,
+      'evidenceIds': [request.evidence.first.id],
+    };
+  }
+}
 
 void main() {
   setUpAll(loadLearningVisualFonts);
   for (final theme in ['Bao Dark', 'Bao Light']) {
-    for (final width in [1200.0, 600.0]) {
-      learningWidgetTest('learning host synthetic $theme $width', (
+    for (final width in [1800.0, 1400.0, 600.0]) {
+      learningWidgetTest('inline learning actual chat $theme $width', (
         tester,
       ) async {
-        tester.view.physicalSize = Size(width, 800);
+        tester.view.physicalSize = Size(width, 950);
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.reset);
         WorkbenchThemeService.instance.restore(setting: theme);
         await tester.runAsync(WorkbenchThemeService.instance.initialize);
-        final session = ChatSession(
-          historyCount: 8,
-          kernelContext: const KernelContext(cwd: '/synthetic'),
-          openReview: (root, {session}) async => null,
+        final events = StreamController<KernelEvent>.broadcast(sync: true);
+        late final KernelDescriptor descriptor;
+        descriptor = KernelDescriptor(
+          id: 'fixture',
+          label: 'Synthetic agent',
+          icon: Icons.code,
+          description: '',
+          create: (_) => _Kernel(descriptor, events.stream),
         );
-        final panel = AgentSidePanel();
+        final session = ChatSession(
+          kernel: descriptor,
+          kernels: [descriptor],
+          historyCount: 0,
+          kernelContext: const KernelContext(cwd: '/synthetic'),
+        );
+        final providers = ModelProviders.memory(
+          providers: const [
+            ModelProvider(
+              id: 'synthetic',
+              name: 'Synthetic teaching',
+              models: [ProviderModel(id: 'teaching')],
+            ),
+          ],
+        );
+        final preferences = LearningPreferences.memory(providers: providers);
+        final generator = _Generator();
         addTearDown(session.dispose);
-        addTearDown(panel.dispose);
-        panel.showSection(session, SidePanelSection.learning);
+        addTearDown(events.close);
+        addTearDown(preferences.dispose);
+        addTearDown(providers.dispose);
         await tester.pumpWidget(
           MaterialApp(
             debugShowCheckedModeBanner: false,
@@ -67,67 +102,93 @@ void main() {
             supportedLocales: const [Locale('zh')],
             localizationsDelegates: GlobalMaterialLocalizations.delegates,
             home: Material(
-              child: AgentSidePanelArea(
-                panel: panel,
-                widthConversation: session,
-                builder: (context) => AgentSidePanelView(
-                  panel: panel,
-                  session: session,
-                  learningBuilder: width == 1200
-                      ? (_) => LearningPanel(
-                          cards: [visibleRangeLesson()],
-                          enabled: true,
-                          modelLabel: '合成教学模型 · 无网络请求',
-                          onConfigure: () {},
-                          onTogglePause: () {},
-                          onDisable: () {},
-                          onOpenEvidence: (_) {},
-                        )
-                      : null,
-                  files: TreeFiles({
-                    '/synthetic/lib/main.dart': 'void main() {}',
-                  }),
-                  notifications: IdeNotifications(),
-                  watchDirectory: (_) => const Stream.empty(),
-                ),
-                child: ChatScreen(session: session),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: ChatScreen(
+                      session: session,
+                      title: '诊断脚本 · 合成演示',
+                      learningPreferences: preferences,
+                      learningGenerator: generator,
+                    ),
+                  ),
+                  if (width == 1800)
+                    SizedBox(
+                      width: 320,
+                      child: WorkTracePanel(
+                        controller: session.workTrace,
+                        onOpenItem: session.revealOperation,
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
         );
         await tester.pumpAndSettle();
-        expect(find.byType(LearningPanel), findsOneWidget);
-        expect(session.learning.enabled, isFalse);
-        expect(session.learning.requestCount, 0);
-        expect(tester.takeException(), isNull);
-        if (width == 1200) {
-          final expand = find.byKey(
-            const Key('learning-expand-synthetic-visible-range'),
+        expect(generator.calls, 0);
+        if (width == 1800) {
+          events.add(const TurnStarted(1, 'before-consent'));
+          events.add(
+            const ItemUpserted(
+              2,
+              'local-only',
+              TerminalItem(command: 'echo synthetic', output: 'synthetic'),
+            ),
           );
-          await tester.ensureVisible(expand);
+          events.add(const TurnEnded(3, 'before-consent'));
           await tester.pumpAndSettle();
-          await tester.tap(expand);
-          await tester.pumpAndSettle();
-
-          expect(tester.takeException(), isNull);
+          expect(session.workTrace.entries, isNotEmpty);
+          expect(generator.calls, 0);
+          await tester.tap(find.text('查看原操作').first);
+          await tester.pump();
+          expect(session.operationReveal.value?.id, 'local-only');
         }
-        if (const bool.fromEnvironment('BAOCODE_LEARNING_VISUALS')) {
-          await tester.runAsync(() async {
-            final image = await captureImage(tester.binding.rootElement!);
-            final png = await image.toByteData(format: ui.ImageByteFormat.png);
-            File(
-                'build/learning-visuals/host-${theme.replaceAll(' ', '-')}-${width.toInt()}.png',
-              )
-              ..createSync(recursive: true)
-              ..writeAsBytesSync(png!.buffer.asUint8List());
-            image.dispose();
-          });
-        }
-        panel.showSection(session, SidePanelSection.changes);
+        await preferences.configure(
+          modelRef: '@synthetic/teaching',
+          consent: true,
+        );
+        await tester.pump();
+        events.add(const TurnStarted(10, 'fixture-turn'));
+        events.add(
+          const ItemUpserted(
+            11,
+            'fixture-request',
+            UserMessageItem(text: '检查诊断脚本的日志查询范围。'),
+          ),
+        );
+        events.add(
+          const ItemUpserted(12, 'synthetic-diagnostic', teachingDiff),
+        );
+        events.add(
+          const FileEdited(
+            13,
+            FileChange(path: 'synthetic/tm_diag2.ps1', added: 2, removed: 2),
+            sourceItemId: 'synthetic-diagnostic',
+          ),
+        );
+        events.add(const TurnEnded(14, 'fixture-turn'));
+        await tester.pump(const Duration(seconds: 25));
         await tester.pumpAndSettle();
-        expect(find.byType(LearningPanel), findsNothing);
-        expect(session.learning.requestCount, 0);
+        expect(generator.calls, 1);
+        expect(find.byType(EditStep), findsOneWidget);
+        expect(find.byType(LearningBubble), findsOneWidget);
+        final bubbleRect = tester.getRect(find.byType(LearningBubble));
+        final diffRect = tester.getRect(find.byType(EditStep));
+        expect(bubbleRect.right, lessThanOrEqualTo(width));
+        if (find
+            .byKey(const Key('learning-operation-row'))
+            .evaluate()
+            .isNotEmpty) {
+          expect(bubbleRect.left, greaterThanOrEqualTo(diffRect.right));
+        } else {
+          expect(bubbleRect.top, greaterThanOrEqualTo(diffRect.bottom));
+        }
         expect(tester.takeException(), isNull);
+        await captureBubble(
+          tester,
+          'chat-inline-${theme.replaceAll(' ', '-')}-${width.toInt()}',
+        );
         await tester.pumpWidget(const SizedBox());
       });
     }

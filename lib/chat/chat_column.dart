@@ -52,6 +52,7 @@ class ChatColumn extends SingleChildRenderObjectWidget {
     this.left = 0,
     this.room = 0,
     this.roomFrom = 0,
+    this.trailing = 0,
     super.child,
   });
 
@@ -63,12 +64,17 @@ class ChatColumn extends SingleChildRenderObjectWidget {
   final double room;
   final double roomFrom;
 
+  /// Extra room to the right for an operation annotation. The ordinary chat
+  /// column's left edge does not move; unavailable margin is never reserved.
+  final double trailing;
+
   @override
   RenderChatColumn createRenderObject(BuildContext context) =>
       RenderChatColumn(maxWidth, right)
         ..left = left
         ..room = room
-        ..roomFrom = roomFrom;
+        ..roomFrom = roomFrom
+        ..trailing = trailing;
 
   @override
   void updateRenderObject(BuildContext context, RenderChatColumn renderObject) {
@@ -77,12 +83,21 @@ class ChatColumn extends SingleChildRenderObjectWidget {
       ..right = right
       ..left = left
       ..room = room
-      ..roomFrom = roomFrom;
+      ..roomFrom = roomFrom
+      ..trailing = trailing;
   }
 }
 
 class RenderChatColumn extends RenderShiftedBox {
   RenderChatColumn(this._maxWidth, this._right) : super(null);
+
+  double get trailing => _trailing;
+  double _trailing = 0;
+  set trailing(double value) {
+    if (value == _trailing) return;
+    _trailing = value;
+    markNeedsLayout();
+  }
 
   double get room => _room;
   double _room = 0;
@@ -132,6 +147,7 @@ class RenderChatColumn extends RenderShiftedBox {
     double left = 0,
     double room = 0,
     double roomFrom = 0,
+    double trailing = 0,
   }) {
     final centered = math.max(0.0, math.min(maxWidth, width));
     // In the middle, unless that comes within [left] (or the minimap's
@@ -140,7 +156,8 @@ class RenderChatColumn extends RenderShiftedBox {
         ? math.max(left, room)
         : left;
     final start = math.max((width - centered) / 2, math.min(clear, width));
-    final end = math.max(start, (width + centered) / 2);
+    final end =
+        math.max(start, (width + centered) / 2) + math.max(0.0, trailing);
     return (
       left: start,
       width: math.max(0.0, math.min(end - start, width - right - start)),
@@ -168,6 +185,7 @@ class RenderChatColumn extends RenderShiftedBox {
     left: _left,
     room: _room,
     roomFrom: _roomFrom,
+    trailing: _trailing,
   );
 
   BoxConstraints _childConstraints(BoxConstraints constraints) =>
@@ -209,9 +227,20 @@ class RenderChatColumn extends RenderShiftedBox {
     }
     final (:left, width: column) = _place(width);
     child.layout(_childConstraints(constraints), parentUsesSize: true);
-    // Narrower than the column, in its middle.
+    // A narrow child stays centered on the original column. An annotation
+    // extends only rightward; its arrival cannot shift the operation left.
+    final baseline = _trailing > 0
+        ? place(
+            width,
+            maxWidth: _maxWidth,
+            right: _right,
+            left: _left,
+            room: _room,
+            roomFrom: _roomFrom,
+          ).width
+        : column;
     (child.parentData! as BoxParentData).offset = Offset(
-      left + (column - child.size.width) / 2,
+      left + math.max(0.0, (baseline - child.size.width) / 2),
       0,
     );
     size = constraints.constrain(Size(width, child.size.height));

@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../browser/browser_steps.dart';
 import '../../images/image_steps.dart';
 import '../../l10n/l10n.dart';
+import '../../learning/learning_bubble.dart';
+import '../../learning/learning_scope.dart';
 import '../chat_models.dart';
 import '../edit_detail.dart';
 import 'activity_row.dart';
@@ -30,9 +32,14 @@ class ChatItemView extends StatelessWidget {
     this.onStop,
     this.onOpen,
     this.onSetGoal,
+    this.sourceItemId,
   });
 
   final ChatItem item;
+
+  /// The host projection's exact operation ID. Never inferred from a path or
+  /// assistant text; null for feeds without session-owned operation identity.
+  final String? sourceItemId;
   final bool expanded;
   final VoidCallback? onToggle;
 
@@ -53,7 +60,12 @@ class ChatItemView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final view = _build();
+    Widget view = _build();
+    final source = sourceItemId;
+    if (source != null && isLearningOperation(item)) {
+      final card = LearningScope.maybeOf(context)?.cardForItem(source);
+      view = LearningOperationExplanation(card: card, child: view);
+    }
     // Steps line up on the left: the history centers what is narrower
     // than its column.
     return isStep(item) ? SizedBox(width: double.infinity, child: view) : view;
@@ -161,6 +173,11 @@ class ChatItemView extends StatelessWidget {
     };
   }
 }
+
+/// Only visible operations may carry a teaching annotation. In particular,
+/// thinking, assistant/user messages and status rows never become evidence.
+bool isLearningOperation(ChatItem item) =>
+    item is CodeDiffItem || item is TerminalItem || item is ToolCallItem;
 
 /// The text of [item] as the history shows it, for copying items that are
 /// wholly inside a selection (built or not). Mirrors the widgets above: one

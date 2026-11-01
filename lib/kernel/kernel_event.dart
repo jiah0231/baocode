@@ -121,10 +121,20 @@ final class InteractionResolved extends KernelEvent {
 /// A file the agent changed in turn [turnId]. Pending until kept or
 /// reverted.
 final class FileEdited extends KernelEvent {
-  const FileEdited(super.seq, this.change, {this.turnId, this.original});
+  const FileEdited(
+    super.seq,
+    this.change, {
+    this.turnId,
+    this.original,
+    this.sourceItemId,
+  });
 
   final FileChange change;
   final String? turnId;
+
+  /// The exact transcript diff item confirming this edit, if supplied.
+  /// Never inferred from the path: repeated edits can touch the same file.
+  final String? sourceItemId;
 
   /// What the file was before; null when the agent did not tell.
   final FileOriginal? original;

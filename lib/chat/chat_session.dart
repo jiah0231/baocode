@@ -10,6 +10,7 @@ import '../kernel/kernel_registry.dart';
 import '../kernel/kernel_types.dart';
 import '../kernel/transcript.dart';
 import '../learning/learning_controller.dart';
+import '../learning/work_trace.dart';
 import '../remote/remote_location.dart';
 import 'chat_feed.dart';
 import 'chat_models.dart';
@@ -148,12 +149,27 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   /// outermost first): shown again when the view comes back to it.
   List<String> openAgents = const [];
 
-  // Created only when the learning page is opened; no history scans or model
-  // activity on the ordinary chat path. A session owns its own ephemeral cards.
+  // A session owns ephemeral explanations; observing is explicitly opt-in.
+  // The local work trace is independent of model configuration.
   LearningController? _learning;
   LearningController get learning =>
       _learning ??= LearningController()
         ..switchSession('session:${identityHashCode(this)}');
+
+  final WorkTraceController workTrace = WorkTraceController();
+
+  /// Stable runtime identities only. Historical mock rows have no identity.
+  String? itemIdAt(int index) =>
+      index >= 0 && index < _transcript.length ? _transcript.idAt(index) : null;
+  int? indexOfItem(String id) => _transcript.indexOf(id);
+
+  final ValueNotifier<({String id, int serial})?> operationReveal =
+      ValueNotifier(null);
+  int _revealSerial = 0;
+  void revealOperation(String id) {
+    if (_transcript.indexOf(id) == null) return;
+    operationReveal.value = (id: id, serial: ++_revealSerial);
+  }
 
   late AgentKernel _kernel;
   StreamSubscription<KernelEvent>? _subscription;
@@ -183,22 +199,20 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
       _cache.clear();
       _timeQuiet();
       _reviewEvent(event);
-      final learning = _learning;
-      if (learning != null &&
-          learning.enabled &&
-          (event is TurnEnded ||
-              event is Rewound ||
-              event is ChangesReverted ||
-              _transcript.activeTurn != null)) {
-        // Only accepted, live events, never HistoryPrepended or thought deltas.
-        // Resolve one completed operation by its O(1) transcript index.
-        ChatItem? completed;
-        if (event is ItemCompleted && event.item == null) {
-          final index = _transcript.indexOf(event.id);
-          if (index != null) completed = _transcript.itemAt(index);
-        }
-        learning.observe(event, completedItem: completed);
+      // Resolve only a completed operation, never scan a conversation/delta.
+      ChatItem? completed;
+      if (event is ItemCompleted && event.item == null) {
+        final index = _transcript.indexOf(event.id);
+        if (index != null) completed = _transcript.itemAt(index);
       }
+      workTrace.accept(event, completedItem: completed);
+      // Post-turn/restored records may invalidate a stale bubble, but never
+      // authorize a paid request. History and thought streams are ignored.
+      _learning?.observe(
+        event,
+        completedItem: completed,
+        allowGeneration: _transcript.activeTurn != null,
+      );
       notifyListeners();
     }
   }
@@ -446,6 +460,7 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
     _learning?.switchSession(
       'session:${identityHashCode(this)}:${descriptor.id}',
     );
+    workTrace.reset();
     _transcript = Transcript(
       changes: [for (final edit in _transcript.edits) edit.change],
       queuedInPlace: _queuedInPlace,
@@ -1314,6 +1329,8 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
     unawaited(_subscription?.cancel());
     _kernel.dispose();
     _learning?.dispose();
+    workTrace.dispose();
+    operationReveal.dispose();
     super.dispose();
   }
 }

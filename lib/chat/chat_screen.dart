@@ -13,6 +13,10 @@ import '../kernel/kernel_types.dart';
 import '../kernel/claude_code/claude_path_setting.dart' show installLocalClaude;
 import '../keybindings/chat_keybindings.dart';
 import '../l10n/l10n.dart';
+import '../learning/learning_models.dart';
+import '../learning/learning_preferences.dart';
+import '../learning/learning_session_view.dart';
+import '../settings/user_settings.dart';
 import '../models/model_welcome.dart';
 import '../remote/remote_location.dart';
 import '../remote/remote_status.dart' show ClaudeInstallBanner, SshHostBanner;
@@ -66,6 +70,9 @@ class ChatScreen extends StatefulWidget {
     super.key,
     this.title = 'Optimize virtual list scrolling',
     this.session,
+    this.learningSettings,
+    this.learningPreferences,
+    this.learningGenerator,
     this.leading,
     this.trailing,
     this.titleBarInset,
@@ -98,6 +105,13 @@ class ChatScreen extends StatefulWidget {
 
   final String title;
   final ChatSession? session;
+
+  /// Independent explanation consent/preferences, not the working agent model.
+  final UserSettings? learningSettings;
+
+  /// Host/test seams; providing these never bypasses explicit consent.
+  final LearningPreferences? learningPreferences;
+  final LearningGenerator? learningGenerator;
 
   /// Before the title, e.g. a button to show the sidebar.
   final Widget? leading;
@@ -356,6 +370,7 @@ class _ChatScreenState extends State<ChatScreen>
     super.initState();
     _session.attach();
     _session.addListener(_checkStarting);
+    _session.operationReveal.addListener(_revealOperation);
     _planShown = _session.plan?.seq;
     _session.addListener(_followPlan);
     _session.addListener(_welcomeToModels);
@@ -378,6 +393,7 @@ class _ChatScreenState extends State<ChatScreen>
   @override
   void dispose() {
     _session.removeListener(_checkStarting);
+    _session.operationReveal.removeListener(_revealOperation);
     _session.removeListener(_followPlan);
     _session.removeListener(_welcomeToModels);
     ChatWidth.current.removeListener(_widthChanged);
@@ -390,6 +406,21 @@ class _ChatScreenState extends State<ChatScreen>
     _session.detach();
     if (widget.session == null) _session.dispose();
     super.dispose();
+  }
+
+  void _revealOperation() {
+    final request = _session.operationReveal.value;
+    if (request == null || _session.indexOfItem(request.id) == null) return;
+    // This is an explicit trace jump, not an automatic follow-latest scroll.
+    if (_agentShown != null) _back(0);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          _session.operationReveal.value?.serial != request.serial) {
+        return;
+      }
+      final index = _session.indexOfItem(request.id);
+      if (index != null) ChatHistoryView.reveal(_historyKey, index);
+    });
   }
 
   void _toggleContextPanel() {
@@ -833,7 +864,16 @@ class _ChatScreenState extends State<ChatScreen>
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => LearningSessionBinding(
+    session: _session,
+    settings: widget.learningSettings,
+    preferences: widget.learningPreferences,
+    generator: widget.learningGenerator,
+    active: widget.focused,
+    child: Builder(builder: _buildConversationScope),
+  );
+
+  Widget _buildConversationScope(BuildContext context) {
     final links = widget.fileLinks;
     return ListenableBuilder(
       listenable: _session,
@@ -1151,6 +1191,15 @@ class _ChatScreenState extends State<ChatScreen>
           },
         ),
         _PanelSlot(gap: 0, child: _buildActivityStrip()),
+        // Available in embedded/titleless chats too. Lessons themselves remain
+        // beside the exact operation; this is only their opt-in control.
+        const Padding(
+          padding: EdgeInsets.only(bottom: 4),
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: LearningControls(),
+          ),
+        ),
         ChatComposer(
           key: _composerKey,
           session: _session,

@@ -46,7 +46,7 @@ import '../chat_models.dart' show CommandStatus;
 import '../../keybindings/chat_keybindings.dart';
 import '../../keybindings/keybinding_service.dart';
 import '../../l10n/l10n.dart';
-import '../../learning/learning_session_view.dart';
+import '../../learning/work_trace_panel.dart';
 import '../../sidebar/sidebar.dart' show SidebarIconButton;
 import '../../theme/app_theme.dart';
 import '../../theme/codicons.dart';
@@ -602,14 +602,14 @@ class AgentSidePanelView extends StatelessWidget {
               SidePanelSection.terminal => _terminalPage(context, tabs),
               SidePanelSection.learning =>
                 learningBuilder?.call(context) ??
-                    LearningSessionView(
+                    WorkTracePanel(
                       key: ValueKey((
                         'page',
                         SidePanelSection.learning,
                         session,
                       )),
-                      session: session,
-                      panel: panel,
+                      controller: session.workTrace,
+                      onOpenItem: session.revealOperation,
                     ),
               SidePanelSection.usage => ConversationUsageView(
                 key: ValueKey(('page', SidePanelSection.usage, session)),
@@ -1363,7 +1363,7 @@ extension SidePanelSectionUi on SidePanelSection {
     SidePanelSection.changes => Codicons.sourceControl,
     SidePanelSection.terminal => Codicons.terminal,
     SidePanelSection.usage => Codicons.graph,
-    SidePanelSection.learning => Codicons.book,
+    SidePanelSection.learning => Codicons.history,
     SidePanelSection.browser => Codicons.globe,
     SidePanelSection.plan => Codicons.checklist,
   };
@@ -1385,7 +1385,9 @@ extension SidePanelSectionUi on SidePanelSection {
     SidePanelSection.terminal => context.l10n.sidePanelTerminal,
     SidePanelSection.usage => context.l10n.sidePanelUsage,
     SidePanelSection.learning =>
-      Localizations.localeOf(context).languageCode == 'zh' ? '学习' : 'Learn',
+      Localizations.localeOf(context).languageCode == 'zh'
+          ? '工作轨迹'
+          : 'Work trace',
     SidePanelSection.browser => context.l10n.sidePanelBrowser,
     SidePanelSection.plan => context.l10n.sidePanelPlan,
   };

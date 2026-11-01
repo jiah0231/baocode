@@ -1489,6 +1489,8 @@ class ClaudeTranslator {
           FileChange(path: path, added: added, removed: removed),
           turnId: turnId,
           original: _original(result),
+          // Nested children currently have no addressable transcript row.
+          sourceItemId: tool.parent == null ? id : null,
         ),
       );
     }

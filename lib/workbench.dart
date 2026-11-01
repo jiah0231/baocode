@@ -4636,6 +4636,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       lookup: embedded ? _ideChatKeyContext : _chatKeyContext,
       child: ChatScreen(
         key: _chatKey(thread),
+        learningSettings: widget.settings?.files?.settings,
         embedded: embedded,
         session: thread.session,
         title: thread.localizedTitle(context.l10n),
