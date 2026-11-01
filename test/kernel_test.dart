@@ -5967,6 +5967,84 @@ exec /usr/bin/env "\$@"
     void notify(String method, Map<String, Object?> params) =>
         server.push({'method': method, 'params': params});
 
+    test('coalesces command bursts and completes with every buffered byte', () async {
+      kernel.send(const KernelTurn(id: 't1', text: 'hi'));
+      await pumpEventQueue();
+      final item = <String, Object?>{
+        'type': 'commandExecution',
+        'id': 'burst',
+        'command': 'test',
+      };
+      notify('item/started', {'item': item});
+      for (var i = 0; i < 1000; i++) {
+        notify('item/commandExecution/outputDelta', {
+          'itemId': 'burst',
+          'delta': '$i\n',
+        });
+      }
+      final before = events.whereType<ItemUpserted>()
+          .where((event) => event.id == 'burst');
+      expect(before, hasLength(2)); // Initial row and immediate first delta.
+      notify('item/completed', {
+        'item': {...item, 'exitCode': 0},
+      });
+      final last = events.whereType<ItemUpserted>()
+          .lastWhere((event) => event.id == 'burst').item as TerminalItem;
+      expect(last.output, [for (var i = 0; i < 1000; i++) '$i\n'].join());
+      expect(last.status, CommandStatus.succeeded);
+    });
+
+    test('interrupting a command keeps the unpublished output tail', () async {
+      kernel.send(const KernelTurn(id: 't1', text: 'hi'));
+      await pumpEventQueue();
+      notify('item/started', {
+        'item': {'type': 'commandExecution', 'id': 'stopped', 'command': 'test'},
+      });
+      for (final delta in ['first', ' unpublished tail']) {
+        notify('item/commandExecution/outputDelta', {
+          'itemId': 'stopped',
+          'delta': delta,
+        });
+      }
+      kernel.cancel();
+      final last = events.whereType<ItemUpserted>()
+          .lastWhere((event) => event.id == 'stopped').item as TerminalItem;
+      expect(last.output, 'first unpublished tail');
+      expect(last.status, CommandStatus.failed);
+      // Let the server finish its interrupt response before disposing it.
+      await pumpEventQueue();
+    });
+
+    test('search completion preserves authoritative final output', () async {
+      kernel.send(const KernelTurn(id: 't1', text: 'hi'));
+      await pumpEventQueue();
+      final item = <String, Object?>{
+        'type': 'commandExecution',
+        'id': 'search-burst',
+        'command': 'rg match',
+        'commandActions': [
+          {'type': 'search', 'query': 'match'},
+        ],
+      };
+      notify('item/started', {'item': item});
+      notify('item/commandExecution/outputDelta', {
+        'itemId': 'search-burst',
+        'delta': 'a.dart:1:match\nb.dart:2:match',
+      });
+      ToolCallItem shown() => events.whereType<ItemUpserted>()
+          .lastWhere((event) => event.id == 'search-burst').item as ToolCallItem;
+      expect(shown().results, ['a.dart:1', 'b.dart:2']);
+      notify('item/commandExecution/outputDelta', {
+        'itemId': 'search-burst',
+        'delta': '\nc.dart:3:match',
+      });
+      notify('item/completed', {
+        'item': {...item, 'aggregatedOutput': 'authoritative.dart:4:match'},
+      });
+      expect(shown().results, ['authoritative.dart:4']);
+      expect(shown().status, ToolStatus.succeeded);
+    });
+
     test('lists enabled Codex skills and sends a typed skill input', () async {
       server.skills = {
         'data': [

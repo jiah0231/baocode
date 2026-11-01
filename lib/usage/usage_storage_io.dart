@@ -18,6 +18,17 @@ class UsageFiles implements UsageStorage {
 
   final String directory;
 
+  // File locks are process-wide on some platforms. Share the queue across
+  // instances too, so their isolates cannot overlap a read/modify/write.
+  static final Map<String, _UsageQueue> _queues = {};
+  late final _UsageQueue _queue = _queues.putIfAbsent(
+    p.normalize(p.absolute(directory)),
+    _UsageQueue.new,
+  );
+
+  @override
+  Future<void> drain() => _queue.tail;
+
   static final _dayFile = RegExp(r'^(\d{4}-\d{2}-\d{2})\.jsonl$');
 
   File _file(String day) => File(p.join(directory, '$day.jsonl'));
@@ -26,7 +37,16 @@ class UsageFiles implements UsageStorage {
   @override
   void append(String day, List<String> lines) {
     if (lines.isEmpty) return;
-    final file = _file(day);
+    final path = _file(day).path;
+    final snapshot = List<String>.of(lines);
+    _queue.run(() => _appendOffThread(path, snapshot));
+  }
+
+  static Future<void> _appendOffThread(String path, List<String> lines) =>
+      Isolate.run(() => _append(path, lines));
+
+  static void _append(String path, List<String> lines) {
+    final file = File(path);
     try {
       file.parent.createSync(recursive: true);
       final open = file.openSync(mode: FileMode.append);
@@ -47,8 +67,11 @@ class UsageFiles implements UsageStorage {
   @override
   Future<List<UsageCall>> read(List<String> days) {
     final paths = [for (final day in days) _file(day).path];
-    return Isolate.run(() => _readAll(paths));
+    return _queue.run(() => _readOffThread(paths));
   }
+
+  static Future<List<UsageCall>> _readOffThread(List<String> paths) =>
+      Isolate.run(() => _readAll(paths));
 
   static List<UsageCall> _readAll(List<String> paths) {
     final calls = <UsageCall>[];
@@ -72,7 +95,9 @@ class UsageFiles implements UsageStorage {
   Future<List<String>> days() async => (await sizes()).keys.toList()..sort();
 
   @override
-  Future<Map<String, int>> sizes() async {
+  Future<Map<String, int>> sizes() => _queue.run(_sizes);
+
+  Future<Map<String, int>> _sizes() async {
     final folder = Directory(directory);
     final sizes = <String, int>{};
     try {
@@ -90,7 +115,9 @@ class UsageFiles implements UsageStorage {
   }
 
   @override
-  Future<void> delete(String day) async {
+  Future<void> delete(String day) => _queue.run(() => _delete(day));
+
+  Future<void> _delete(String day) async {
     try {
       await _file(day).delete();
     } on FileSystemException {
@@ -99,7 +126,10 @@ class UsageFiles implements UsageStorage {
   }
 
   @override
-  Future<int> rewrite(String day, bool Function(UsageCall call) drop) async {
+  Future<int> rewrite(String day, bool Function(UsageCall call) drop) =>
+      _queue.run(() => _rewrite(day, drop));
+
+  Future<int> _rewrite(String day, bool Function(UsageCall call) drop) async {
     final file = _file(day);
     if (!await file.exists()) return 0;
     final open = await file.open(mode: FileMode.append);
@@ -134,7 +164,9 @@ class UsageFiles implements UsageStorage {
   }
 
   @override
-  Future<Map<String, Object?>?> readIndex() async {
+  Future<Map<String, Object?>?> readIndex() => _queue.run(_readIndex);
+
+  Future<Map<String, Object?>?> _readIndex() async {
     try {
       final json = jsonDecode(await _index.readAsString());
       return json is Map<String, Object?> ? json : null;
@@ -145,14 +177,87 @@ class UsageFiles implements UsageStorage {
 
   @override
   void writeIndex(Map<String, Object?> index) {
+    final path = _index.path;
+    final snapshot = _snapshot(index) as Map<String, Object?>;
+    _queue.run(() => _writeIndexOffThread(path, snapshot));
+  }
+
+  static Object? _snapshot(Object? value) => switch (value) {
+    Map<String, Object?>() => value.map(
+      (key, value) => MapEntry(key, _snapshot(value)),
+    ),
+    List() => value.map(_snapshot).toList(),
+    _ => value,
+  };
+
+  static Future<void> _writeIndexOffThread(
+    String path,
+    Map<String, Object?> index,
+  ) => Isolate.run(() => _writeIndex(path, index));
+
+  static void _writeIndex(String path, Map<String, Object?> index) {
     try {
-      _index.parent.createSync(recursive: true);
-      final temp = File('${_index.path}.tmp')
-        ..writeAsStringSync(jsonEncode(index), flush: true);
-      temp.renameSync(_index.path);
+      final file = File(path);
+      file.parent.createSync(recursive: true);
+      // A separate lock survives the atomic replacement of index.json.
+      final lock = File('$path.lock').openSync(mode: FileMode.append);
+      try {
+        lock.lockSync(FileLock.blockingExclusive);
+        // Different windows may know different sessions. Preserve the union:
+        // stale days in this lookup are harmless (the files decide existence).
+        Map<String, Object?>? previous;
+        try {
+          previous =
+              jsonDecode(file.readAsStringSync()) as Map<String, Object?>;
+        } on Object {
+          // A missing or damaged index is rebuilt from this run's entries.
+        }
+        final sessions = <String, Set<String>>{};
+        for (final source in [previous?['s'], index['s']]) {
+          if (source is! Map) continue;
+          for (final entry in source.entries) {
+            final days = entry.value;
+            if (days is List) {
+              (sessions['${entry.key}'] ??= {}).addAll(
+                days.whereType<String>(),
+              );
+            }
+          }
+        }
+        final merged = {
+          ...index,
+          's': sessions.map(
+            (key, value) => MapEntry(key, value.toList()..sort()),
+          ),
+        };
+        final temp = File('$path.tmp')
+          ..writeAsStringSync(jsonEncode(merged), flush: true);
+        temp.renameSync(path);
+      } finally {
+        lock.closeSync();
+      }
     } on FileSystemException catch (error) {
       debugPrint('Usage index not kept: $error');
     }
+  }
+}
+
+/// Orders all access, not just writes: a read or clear after append must
+/// observe that append, even while a disk worker is still busy.
+class _UsageQueue {
+  Future<void> tail = Future.value();
+
+  Future<T> run<T>(Future<T> Function() action) {
+    final result = tail.then((_) => action());
+    // Do not poison later operations after one failed operation. The caller
+    // still observes its result, while enqueued writes report filesystem errors.
+    tail = result.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace stack) {
+        debugPrint('Usage storage operation failed: $error');
+      },
+    );
+    return result;
   }
 }
 

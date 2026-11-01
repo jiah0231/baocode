@@ -38,6 +38,7 @@ import 'ide/editor_minimap_setting.dart';
 import 'ide/editor_word_wrap.dart';
 import 'ide/git/git_repository.dart';
 import 'ide/git/repository_scan.dart';
+import 'ide/ide_dialog.dart';
 import 'ide/language_mode.dart';
 import 'ide/lsp/language_features.dart';
 import 'ide/lsp/lsp_process.dart';
@@ -829,42 +830,76 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
             lookupAppLocalizations(_locale.locale ?? AppLocale.systemLocale()),
       );
 
+  bool _quitPending = false;
+
   /// Quitting ends the Claude Code processes too: left alone, one would
   /// finish its turn (subagents and all) unseen, and a resumed session would
   /// then run beside it. Language servers end with the app as well, and the
   /// terminals' shells are hung up, as closing their window would.
   late final AppLifecycleListener _lifecycle = AppLifecycleListener(
     onExitRequested: () async {
-      appEvent('app', 'quit requested');
-      // The unsaved files of all windows asked about at once, then the
-      // agents at work; in the window in front.
-      final updates = _settings.updates?.service;
-      if (!await _windows.confirmQuit()) {
-        appEvent('app', 'quit cancelled');
-        updates?.disarm();
-        return AppExitResponse.cancel;
+      if (_quitPending) return AppExitResponse.cancel;
+      _quitPending = true;
+      try {
+        appEvent('app', 'quit requested');
+        // The unsaved files of all windows asked about at once, then the
+        // agents at work; in the window in front.
+        final updates = _settings.updates?.service;
+        if (!await _windows.confirmQuit()) {
+          appEvent('app', 'quit cancelled');
+          updates?.disarm();
+          return AppExitResponse.cancel;
+        }
+        final updating = updates?.armed ?? false;
+        await Future.wait([
+          stopClaudeProcesses(),
+          stopCodexProcesses(),
+          RemoteClaudeTransport.stopAll(),
+          stopRemoteCodexProcesses(),
+          stopModelProxy(),
+          stopLspProcesses(),
+          stopPtyProcesses(),
+        ]);
+        // The remote hosts' servers end, and all they run with them.
+        await SshHosts.instance.closeAll();
+        // Stopping the agents/proxy can finish their last usage records.
+        // Drain only afterwards, before the process exits with queued writes.
+        try {
+          await UsageLedger.current.flushAndWait().timeout(
+            const Duration(seconds: 5),
+          );
+        } on TimeoutException {
+          // The queue keeps saving: a competing process can still hold its
+          // file lock. Do not drop the records or leave Quit silently stuck.
+          appEvent('app', 'quit cancelled: usage writes still pending');
+          updates?.disarm();
+          final context =
+              _windows.active.delegate?.windowContext ??
+              _windows.chat.delegate?.windowContext;
+          if (context != null && context.mounted) {
+            await showIdeDialog(
+              context,
+              message: context.l10n.usageSavingBeforeQuitTitle,
+              detail: context.l10n.usageSavingBeforeQuitDetail,
+              buttons: [context.l10n.commonOk],
+              cancel: null,
+              type: IdeDialogType.info,
+            );
+          }
+          return AppExitResponse.cancel;
+        }
+        // Do not launch an installer until saving has completed: it waits
+        // for this process to quit, which a pending disk write can cancel.
+        if (updates != null && !await updates.launchArmed()) {
+          appEvent('app', 'quit cancelled: the update would not start');
+          return AppExitResponse.cancel;
+        }
+        await widget.themeExtensions?.dispose();
+        appExit(updating ? 'quit to update' : 'quit');
+        return AppExitResponse.exit;
+      } finally {
+        _quitPending = false;
       }
-      // Restart to Update: the installer waits for the app to go. One that
-      // will not start keeps the app (and says why).
-      final updating = updates?.armed ?? false;
-      if (updates != null && !await updates.launchArmed()) {
-        appEvent('app', 'quit cancelled: the update would not start');
-        return AppExitResponse.cancel;
-      }
-      await Future.wait([
-        stopClaudeProcesses(),
-        stopCodexProcesses(),
-        RemoteClaudeTransport.stopAll(),
-        stopRemoteCodexProcesses(),
-        stopModelProxy(),
-        stopLspProcesses(),
-        ?widget.themeExtensions?.dispose(),
-        stopPtyProcesses(),
-      ]);
-      // The remote hosts' servers end, and all they run with them.
-      await SshHosts.instance.closeAll();
-      appExit(updating ? 'quit to update' : 'quit');
-      return AppExitResponse.exit;
     },
   );
 

@@ -9039,6 +9039,18 @@ abstract class AppLocalizations {
   /// **'the new folder'**
   String get dataDirTheNewFolder;
 
+  /// No description provided for @usageSavingBeforeQuitTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Usage data is still saving'**
+  String get usageSavingBeforeQuitTitle;
+
+  /// No description provided for @usageSavingBeforeQuitDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Quit was cancelled so usage data can finish saving. Agents and terminals already stopped will remain stopped. Please wait a moment and try quitting again.'**
+  String get usageSavingBeforeQuitDetail;
+
   /// No description provided for @quitConfirmMessage.
   ///
   /// In en, this message translates to:

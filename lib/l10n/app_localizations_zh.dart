@@ -5225,6 +5225,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get dataDirTheNewFolder => '新文件夹';
 
   @override
+  String get usageSavingBeforeQuitTitle => '用量数据仍在保存';
+
+  @override
+  String get usageSavingBeforeQuitDetail => '已取消退出，以便完成用量数据保存。已停止的 Agent 和终端不会自动恢复。请稍等片刻后重试退出。';
+
+  @override
   String get quitConfirmMessage => '要退出 BaoCode 吗？';
 
   @override

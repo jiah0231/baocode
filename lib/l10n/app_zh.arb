@@ -1489,6 +1489,8 @@
   "dataDirRestartTitle": "重启 BaoCode 以使用新的数据文件夹",
   "dataDirRestartDetail": "BaoCode 在重启前会继续使用 {current}。下次启动时将使用 {next}，并询问是否移除旧文件夹中剩余的内容。",
   "dataDirTheNewFolder": "新文件夹",
+  "usageSavingBeforeQuitTitle": "用量数据仍在保存",
+  "usageSavingBeforeQuitDetail": "已取消退出，以便完成用量数据保存。已停止的 Agent 和终端不会自动恢复。请稍等片刻后重试退出。",
   "quitConfirmMessage": "要退出 BaoCode 吗？",
   "quitConfirmDetail": "正在运行的 Agent 和终端会一并停止。",
   "quitConfirmQuit": "退出",

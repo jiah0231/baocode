@@ -3961,6 +3961,8 @@
     }
   },
   "dataDirTheNewFolder": "the new folder",
+  "usageSavingBeforeQuitTitle": "Usage data is still saving",
+  "usageSavingBeforeQuitDetail": "Quit was cancelled so usage data can finish saving. Agents and terminals already stopped will remain stopped. Please wait a moment and try quitting again.",
   "quitConfirmMessage": "Quit BaoCode?",
   "quitConfirmDetail": "Running agents and terminals will be stopped.",
   "quitConfirmQuit": "Quit",

@@ -28,6 +28,9 @@ abstract class UsageStorage {
 
   Future<Map<String, Object?>?> readIndex();
   void writeIndex(Map<String, Object?> index);
+
+  /// Waits for all writes already queued to finish (errors are logged).
+  Future<void> drain();
 }
 
 /// Kept in memory only: under test, and where there are no files.
@@ -83,6 +86,9 @@ class MemoryUsageStorage implements UsageStorage {
 
   @override
   void writeIndex(Map<String, Object?> index) => this.index = index;
+
+  @override
+  Future<void> drain() async {}
 }
 
 /// Which calls to delete: those in a time ([from] to [until]), of the
@@ -292,6 +298,12 @@ class UsageLedger extends ChangeNotifier {
         },
       });
     }
+  }
+
+  /// Flushes pending calls and waits for storage operations before exit.
+  Future<void> flushAndWait() {
+    flush();
+    return storage.drain();
   }
 
   @override

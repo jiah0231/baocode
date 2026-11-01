@@ -84,9 +84,17 @@ class ModelProxy {
 
   Future<HttpServer>? _server;
   HttpClient? _client;
+  final Set<Future<void>> _requests = {};
+  Future<void>? _closing;
+  Completer<void> _shutdown = Completer<void>();
+  final Set<void Function()> _cancelCredentials = {};
 
   /// Where [providerId]'s requests go, the proxy started if not yet.
   Future<ProxyEndpoint> endpoint(String providerId) async {
+    while (_closing case final closing?) {
+      await closing;
+    }
+    if (_shutdown.isCompleted) _shutdown = Completer<void>();
     final server = await (_server ??= _bind());
     return (
       baseUrl:
@@ -97,11 +105,24 @@ class ModelProxy {
 
   Future<HttpServer> _bind() async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    server.listen((request) => unawaited(_handle(request)));
+    server.listen((request) {
+      final handled = _handle(request);
+      _requests.add(handled);
+      unawaited(
+        handled.then<void>(
+          (_) => _requests.remove(handled),
+          onError: (Object error, StackTrace stack) {
+            _requests.remove(handled);
+            debugPrint('Model proxy request: $error');
+          },
+        ),
+      );
+    });
     return server;
   }
 
   Future<HttpClient> _upstream() async {
+    if (_shutdown.isCompleted) throw StateError('Model proxy is closing');
     if (_client case final client?) return client;
     return _client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 30)
@@ -109,12 +130,50 @@ class ModelProxy {
       ..findProxy = _findProxy ?? (_) => 'DIRECT';
   }
 
-  Future<void> close() async {
+  Future<void> close() =>
+      _closing ??= _close().whenComplete(() => _closing = null);
+
+  Future<void> _close() async {
+    if (!_shutdown.isCompleted) _shutdown.complete();
+    for (final cancel in _cancelCredentials.toList()) {
+      cancel();
+    }
     final server = await _server;
     _server = null;
-    await server?.close(force: true);
     _client?.close(force: true);
     _client = null;
+    await server?.close(force: true);
+    // A closed socket does not mean its handler's finally has run. Usage
+    // is captured there, and must be enqueued before the app drains it.
+    await Future.wait(_requests.toList());
+  }
+
+  /// Credentials may be waiting on a separate service, not our sockets.
+  /// Let shutdown finish the request without waiting for that service.
+  Future<T> _whileOpen<T>(Future<T> pending) {
+    final result = Completer<T>();
+    void cancel() {
+      _cancelCredentials.remove(cancel);
+      if (!result.isCompleted) {
+        result.completeError(StateError('Model proxy is closing'));
+      }
+    }
+
+    _cancelCredentials.add(cancel);
+    unawaited(
+      pending.then<void>(
+        (value) {
+          _cancelCredentials.remove(cancel);
+          if (!result.isCompleted) result.complete(value);
+        },
+        onError: (Object error, StackTrace stack) {
+          _cancelCredentials.remove(cancel);
+          if (!result.isCompleted) result.completeError(error, stack);
+        },
+      ),
+    );
+    if (_shutdown.isCompleted) cancel();
+    return result.future;
   }
 
   // --- A request -----------------------------------------------------------
@@ -460,7 +519,7 @@ class ModelProxy {
     }
     final client = await _upstream();
     final upstream = await client.postUrl(url);
-    final key = await _key(provider.id);
+    final key = await _whileOpen(_key(provider.id));
     upstreamHeaders(provider, key).forEach(upstream.headers.set);
     customUpstreamHeaders(
       provider,
@@ -622,7 +681,7 @@ class ModelProxy {
       }
       final client = await _upstream();
       final upstreamRequest = await client.postUrl(url);
-      final key = await _key(provider.id);
+      final key = await _whileOpen(_key(provider.id));
       upstreamHeaders(provider, key).forEach(upstreamRequest.headers.set);
       // The user's own headers after them: a name that may not be set is
       // left out, so none of the above is overwritten.
@@ -773,7 +832,7 @@ class ModelProxy {
     final url = query.isEmpty ? path : path.replace(query: query);
     final client = await _upstream();
     final upstreamRequest = await client.postUrl(url);
-    final key = await _key(provider.id);
+    final key = await _whileOpen(_key(provider.id));
     upstreamHeaders(provider, key).forEach(upstreamRequest.headers.set);
     request.headers.forEach((name, values) {
       if (!_notPassed.contains(name) &&
@@ -901,10 +960,8 @@ class ModelProxy {
       for (var attempt = 0; attempt < 3; attempt++) {
         final String token;
         try {
-          token = await codex.accessToken(
-            provider,
-            account,
-            rejected: rejected,
+          token = await _whileOpen(
+            codex.accessToken(provider, account, rejected: rejected),
           );
         } on CodexException catch (error) {
           lastError = '${account.displayName}: ${error.message}';

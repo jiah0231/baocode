@@ -10,6 +10,7 @@ import '../../network/network_proxy_io.dart';
 import '../../platform/child_process_registry.dart';
 import '../../platform/data_dir.dart';
 import 'codex_transport.dart';
+import 'codex_json_decode_io.dart';
 import 'codex_path_setting.dart';
 
 /// `codex app-server` as a child process, over its stdin and stdout.
@@ -20,7 +21,8 @@ class CodexProcessTransport implements CodexTransport {
     _process.stdout
         .transform(_decoder)
         .transform(const LineSplitter())
-        .listen(_line, onError: _undecodable, onDone: _stdoutDone);
+        .asyncMap(_line)
+        .listen((_) {}, onError: _undecodable, onDone: _stdoutDone);
     _process.stderr
         .transform(_decoder)
         .transform(const LineSplitter())
@@ -290,14 +292,15 @@ class CodexProcessTransport implements CodexTransport {
 
   int? _exitCode;
   bool _stdoutClosed = false;
+  final _finished = Completer<void>();
 
   @override
   Stream<Map<String, Object?>> get messages => _messages.stream;
 
-  void _line(String line) {
+  Future<void> _line(String line) async {
     if (line.trim().isEmpty) return;
     try {
-      final decoded = jsonDecode(line);
+      final decoded = await decodeCodexJson(line);
       if (decoded is Map<String, Object?>) _messages.add(decoded);
     } on FormatException {
       // Not protocol (e.g. a warning printed to stdout): keep it for the
@@ -330,7 +333,9 @@ class CodexProcessTransport implements CodexTransport {
     if (code == null || !_stdoutClosed || _messages.isClosed) return;
     _messages
       ..add(CodexExit.message(code, _stderr.join('\n'), executable: executable))
-      ..close();
+      ..close().then((_) {
+        if (!_finished.isCompleted) _finished.complete();
+      });
   }
 
   @override
@@ -343,8 +348,10 @@ class CodexProcessTransport implements CodexTransport {
     }
   }
 
+  /// The OS may exit while a large final line is still decoding. Consumers
+  /// tear down their pending RPCs on this future, so finish delivery first.
   @override
-  Future<void> get exited => _process.exitCode.then((_) {});
+  Future<void> get exited => _finished.future;
 
   @override
   void close() {

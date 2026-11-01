@@ -27,6 +27,7 @@ import '../kernel_event.dart';
 import '../kernel_types.dart';
 import '../prompt_suggestions.dart';
 import 'codex_app_tools.dart';
+import 'codex_command_output.dart';
 import 'codex_output_meter.dart';
 import 'codex_goals.dart';
 import 'codex_process_transport.dart';
@@ -502,7 +503,7 @@ class CodexKernel
   final Map<String, Stopwatch> _reasoningClock = {};
   final Map<String, Map<String, Object?>> _commands = {};
   final Map<String, Map<String, Object?>> _mcpCalls = {};
-  final Map<String, StringBuffer> _commandOutput = {};
+  final Map<String, CodexCommandOutput> _commandOutput = {};
   final Map<String, DateTime> _startedAt = {};
   final Map<String, String> _turnOfItem = {};
 
@@ -567,6 +568,16 @@ class CodexKernel
   @override
   bool get loadingHistory => _loadingHistory;
   bool _loadingHistory = false;
+  Object? _historyReplay;
+  CodexTransport? _historyExited;
+  final _historyNotifications = <(String, Map<String, Object?>)>[];
+
+  void _cancelHistoryReplay() {
+    _historyReplay = null;
+    _historyExited = null;
+    _historyNotifications.clear();
+    _loadingHistory = false;
+  }
 
   @override
   bool get hasEarlierHistory => _turnsCursor != null && !_loadingHistory;
@@ -695,7 +706,11 @@ class CodexKernel
   }
 
   void _teardown() {
+    _cancelHistoryReplay();
     _appTools.cancel();
+    for (final output in _commandOutput.values) {
+      output.close();
+    }
     final subscription = _subscription;
     _subscription = null;
     if (subscription != null) unawaited(subscription.cancel());
@@ -766,6 +781,7 @@ class CodexKernel
       // A new chat starts its thread with its first message, so no empty
       // one is kept for a chat the user only looked at.
       if (_sessionId != null) await _resumeThread();
+      if (_disposed || !identical(_transport, transport)) return;
       _setHealth(KernelHealth.ready);
     } on CodexFolderGone catch (error) {
       _teardown();
@@ -803,6 +819,14 @@ class CodexKernel
 
   void _transportGone(CodexTransport gone) {
     if (_disposed || !identical(_transport, gone)) return;
+    if (_historyReplay != null) {
+      _historyExited = gone;
+      return;
+    }
+    for (final output in _commandOutput.values) {
+      output.close();
+    }
+    _cancelHistoryReplay();
     _transport = null;
     _initialized = false;
     final stopped = StateError('Codex stopped');
@@ -1809,6 +1833,7 @@ class CodexKernel
 
   Future<void> _loadTurnsPage({required bool initial}) async {
     final threadId = _threadId;
+    final transport = _transport;
     if (threadId == null) return;
     final result = await _request('thread/turns/list', {
       'threadId': threadId,
@@ -1817,6 +1842,7 @@ class CodexKernel
       'sortDirection': 'desc',
       if (!initial) 'cursor': ?_turnsCursor,
     });
+    if (_disposed || !identical(transport, _transport)) return;
     final next = result['nextCursor'] as String?;
     _turnsCursor = next == null || next.isEmpty ? null : next;
     // One page is newest first; the conversation goes oldest first.
@@ -1827,7 +1853,14 @@ class CodexKernel
     if (initial) {
       await _replay(turns);
     } else {
-      final items = _itemsOf(turns);
+      final items = <(String, ChatItem)>[];
+      for (final item in _itemsOf(turns)) {
+        items.add(item);
+        if (items.length % 32 == 0) {
+          await Future<void>.delayed(Duration.zero);
+          if (_disposed || !identical(transport, _transport)) return;
+        }
+      }
       if (items.isNotEmpty) emit(HistoryPrepended(nextSeq, items));
     }
   }
@@ -2164,6 +2197,10 @@ class CodexKernel
       _serverRequest(message['id'], method, params ?? const {});
       return;
     }
+    if (_historyReplay != null) {
+      _historyNotifications.add((method, params ?? const {}));
+      return;
+    }
     _notification(method, params ?? const {});
   }
 
@@ -2400,17 +2437,23 @@ class CodexKernel
     final id = params['itemId'] as String?;
     final delta = params['delta'] as String?;
     if (id == null || delta == null) return;
+    _commandOutput[id]?.add(delta);
+  }
+
+  void _publishCommand(String id) {
+    if (_disposed) return;
     final item = _commands[id];
-    if (item == null) return;
-    final output = (_commandOutput[id] ??= StringBuffer())..write(delta);
+    final output = _commandOutput[id];
+    if (item == null || output == null) return;
     emit(
       ItemUpserted(
         nextSeq,
         id,
-        _commandItem({
-          ...item,
-          'aggregatedOutput': output.toString(),
-        }, done: false),
+        _commandItem(
+          {...item, 'aggregatedOutput': output.search ? '' : output.text},
+          done: false,
+          searchMatches: output.search ? output.matches : null,
+        ),
       ),
     );
   }
@@ -2819,7 +2862,13 @@ class CodexKernel
       case 'commandExecution':
         _startedAt[id] = DateTime.now();
         _commands[id] = item;
-        _commandOutput[id] = StringBuffer();
+        _commandOutput.remove(id)?.close();
+        final actions = item['commandActions'] as List? ?? const [];
+        _commandOutput[id] = CodexCommandOutput(
+          onChanged: () => _publishCommand(id),
+          search: actions.isNotEmpty &&
+              actions.every((a) => a is Map && a['type'] == 'search'),
+        );
         emit(ItemUpserted(nextSeq, id, _commandItem(item, done: false)));
       case 'fileChange':
         _fileChanges(id, item['changes'] as List? ?? const [], record: false);
@@ -2886,7 +2935,9 @@ class CodexKernel
           ),
         );
       case 'commandExecution':
-        final output = _commandOutput.remove(id)?.toString();
+        final buffer = _commandOutput.remove(id);
+        buffer?.close();
+        final output = buffer?.text;
         final completed = {
           ...item,
           if (output != null && output.isNotEmpty)
@@ -2943,27 +2994,61 @@ class CodexKernel
 
   /// A kept conversation, as it was: its items, without turn timings.
   Future<void> _replay(List? turns) async {
+    final replay = Object();
+    final transport = _transport;
+    _historyReplay = replay;
+    bool current() => !_disposed &&
+        identical(transport, _transport) && identical(_historyReplay, replay);
     _loadingHistory = true;
     emitInfoChanged();
     try {
-      final items = _itemsOf([
-        for (final raw in turns ?? const [])
-          if (raw is Map) raw.cast<String, Object?>(),
-      ]);
-      for (final (id, item) in items) {
+      var count = 0;
+      for (final (id, item) in _itemsOf(turns ?? const [])) {
+        if (!current()) return;
         emit(ItemUpserted(nextSeq, id, item));
+        if (++count % 32 == 0) {
+          await Future<void>.delayed(Duration.zero);
+        }
       }
     } on Object catch (error) {
-      emit(
-        ItemUpserted(
-          nextSeq,
-          'history-error',
-          NoticeItem(NoticeKind.error, 'Could not read this session: $error'),
-        ),
-      );
+      if (current()) {
+        emit(
+          ItemUpserted(
+            nextSeq,
+            'history-error',
+            NoticeItem(NoticeKind.error, 'Could not read this session: $error'),
+          ),
+        );
+      }
     } finally {
-      _loadingHistory = false;
-      if (!_disposed) emitInfoChanged();
+      if (current()) {
+        // While yielding, keep live updates behind their historical snapshots.
+        // RPC responses still pass through immediately, so no request deadlocks.
+        try {
+          var index = 0;
+          while (current() && index < _historyNotifications.length) {
+            final (method, params) = _historyNotifications[index++];
+            try {
+              _notification(method, params);
+            } on Object catch (error, stack) {
+              // Match a stream listener's error handling: report a bad event
+              // without dropping later events or leaving the replay fenced.
+              Zone.current.handleUncaughtError(error, stack);
+            }
+            if (index % 32 == 0) await Future<void>.delayed(Duration.zero);
+          }
+        } finally {
+          if (current()) {
+            final exited = _historyExited;
+            _historyExited = null;
+            _historyNotifications.clear();
+            _historyReplay = null;
+            _loadingHistory = false;
+            emitInfoChanged();
+            if (exited != null) _transportGone(exited);
+          }
+        }
+      }
     }
   }
 
@@ -2971,9 +3056,9 @@ class CodexKernel
   ///
   /// Changes themselves are left to when they were made: only their cards
   /// are shown, and nothing is kept to put back.
-  List<(String, ChatItem)> _itemsOf(List turns) {
-    final items = <(String, ChatItem)>[];
+  Iterable<(String, ChatItem)> _itemsOf(List turns) sync* {
     for (final turn in turns) {
+      if (turn is! Map) continue;
       final turnId = turn['id'] as String?;
       for (final rawItem in turn['items'] as List? ?? const []) {
         if (rawItem is! Map) continue;
@@ -2985,13 +3070,13 @@ class CodexKernel
           for (final (index, raw)
               in (item['changes'] as List? ?? const []).indexed) {
             if (raw is! Map) continue;
-            items.add((
+            yield (
               '$id:$index',
               _diff(
                 raw['path'] as String? ?? '',
                 raw['diff'] as String? ?? '',
               ).item,
-            ));
+            );
           }
           continue;
         }
@@ -3003,10 +3088,9 @@ class CodexKernel
           continue;
         }
         final chat = _historyItem(item);
-        if (chat != null) items.add((id, chat));
+        if (chat != null) yield (id, chat);
       }
     }
-    return items;
   }
 
   ChatItem? _historyItem(Map<String, Object?> item) {
@@ -3030,14 +3114,18 @@ class CodexKernel
 
   /// A command as the history shows it: reads and searches as tool rows,
   /// anything else as a terminal.
-  ChatItem _commandItem(Map<String, Object?> item, {required bool done}) {
+  ChatItem _commandItem(
+    Map<String, Object?> item, {
+    required bool done,
+    List<String>? searchMatches,
+  }) {
     final actions = [
       for (final action in item['commandActions'] as List? ?? const [])
         if (action is Map) action.cast<String, Object?>(),
     ];
     final output =
         item['aggregatedOutput'] as String? ??
-        _commandOutput[item['id']]?.toString();
+        _commandOutput[item['id']]?.text;
     final completed =
         done || item['status'] == 'completed' || item['status'] == 'failed';
     if (actions.isNotEmpty && actions.every((a) => a['type'] == 'read')) {
@@ -3050,7 +3138,7 @@ class CodexKernel
       );
     }
     if (actions.isNotEmpty && actions.every((a) => a['type'] == 'search')) {
-      final matches = [
+      final matches = searchMatches ?? [
         for (final line in (output ?? '').split('\n'))
           if (line.isNotEmpty) line.split(':').take(2).join(':'),
       ];

@@ -5574,6 +5574,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get dataDirTheNewFolder => 'the new folder';
 
   @override
+  String get usageSavingBeforeQuitTitle => 'Usage data is still saving';
+
+  @override
+  String get usageSavingBeforeQuitDetail => 'Quit was cancelled so usage data can finish saving. Agents and terminals already stopped will remain stopped. Please wait a moment and try quitting again.';
+
+  @override
   String get quitConfirmMessage => 'Quit BaoCode?';
 
   @override

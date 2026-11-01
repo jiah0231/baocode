@@ -233,6 +233,7 @@ void main() {
       ..record(_call(DateTime(2026, 10, 31, 9)))
       ..record(_call(DateTime(2026, 11, 1, 9), session: 's2'))
       ..flush();
+    await ledger.flushAndWait();
     expect(File('${folder.path}/2026-10-31.jsonl').existsSync(), isTrue);
     expect(File('${folder.path}/index.json').existsSync(), isTrue);
     // Another run: read back from the files, the index too.
