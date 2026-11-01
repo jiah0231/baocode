@@ -256,7 +256,9 @@ class _RealHttpOverrides extends HttpOverrides {
           proxyPort != null) {
         throw StateError('Official smoke blocked connection to $uri');
       }
-      return Socket.startConnect(uri.host, uri.port);
+      // A custom connectionFactory owns TLS too (HttpClient does not
+      // upgrade its socket). Keep certificate verification enabled.
+      return SecureSocket.startConnect(uri.host, uri.port, context: context);
     };
     return client;
   }

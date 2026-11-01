@@ -20,6 +20,7 @@ void main() {
       final body = utf8.encode(
         jsonEncode({
           'model': 'fixture-model',
+          'system': 'You are an agent',
           'messages': [
             {'role': 'user', 'content': 'test'},
           ],
