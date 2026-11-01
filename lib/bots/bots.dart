@@ -520,8 +520,9 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
     for (final thread in workspace.threads) {
       if (thread.project.path != bot.folder ||
           thread.archived ||
-          thread.kernel.id != bot.kernel)
+          thread.kernel.id != bot.kernel) {
         continue;
+      }
       if (latest == null || thread.updatedAt.isAfter(latest.updatedAt)) {
         latest = thread;
       }

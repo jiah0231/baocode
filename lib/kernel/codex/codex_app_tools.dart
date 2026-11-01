@@ -12,7 +12,7 @@ class CodexAppTools {
   CodexAppTools(this.cwd);
 
   /// Reviewed bot isolation requires the reviewed stable Codex 0.166.x family. The official
-  /// initialize userAgent prefix is <client-originator>/<Cargo package version>,
+  /// initialize userAgent prefix is `<client-originator>/<Cargo package version>`,
   /// e.g. baocode/0.166.0 (Windows ...), not the client's supplied version.
   /// Unknown or prerelease formats fail closed instead of assuming that
   /// older servers enforce feature/config overrides they might ignore.

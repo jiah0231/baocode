@@ -35,7 +35,7 @@ class _Installer implements CodexInstaller {
   }
 }
 
-Future<void> show(
+Future<void> _show(
   WidgetTester tester,
   _Installer installer,
   Future<void> Function(String) selected,
@@ -58,7 +58,7 @@ void main() {
   ) async {
     final installer = _Installer();
     final selected = <String>[];
-    await show(tester, installer, (path) async => selected.add(path));
+    await _show(tester, installer, (path) async => selected.add(path));
     expect(installer.calls, 0);
     await tester.tap(find.text('Install / update…'));
     await tester.pumpAndSettle();
@@ -82,7 +82,7 @@ void main() {
   ) async {
     final installer = _Installer()..failure = StateError('Checksum failed');
     var selected = false;
-    await show(tester, installer, (_) async {
+    await _show(tester, installer, (_) async {
       selected = true;
     });
     await tester.tap(find.text('Install / update…'));
@@ -100,14 +100,14 @@ void main() {
       final installer = _Installer()..completion = completion;
       final selected = <String>[];
       Future<void> select(String path) async => selected.add(path);
-      await show(tester, installer, select);
+      await _show(tester, installer, select);
       await tester.tap(find.text('Install / update…'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Install and use'));
       await tester.pumpAndSettle();
       expect(find.text('Working…'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
-      await show(tester, installer, select);
+      await _show(tester, installer, select);
       expect(find.text('Working…'), findsOneWidget);
       expect(find.text('Downloading fixture'), findsOneWidget);
       completion.complete('/managed/codex.exe');

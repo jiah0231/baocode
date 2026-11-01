@@ -13,12 +13,8 @@ import 'codex_settings_rpc.dart';
 /// CODEX_HOME is obtained from the server's user config layer, so custom
 /// homes and SSH hosts are respected rather than guessed from this OS.
 class CodexCustomizationStore extends CustomizationStore {
-  CodexCustomizationStore({
-    CustomizationDisk? disk,
-    this.location,
-    this.request,
-  }) : files = disk ?? CustomizationDisk.local,
-       super(disk: disk);
+  CodexCustomizationStore({super.disk, this.location, this.request})
+    : files = disk ?? CustomizationDisk.local;
 
   final CustomizationDisk? files;
   final String? location;
