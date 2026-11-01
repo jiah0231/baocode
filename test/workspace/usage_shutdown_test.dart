@@ -10,7 +10,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 class _DelayedStorage extends MemoryUsageStorage {
-  final drained = Completer<void>();
+  // Create the gate in the widget test's fake-async zone, not setUp's.
+  late final drained = Completer<void>();
   int drains = 0;
 
   @override
@@ -18,6 +19,28 @@ class _DelayedStorage extends MemoryUsageStorage {
     drains++;
     return drained.future;
   }
+}
+
+Future<AppExitResponse> _pumpExit(
+  WidgetTester tester,
+  Future<AppExitResponse> future,
+) async {
+  AppExitResponse? response;
+  Object? error;
+  unawaited(
+    future.then<void>(
+      (value) => response = value,
+      onError: (Object caught) => error = caught,
+    ),
+  );
+  // An exit callback can await fake-clock work. Never await it without
+  // pumping, which otherwise hides a missing completion for ten minutes.
+  for (var i = 0; i < 20 && response == null && error == null; i++) {
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  expect(error, isNull);
+  expect(response, isNotNull, reason: 'Exit did not finish after pumping');
+  return response!;
 }
 
 void main() {
@@ -72,14 +95,17 @@ void main() {
     expect(storage.drains, 1);
     expect(storage.lines['2026-11-01'], hasLength(1));
     expect(exited, isFalse);
-    expect(await tester.binding.handleRequestAppExit(), AppExitResponse.cancel);
+    expect(
+      await _pumpExit(tester, tester.binding.handleRequestAppExit()),
+      AppExitResponse.cancel,
+    );
     expect(storage.drains, 1);
 
     storage.drained.complete();
     await tester.pump();
-    expect(await response, AppExitResponse.exit);
+    expect(await _pumpExit(tester, response), AppExitResponse.exit);
     await tester.pump(const Duration(seconds: 1));
-  });
+  }, timeout: const Timeout(Duration(seconds: 30)));
 
   testWidgets('cancelled quit does not start the usage shutdown drain', (
     tester,
@@ -92,12 +118,12 @@ void main() {
     await tester.pump();
     await tester.tap(find.text('Cancel'));
     await tester.pump();
-    expect(await response, AppExitResponse.cancel);
+    expect(await _pumpExit(tester, response), AppExitResponse.cancel);
     expect(storage.drains, 0);
 
     workspace.selected.session.stop();
     await tester.pump(const Duration(seconds: 1));
-  });
+  }, timeout: const Timeout(Duration(seconds: 30)));
 
   testWidgets('slow saving cancels quit without cancelling the write queue', (
     tester,
@@ -109,16 +135,22 @@ void main() {
     await tester.pump(const Duration(seconds: 5));
     expect(find.text('Usage data is still saving'), findsOneWidget);
     expect(storage.drained.isCompleted, isFalse);
-    expect(await tester.binding.handleRequestAppExit(), AppExitResponse.cancel);
+    expect(
+      await _pumpExit(tester, tester.binding.handleRequestAppExit()),
+      AppExitResponse.cancel,
+    );
     expect(storage.drains, 1);
     expect(find.text('Usage data is still saving'), findsOneWidget);
     await tester.tap(find.text('OK'));
     await tester.pump();
-    expect(await response, AppExitResponse.cancel);
+    expect(await _pumpExit(tester, response), AppExitResponse.cancel);
 
     storage.drained.complete();
     await tester.pump();
-    expect(await tester.binding.handleRequestAppExit(), AppExitResponse.exit);
+    expect(
+      await _pumpExit(tester, tester.binding.handleRequestAppExit()),
+      AppExitResponse.exit,
+    );
     expect(storage.drains, 2);
-  });
+  }, timeout: const Timeout(Duration(seconds: 30)));
 }

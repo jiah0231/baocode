@@ -109,6 +109,13 @@ void main() {
       ledger.dispose();
     });
 
+    test('a missing session is empty before and after other calls', () async {
+      expect(await ledger.ofSession('missing'), isEmpty);
+      ledger.record(_call(now, session: 'existing'));
+      expect(await ledger.ofSession('missing'), isEmpty);
+      expect(await ledger.ofSession('existing'), hasLength(1));
+    });
+
     test('keeps calls by day, the session labeled once a day', () async {
       ledger
         ..record(_call(DateTime(2026, 10, 30, 10)))

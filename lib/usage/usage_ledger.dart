@@ -396,7 +396,7 @@ class UsageLedger extends ChangeNotifier {
 
   /// [session]'s calls.
   Future<List<UsageCall>> ofSession(String session) async {
-    final days = (await _sessions())[session]?.toList() ?? const <String>[];
+    final days = (await _sessions())[session]?.toList() ?? <String>[];
     final calls = await _readDays(days..sort());
     return [
       for (final call in calls)

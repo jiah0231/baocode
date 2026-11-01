@@ -165,6 +165,9 @@ void main() {
       'x-claude-code-prev-tool-durations': 'Read=120;Bash%20X=3400',
     });
     expect(status, 200);
+    // Client EOF can precede the server handler's finally (usage capture).
+    // Wait for capture without cancelling a still-finalizing response.
+    await proxy.drainRequests();
     ledger.flush();
     final calls = await ledger.ofSession(session);
     expect(calls, hasLength(1));
@@ -225,6 +228,9 @@ void main() {
     final seen = upstream.headers.single;
     expect(seen.containsKey('x-claude-code-request-class'), isFalse);
     expect(seen.containsKey('x-claude-code-prev-tool-durations'), isFalse);
+    // Client EOF can precede the server handler's finally (usage capture).
+    // Wait for capture without cancelling a still-finalizing response.
+    await proxy.drainRequests();
     ledger.flush();
     final call = (await ledger.ofSession(session)).single;
     expect(call.protocol, 'anthropic');
@@ -244,6 +250,9 @@ void main() {
     upstream.reply = () =>
         (429, ['{"error":{"message":"Rate limited, slow down"}}']);
     await _post(await url('gw'), request(), {'authorization': 'Bearer tok'});
+    // Client EOF can precede the server handler's finally (usage capture).
+    // Wait for capture without cancelling a still-finalizing response.
+    await proxy.drainRequests();
     ledger.flush();
     final call = (await ledger.ofSession(session)).single;
     expect(call.status, 429);
@@ -259,6 +268,9 @@ void main() {
     ledger.enabled = false;
     upstream.reply = () => (200, const ['data: [DONE]']);
     await _post(await url('gw'), request(), {'authorization': 'Bearer tok'});
+    // Client EOF can precede the server handler's finally (usage capture).
+    // Wait for capture without cancelling a still-finalizing response.
+    await proxy.drainRequests();
     ledger.flush();
     expect(storage.lines, isEmpty);
   });

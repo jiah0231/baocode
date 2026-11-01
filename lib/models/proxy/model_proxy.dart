@@ -133,6 +133,13 @@ class ModelProxy {
   Future<void> close() =>
       _closing ??= _close().whenComplete(() => _closing = null);
 
+  /// Waits for accepted handlers without aborting otherwise successful
+  /// responses. A client seeing EOF need not mean usage's finally ran yet.
+  @visibleForTesting
+  Future<void> drainRequests() async {
+    await Future.wait(_requests.toList());
+  }
+
   Future<void> _close() async {
     if (!_shutdown.isCompleted) _shutdown.complete();
     for (final cancel in _cancelCredentials.toList()) {
