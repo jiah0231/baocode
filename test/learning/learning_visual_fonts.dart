@@ -1,7 +1,7 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 /// The app bundles icon glyphs only. On the Windows visual CI runner load its
 /// actual desktop text fonts explicitly: widget tests otherwise paint Ahem.
@@ -32,4 +32,13 @@ Future<void> loadLearningVisualFonts() async {
   await load('Microsoft YaHei UI', cjk);
   await load('Roboto', cjk);
   await load('Consolas', 'consola.ttf');
+}
+
+/// Bound real-I/O fixture failures rather than waiting Flutter's ten minutes.
+void learningWidgetTest(String description, WidgetTesterCallback callback) {
+  testWidgets(
+    description,
+    callback,
+    timeout: const Timeout(Duration(seconds: 60)),
+  );
 }

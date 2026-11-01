@@ -107,24 +107,25 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('disabled rail offers configuration without generating content', (
-    tester,
-  ) async {
-    addTearDown(tester.view.reset);
-    var configured = 0;
-    await pump(
-      tester,
-      enabled: false,
-      cards: [],
-      configure: () => configured++,
-    );
-    expect(find.byKey(const Key('learning-configure')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('learning-configure')));
-    expect(configured, 1);
-    expect(tester.takeException(), isNull);
-  });
+  learningWidgetTest(
+    'disabled rail offers configuration without generating content',
+    (tester) async {
+      addTearDown(tester.view.reset);
+      var configured = 0;
+      await pump(
+        tester,
+        enabled: false,
+        cards: [],
+        configure: () => configured++,
+      );
+      expect(find.byKey(const Key('learning-configure')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('learning-configure')));
+      expect(configured, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
-  testWidgets('cards expand without changing their stable identity', (
+  learningWidgetTest('cards expand without changing their stable identity', (
     tester,
   ) async {
     addTearDown(tester.view.reset);
@@ -134,27 +135,29 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('Asynchronous completion'), findsOneWidget);
     await tester.ensureVisible(expand);
+    await tester.pumpAndSettle();
     await tester.tap(expand);
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('learning-card-synthetic-0')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('pause and disable controls invoke host without mutating cards', (
-    tester,
-  ) async {
-    addTearDown(tester.view.reset);
-    var pauses = 0;
-    var disables = 0;
-    await pump(tester, pause: () => pauses++, disable: () => disables++);
-    await tester.tap(find.byKey(const Key('learning-pause')));
-    await tester.tap(find.byKey(const Key('learning-disable')));
-    expect(pauses, 1);
-    expect(disables, 1);
-    expect(tester.takeException(), isNull);
-  });
+  learningWidgetTest(
+    'pause and disable controls invoke host without mutating cards',
+    (tester) async {
+      addTearDown(tester.view.reset);
+      var pauses = 0;
+      var disables = 0;
+      await pump(tester, pause: () => pauses++, disable: () => disables++);
+      await tester.tap(find.byKey(const Key('learning-pause')));
+      await tester.tap(find.byKey(const Key('learning-disable')));
+      expect(pauses, 1);
+      expect(disables, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
-  testWidgets('long Chinese explanation keeps full expanded text', (
+  learningWidgetTest('long Chinese explanation keeps full expanded text', (
     tester,
   ) async {
     addTearDown(tester.view.reset);
@@ -181,7 +184,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Chinese expanded and recap synthetic fixtures', (tester) async {
+  learningWidgetTest('Chinese expanded and recap synthetic fixtures', (
+    tester,
+  ) async {
     addTearDown(tester.view.reset);
     await pump(tester, chinese: true, cards: fixtures(chinese: true));
     await tester.pumpAndSettle();
@@ -189,10 +194,12 @@ void main() {
       if (state == 'expanded') {
         final expand = find.byKey(const Key('learning-expand-synthetic-2'));
         await tester.ensureVisible(expand);
+        await tester.pumpAndSettle();
         await tester.tap(expand);
       } else {
         final recap = find.byKey(const Key('learning-recap'));
         await tester.ensureVisible(recap);
+        await tester.pumpAndSettle();
         await tester.tap(recap);
       }
       await tester.pumpAndSettle();
@@ -212,7 +219,7 @@ void main() {
 
   for (final theme in ['Bao Dark', 'Bao Light']) {
     for (final width in [280.0, 360.0, 440.0]) {
-      testWidgets('synthetic visual $theme $width', (tester) async {
+      learningWidgetTest('synthetic visual $theme $width', (tester) async {
         addTearDown(tester.view.reset);
         WorkbenchThemeService.instance.restore(setting: theme);
         await tester.runAsync(WorkbenchThemeService.instance.initialize);

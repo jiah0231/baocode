@@ -1,3 +1,5 @@
+import 'learning_visual_fonts.dart';
+
 import 'package:baocode/learning/learning_models.dart';
 import 'package:baocode/learning/learning_panel.dart';
 import 'package:flutter/material.dart';
@@ -44,7 +46,7 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets(
+  learningWidgetTest(
     'file preview round trip retains reading position and selections',
     (tester) async {
       final state = LearningReadingState();
@@ -53,6 +55,7 @@ void main() {
       await tester.pumpAndSettle();
       final expand = find.byKey(const Key('learning-expand-reading-0'));
       await tester.ensureVisible(expand);
+      await tester.pumpAndSettle();
       await tester.tap(expand);
       await tester.pumpAndSettle();
       await tester.drag(
@@ -83,7 +86,7 @@ void main() {
     },
   );
 
-  testWidgets('mounted session changes keep reading state isolated', (
+  learningWidgetTest('mounted session changes keep reading state isolated', (
     tester,
   ) async {
     final first = LearningReadingState();

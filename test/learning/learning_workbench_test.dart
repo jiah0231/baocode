@@ -22,7 +22,9 @@ void main() {
   setUpAll(loadLearningVisualFonts);
   for (final theme in ['Bao Dark', 'Bao Light']) {
     for (final width in [1200.0, 600.0]) {
-      testWidgets('learning host synthetic $theme $width', (tester) async {
+      learningWidgetTest('learning host synthetic $theme $width', (
+        tester,
+      ) async {
         tester.view.physicalSize = Size(width, 800);
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.reset);
@@ -80,6 +82,7 @@ void main() {
         if (width == 1200) {
           final expand = find.byKey(const Key('learning-expand-synthetic-2'));
           await tester.ensureVisible(expand);
+          await tester.pumpAndSettle();
           await tester.tap(expand);
           await tester.pumpAndSettle();
           await tester.ensureVisible(
