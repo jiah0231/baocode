@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -40,6 +41,9 @@ class _Catalog implements SessionCatalog {
 
 /// No CLI, credentials or model calls. Requests go through the actual adapter.
 class _Server implements CodexTransport {
+  _Server(this.configPath);
+
+  final String configPath;
   final _out = StreamController<Map<String, Object?>>.broadcast();
   final _exited = Completer<void>();
   final written = <Map<String, Object?>>[];
@@ -138,6 +142,16 @@ class _Server implements CodexTransport {
     }
     respond(message, switch (method) {
       'initialize' => {'userAgent': 'baocode/$version (test)'},
+      // Initialization also loads custom prompts. Model the native user
+      // config layer instead of generating an unrelated unavailable notice.
+      'config/read' => {
+        'config': <String, Object?>{},
+        'layers': [
+          {
+            'name': {'type': 'user', 'file': configPath},
+          },
+        ],
+      },
       'thread/resume' => thread(params['threadId'] as String),
       'thread/start' => thread('new-source'),
       'thread/fork' =>
@@ -158,6 +172,8 @@ class _Server implements CodexTransport {
 
 class _Harness {
   _Harness() {
+    final home = Directory.systemTemp.createTempSync('baocode-fork-config-');
+    addTearDown(() => home.delete(recursive: true));
     descriptor = KernelDescriptor(
       id: 'codex',
       label: 'Codex',
@@ -165,7 +181,9 @@ class _Harness {
       description: '',
       catalog: _Catalog(),
       create: (context) {
-        final server = _Server();
+        final server = _Server(
+          '${home.path}${Platform.pathSeparator}config.toml',
+        );
         configureServer?.call(server);
         servers.add(server);
         final kernel = CodexKernel(
