@@ -13,8 +13,10 @@ import '../model_provider.dart';
 import '../upstream.dart';
 import 'prompt_cache_key.dart';
 import 'translate/openai_chat_request.dart';
+import 'translate/claude_from_responses_request.dart';
 import 'translate/openai_chat_response.dart';
 import 'translate/responses_request.dart';
+import 'translate/responses_from_claude_response.dart';
 import 'translate/responses_response.dart';
 import 'translate/thinking.dart';
 
@@ -136,6 +138,13 @@ class ModelProxy {
         return await _fail(response, 401, 'Not this proxy\'s token');
       }
       final segments = request.uri.pathSegments;
+      if (request.method == 'POST' &&
+          segments.length == 4 &&
+          segments[0] == 'p' &&
+          segments[2] == 'v1' &&
+          segments[3] == 'responses') {
+        return await _responses(request, response, segments[1]);
+      }
       if (request.method != 'POST' ||
           segments.length < 4 ||
           segments[0] != 'p' ||
@@ -207,6 +216,270 @@ class ModelProxy {
     }
   }
 
+  /// `/p/<provider>/v1/responses`: what the Codex CLI sends, answered in
+  /// its API. Its model names the provider it is for (`@<id>/<model>`,
+  /// else the one in the path), whose protocol decides how it is asked:
+  /// one of Responses is passed the request as it came (the key and the
+  /// headers set here); the others are spoken to as Anthropic's, through
+  /// this proxy's translations.
+  Future<void> _responses(
+    HttpRequest request,
+    HttpResponse response,
+    String providerId,
+  ) async {
+    try {
+      final body = jsonDecode(await utf8.decodeStream(request));
+      if (body is! Map<String, Object?>) {
+        return await _failAs(
+          response,
+          400,
+          'The request is not a JSON object',
+          openAIError,
+        );
+      }
+      final requested = parseSuffix('${body['model'] ?? ''}');
+      var modelId = requested.modelName.trim();
+      final suffix = requested.hasSuffix ? requested.rawSuffix.trim() : '';
+      final fast = suffix.endsWith(fastModelSuffix);
+      // The effort picked goes with the model's name, as Claude Code's does.
+      final effort =
+          (fast
+                  ? suffix.substring(0, suffix.length - fastModelSuffix.length)
+                  : suffix)
+              .trim();
+      final thinking = effort.isNotEmpty && effort != ThinkingLevel.none;
+      var wanted = providerId;
+      if (parseModelRef(modelId) case (provider: final id, :final model)) {
+        wanted = id;
+        modelId = model;
+      }
+      if (wanted == builtinProviderId) {
+        return await _failAs(
+          response,
+          400,
+          'Codex asks its own account for $modelId',
+          openAIError,
+        );
+      }
+      final found = _provider(wanted);
+      if (found == null) {
+        return await _failAs(
+          response,
+          404,
+          'No such provider: $wanted',
+          openAIError,
+        );
+      }
+      final provider = found.speakingFor(modelId);
+      final header = request.headers.value(sessionHeaderName);
+      final session =
+          sessionId(body, header: header) ??
+          switch ('${body['prompt_cache_key'] ?? ''}'.trim()) {
+            final key when key.isNotEmpty => key,
+            _ => null,
+          };
+      final cacheKey = session == null ? null : promptCacheKeyOf(session);
+
+      if (provider.protocol == ProviderProtocol.openaiResponses) {
+        final outgoing = Map<String, Object?>.of(body)
+          ..['model'] = modelId
+          ..remove('client_metadata');
+        if (fast) outgoing.putIfAbsent('service_tier', () => 'priority');
+        if (provider.promptCacheKey) {
+          outgoing['prompt_cache_key'] = cacheKey;
+        } else {
+          outgoing.remove('prompt_cache_key');
+        }
+        final lines = await _post(
+          provider,
+          outgoing,
+          response,
+          model: modelId,
+          session: session,
+        );
+        if (lines == null) return;
+        return await _relay(response, lines);
+      }
+      if (provider.protocol == ProviderProtocol.codex) {
+        final outgoing = Map<String, Object?>.of(body)..['model'] = modelId;
+        if (fast) outgoing.putIfAbsent('service_tier', () => 'priority');
+        if (provider.promptCacheKey) {
+          outgoing['prompt_cache_key'] = cacheKey;
+        } else {
+          outgoing.remove('prompt_cache_key');
+        }
+        final lines = await _openCodex(
+          provider,
+          outgoing,
+          response,
+          modelId,
+          session,
+          cacheKey,
+          error: openAIError,
+        );
+        if (lines == null) return;
+        return await _relay(response, lines);
+      }
+
+      // Chat Completions and Anthropic's: the request as Anthropic's,
+      // its stream back as Responses'.
+      final anthropic = provider.protocol == ProviderProtocol.anthropic;
+      final claude = convertResponsesRequestToClaude(
+        body,
+        model: modelId,
+        thinkingEffort: anthropic && thinking ? effort : null,
+        maxTokens: anthropic ? 32000 : null,
+      );
+      final Stream<String> lines;
+      if (anthropic) {
+        final posted = await _post(
+          provider,
+          claude,
+          response,
+          model: modelId,
+          session: session,
+        );
+        if (posted == null) return;
+        lines = posted;
+      } else {
+        final outgoing = convertClaudeRequestToOpenAI(
+          modelId,
+          claude,
+          true,
+          preserveThinking: provider.preserveThinking,
+        );
+        if (thinking) {
+          outgoing['reasoning_effort'] = effort;
+        } else {
+          outgoing.remove('reasoning_effort');
+        }
+        outgoing['stream_options'] = {'include_usage': true};
+        final posted = await _post(
+          provider,
+          outgoing,
+          response,
+          model: modelId,
+          session: session,
+        );
+        if (posted == null) return;
+        lines = posted;
+      }
+      _startEvents(response);
+      final chat = anthropic ? null : OpenAIChatResponseTranslator(claude);
+      final translator = ResponsesFromClaudeTranslator();
+      Future<void> writeClaude(List<String> frames) async {
+        for (final frame in frames) {
+          for (final part in const LineSplitter().convert(frame)) {
+            final events = translator.convert(part);
+            if (events.isEmpty) continue;
+            for (final event in events) {
+              response.write(event);
+            }
+          }
+        }
+        await response.flush();
+      }
+
+      await for (final line in lines) {
+        if (chat == null) {
+          final events = translator.convert(line);
+          if (events.isEmpty) continue;
+          for (final event in events) {
+            response.write(event);
+          }
+          await response.flush();
+        } else {
+          await writeClaude(chat.convert(line));
+        }
+      }
+      // The end, where the stream did not say it.
+      if (chat != null) await writeClaude(chat.convert('data: [DONE]'));
+      for (final event in translator.abort(
+        '${provider.name} ended without a reply',
+      )) {
+        response.write(event);
+      }
+      await response.close();
+    } on FormatException catch (error) {
+      await _failAs(
+        response,
+        400,
+        'The request is not JSON: ${error.message}',
+        openAIError,
+      );
+    } on Object catch (error) {
+      debugPrint('Model proxy: $error');
+      await _failAs(response, 502, '$error', openAIError);
+    }
+  }
+
+  /// [outgoing] to [provider] as a stream, its lines; null when it was
+  /// answered here (it failed, in [openAIError]'s shape).
+  Future<Stream<String>?> _post(
+    ModelProvider provider,
+    Map<String, Object?> outgoing,
+    HttpResponse response, {
+    required String model,
+    String? session,
+  }) async {
+    final url = UpstreamUrls.endpoint(provider);
+    if (url == null) {
+      await _failAs(
+        response,
+        400,
+        '${provider.name} has no valid base URL',
+        openAIError,
+      );
+      return null;
+    }
+    final client = await _upstream();
+    final upstream = await client.postUrl(url);
+    final key = await _key(provider.id);
+    upstreamHeaders(provider, key).forEach(upstream.headers.set);
+    customUpstreamHeaders(
+      provider,
+      session: session,
+      model: model,
+    ).forEach(upstream.headers.set);
+    upstream.headers
+      ..contentType = ContentType.json
+      ..set(HttpHeaders.acceptHeader, 'text/event-stream');
+    upstream.add(utf8.encode(jsonEncode(outgoing)));
+    unawaited(
+      response.done.then<void>((_) {}, onError: (_) => upstream.abort()),
+    );
+    final answer = await upstream.close();
+    if (answer.statusCode >= 400) {
+      final text = await utf8.decodeStream(answer);
+      final message = upstreamErrorMessage(answer.statusCode, text);
+      _onError?.call(provider.id, message);
+      await _failAs(response, answer.statusCode, message, openAIError);
+      return null;
+    }
+    _onError?.call(provider.id, null);
+    return answer
+        .transform(const Utf8Decoder(allowMalformed: true))
+        .transform(const LineSplitter());
+  }
+
+  /// An upstream's [lines] passed on as they came: each `data:` line ends
+  /// an event.
+  static Future<void> _relay(
+    HttpResponse response,
+    Stream<String> lines,
+  ) async {
+    _startEvents(response);
+    await for (final line in lines) {
+      if (line.startsWith('data:')) {
+        response.write('$line\n\n');
+      } else if (line.isNotEmpty) {
+        response.write('$line\n');
+      }
+      await response.flush();
+    }
+    return response.close();
+  }
+
   Future<void> _forward(
     ModelProvider provider,
     Map<String, Object?> body,
@@ -272,12 +545,12 @@ class ModelProxy {
       upstream = null;
       final opened = await _openCodex(
         provider,
-        body,
         outgoing,
         response,
         modelId,
         session,
-        sessionHeader,
+        promptCacheKey(body, header: sessionHeader),
+        error: anthropicError,
       );
       if (opened == null) return;
       lines = opened;
@@ -484,22 +757,27 @@ class ModelProxy {
   /// answered here (it failed). An account out of quota, or signed out,
   /// gives way to the next; the reasoning replayed is dropped when the
   /// account taking it cannot read it (another's).
+  ///
+  /// A failure is answered as [error] says: in the API of whoever asked.
   Future<Stream<String>?> _openCodex(
     ModelProvider provider,
-    Map<String, Object?> body,
     Map<String, Object?> outgoing,
     HttpResponse response,
     String modelId,
     String? session,
-    String? sessionHeader,
-  ) async {
+    String? cacheKey, {
+    required Object Function(int status, String message) error,
+  }) async {
     final codex = _codex;
     if (codex == null) {
-      await _fail(response, 501, 'ChatGPT accounts are not available here');
+      await _json(
+        response,
+        501,
+        error(501, 'ChatGPT accounts are not available here'),
+      );
       return null;
     }
     prepareCodexRequest(outgoing);
-    final cacheKey = promptCacheKey(body, header: sessionHeader);
     // The user's own headers on the Codex backend too, with the same
     // session and model variables.
     final custom = customUpstreamHeaders(
@@ -530,7 +808,7 @@ class ModelProxy {
         // Not asked again and again by Claude Code till then, hours on.
         if (back != null) response.headers.set('x-should-retry', 'false');
         _onError?.call(provider.id, message);
-        await _json(response, lastStatus, anthropicError(lastStatus, message));
+        await _json(response, lastStatus, error(lastStatus, message));
         return null;
       }
       String? rejected;
@@ -590,7 +868,7 @@ class ModelProxy {
             break;
           }
           _onError?.call(provider.id, message);
-          await _json(response, status, anthropicError(status, message));
+          await _json(response, status, error(status, message));
           return null;
         }
         // A limit reached may come as the stream's first event.
@@ -672,9 +950,18 @@ class ModelProxy {
     HttpResponse response,
     int status,
     String message,
+  ) => _failAs(response, status, message, anthropicError);
+
+  /// [message] as a failed request in [error]'s shape: Claude Code's
+  /// ([anthropicError]) or Codex's ([openAIError]).
+  static Future<void> _failAs(
+    HttpResponse response,
+    int status,
+    String message,
+    Object Function(int status, String message) error,
   ) async {
     try {
-      await _json(response, status, anthropicError(status, message));
+      await _json(response, status, error(status, message));
     } on Object {
       // Already answered, or the client gone.
       await response.close().catchError((_) {});

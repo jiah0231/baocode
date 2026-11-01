@@ -181,6 +181,8 @@ Future<Map<String, String>> providerLaunchEnvironment(
   );
 }
 
+Future<ProxyEndpoint?> codexProxyEndpoint() => _proxy.endpoint('codex');
+
 Future<void> stopModelProxy() async {
   _codex.close();
   await _proxy.close();

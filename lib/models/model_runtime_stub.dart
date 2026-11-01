@@ -1,5 +1,6 @@
 import 'codex/codex_service.dart';
 import 'image_api.dart';
+import 'launch_environment.dart' show ProxyEndpoint;
 import 'model_provider.dart';
 import 'model_runtime.dart';
 import 'upstream.dart';
@@ -20,6 +21,8 @@ Future<List<GeneratedImage>> generateImages(
   ImageRequest request, {
   String? session,
 }) async => throw const UpstreamException('Not available on the web.');
+
+Future<ProxyEndpoint?> codexProxyEndpoint() async => null;
 
 Future<void> stopModelProxy() async {}
 

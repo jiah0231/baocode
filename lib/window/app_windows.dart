@@ -7,6 +7,7 @@ import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as p;
 
 import '../remote/remote_claude.dart';
+import '../remote/remote_codex.dart';
 import '../remote/remote_location.dart';
 import '../remote/remote_services.dart';
 import '../chat/composer/composer_files.dart';
@@ -1177,7 +1178,10 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
               window.delegate?.terminalsRunning(childProcesses: true) ?? false,
         );
     // What runs on remote hosts ends with their servers.
-    final remote = RemoteClaudeTransport.running + RemotePtyAdapter.open;
+    final remote =
+        RemoteClaudeTransport.running +
+        runningRemoteCodex +
+        RemotePtyAdapter.open;
     if (!working && remote == 0) return true;
     final asker = active.delegate?.windowContext != null ? active : chat;
     final context = asker.delegate?.windowContext;

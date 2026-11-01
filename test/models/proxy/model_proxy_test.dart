@@ -561,50 +561,56 @@ void main() {
       expect(promptCacheKey(request(jsonEncode({'device_id': 'd'}))), isNull);
     });
 
-    test('#307 falls back on the session header for a user_id the user set',
-        () {
-      final key = promptCacheKey(
-        request(jsonEncode({'device_id': 'd', 'session_id': session})),
-      );
-      expect(promptCacheKey(request('abcdefghijk'), header: session), key);
-      expect(promptCacheKey(const {}, header: session), key);
-      // The body's own session is taken over the header.
-      expect(
-        promptCacheKey(
-          request(jsonEncode({'session_id': session})),
-          header: 'other',
-        ),
-        key,
-      );
-      expect(sessionId(request('abcdefghijk'), header: ' '), isNull);
-    });
+    test(
+      '#307 falls back on the session header for a user_id the user set',
+      () {
+        final key = promptCacheKey(
+          request(jsonEncode({'device_id': 'd', 'session_id': session})),
+        );
+        expect(promptCacheKey(request('abcdefghijk'), header: session), key);
+        expect(promptCacheKey(const {}, header: session), key);
+        // The body's own session is taken over the header.
+        expect(
+          promptCacheKey(
+            request(jsonEncode({'session_id': session})),
+            header: 'other',
+          ),
+          key,
+        );
+        expect(sessionId(request('abcdefghijk'), header: ' '), isNull);
+      },
+    );
 
-    test('#307 an overridden user_id still sends the key, by the header',
-        () async {
-      provider = provider.copyWith(protocol: ProviderProtocol.openaiResponses);
-      upstream.reply = (_) => (200, const []);
-      final body = {
-        'model': 'gpt-5',
-        'stream': true,
-        'metadata': {'user_id': 'abcdefghijk'},
-        'messages': [
-          {'role': 'user', 'content': 'hi'},
-        ],
-      };
-      await post(
-        await messages(),
-        body,
-        headers: {
-          'authorization': 'Bearer tok',
-          'x-claude-code-session-id': session,
-        },
-      );
-      expect(
-        (upstream.requests.last.body! as Map)['prompt_cache_key'],
-        promptCacheKey(body, header: session),
-      );
-      expect(promptCacheKey(body, header: session), isNotNull);
-    });
+    test(
+      '#307 an overridden user_id still sends the key, by the header',
+      () async {
+        provider = provider.copyWith(
+          protocol: ProviderProtocol.openaiResponses,
+        );
+        upstream.reply = (_) => (200, const []);
+        final body = {
+          'model': 'gpt-5',
+          'stream': true,
+          'metadata': {'user_id': 'abcdefghijk'},
+          'messages': [
+            {'role': 'user', 'content': 'hi'},
+          ],
+        };
+        await post(
+          await messages(),
+          body,
+          headers: {
+            'authorization': 'Bearer tok',
+            'x-claude-code-session-id': session,
+          },
+        );
+        expect(
+          (upstream.requests.last.body! as Map)['prompt_cache_key'],
+          promptCacheKey(body, header: session),
+        );
+        expect(promptCacheKey(body, header: session), isNotNull);
+      },
+    );
 
     for (final protocol in [
       ProviderProtocol.openaiChat,
@@ -1090,6 +1096,225 @@ void main() {
       expect(sent.path, '/v1/messages');
       expect((sent.body! as Map)['model'], 'claude-sonnet-4-5');
       expect(upstream.requests, isEmpty);
+    });
+  });
+
+  group('Responses: what the Codex CLI sends', () {
+    late FakeUpstream relay;
+    late ModelProxy routing;
+    late ModelProvider chat;
+    late ModelProvider responses;
+
+    setUp(() async {
+      relay = await FakeUpstream.start();
+      chat = ModelProvider(
+        id: 'gw',
+        name: 'Gateway',
+        protocol: ProviderProtocol.openaiChat,
+        baseUrl: relay.base,
+        models: const [
+          ProviderModel(id: 'gpt-5'),
+          ProviderModel(
+            id: 'claude-sonnet-4-5',
+            protocol: ProviderProtocol.anthropic,
+          ),
+        ],
+      );
+      responses = ModelProvider(
+        id: 'rsp',
+        name: 'Responses',
+        protocol: ProviderProtocol.openaiResponses,
+        baseUrl: relay.base,
+        models: const [ProviderModel(id: 'gpt-5')],
+      );
+      routing = ModelProxy(
+        provider: (id) => {'gw': chat, 'rsp': responses}[id],
+        key: (id) async => 'sk-$id',
+        onError: (_, error) => errors.add(error),
+        findProxy: (_) => 'DIRECT',
+        token: 'tok',
+      );
+    });
+
+    tearDown(() async {
+      await routing.close();
+      await relay.close();
+    });
+
+    Future<Uri> on(String id) async =>
+        Uri.parse('${(await routing.endpoint(id)).baseUrl}/v1/responses');
+
+    test('Chat Completions is asked in its API, the answer back as '
+        'Responses\'', () async {
+      relay.reply = (_) => (
+        200,
+        [
+          'data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"gpt-5","choices":[{"index":0,"delta":{"role":"assistant","content":"Hi"},"finish_reason":null}]}',
+          '',
+          'data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"gpt-5","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+          '',
+          'data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"gpt-5","choices":[],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}',
+          '',
+          'data: [DONE]',
+        ],
+      );
+      final answer = await post(
+        await on('gw'),
+        {
+          'model': '@gw/gpt-5(high)',
+          'stream': true,
+          'instructions': 'Be brief.',
+          'input': [
+            {
+              'type': 'message',
+              'role': 'user',
+              'content': [
+                {'type': 'input_text', 'text': 'hi'},
+              ],
+            },
+          ],
+        },
+        headers: {'authorization': 'Bearer tok'},
+      );
+      expect(answer.status, 200);
+      final sent = relay.requests.single;
+      expect(sent.path, '/v1/chat/completions');
+      expect((sent.body! as Map)['model'], 'gpt-5');
+      expect((sent.body! as Map)['reasoning_effort'], 'high');
+      expect((sent.body! as Map)['stream_options'], {'include_usage': true});
+      expect(((sent.body! as Map)['messages'] as List).last['content'], [
+        {'type': 'text', 'text': 'hi'},
+      ]);
+      final types = [for (final data in answer.data) data['type']];
+      expect(types.first, 'response.created');
+      expect(types, contains('response.output_text.delta'));
+      expect(types.last, 'response.completed');
+      final completed = answer.data.last['response']! as Map;
+      expect(completed['output'], [
+        {
+          'type': 'message',
+          'id': isA<String>(),
+          'role': 'assistant',
+          'status': 'completed',
+          'content': [
+            {'type': 'output_text', 'text': 'Hi', 'annotations': []},
+          ],
+        },
+      ]);
+      expect(completed['usage'], containsPair('output_tokens', 1));
+    });
+
+    test('one of Anthropic\'s is asked as its API, with the effort\'s '
+        'budget', () async {
+      relay.reply = (_) => (
+        200,
+        [
+          'event: message_start',
+          'data: {"type":"message_start","message":{"id":"m1","usage":{"input_tokens":2}}}',
+          '',
+          'event: content_block_start',
+          'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
+          '',
+          'event: content_block_delta',
+          'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}',
+          '',
+          'event: content_block_stop',
+          'data: {"type":"content_block_stop","index":0}',
+          '',
+          'event: message_delta',
+          'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}',
+          '',
+          'event: message_stop',
+          'data: {"type":"message_stop"}',
+        ],
+      );
+      final answer = await post(
+        await on('gw'),
+        {'model': '@gw/claude-sonnet-4-5(high)', 'stream': true, 'input': 'hi'},
+        headers: {'authorization': 'Bearer tok'},
+      );
+      expect(answer.status, 200);
+      final sent = relay.requests.single;
+      expect(sent.path, '/v1/messages');
+      final body = sent.body! as Map;
+      expect(body['model'], 'claude-sonnet-4-5');
+      expect(body['max_tokens'], 32000);
+      expect(body['thinking'], {'type': 'enabled', 'budget_tokens': 16000});
+      expect(sent.headers['authorization'], 'Bearer sk-gw');
+      expect(
+        [for (final data in answer.data) data['type']],
+        [
+          'response.created',
+          'response.output_item.added',
+          'response.content_part.added',
+          'response.output_text.delta',
+          'response.output_text.done',
+          'response.content_part.done',
+          'response.output_item.done',
+          'response.completed',
+        ],
+      );
+      final completed = answer.data.last['response']! as Map;
+      expect((completed['output'] as List).single['content'], [
+        {'type': 'output_text', 'text': 'Hi', 'annotations': []},
+      ]);
+    });
+
+    test('one of Responses\' is passed as it came, fast as its tier', () async {
+      relay.reply = (_) => (
+        200,
+        [
+          'event: response.created',
+          'data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}',
+          '',
+          'event: response.completed',
+          'data: {"type":"response.completed","response":{"id":"resp_1","status":"completed"}}',
+        ],
+      );
+      final answer = await post(
+        await on('rsp'),
+        {
+          'model': '@rsp/gpt-5(;fast)',
+          'stream': true,
+          'input': 'hi',
+          'prompt_cache_key': 'codex-1',
+        },
+        headers: {'authorization': 'Bearer tok'},
+      );
+      expect(answer.status, 200);
+      final sent = relay.requests.single;
+      expect(sent.path, '/v1/responses');
+      final body = sent.body! as Map;
+      expect(body['model'], 'gpt-5');
+      expect(body['service_tier'], 'priority');
+      // The conversation's key, hashed, as Claude Code's is.
+      expect(
+        (body['prompt_cache_key'] as String).startsWith('baocode-'),
+        isTrue,
+      );
+      expect(body['prompt_cache_key'], isNot('codex-1'));
+      expect(
+        [for (final data in answer.data) data['type']],
+        ['response.created', 'response.completed'],
+      );
+    });
+
+    test('what went wrong is said as OpenAI\'s error', () async {
+      relay.reply = (_) =>
+          (429, const ['{"error":{"message":"Out of quota"}}']);
+      final answer = await post(
+        await on('gw'),
+        {'model': '@gw/gpt-5', 'stream': true, 'input': 'hi'},
+        headers: {'authorization': 'Bearer tok'},
+      );
+      expect(answer.status, 429);
+      expect(jsonDecode(answer.text), {
+        'error': {
+          'message': 'HTTP 429: Out of quota',
+          'type': 'rate_limit_error',
+          'code': 'rate_limit_exceeded',
+        },
+      });
     });
   });
 }

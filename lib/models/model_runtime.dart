@@ -4,6 +4,7 @@
 
 import 'codex/codex_service.dart';
 import 'image_api.dart';
+import 'launch_environment.dart' show ProxyEndpoint;
 import 'model_provider.dart';
 import 'model_runtime_stub.dart'
     if (dart.library.io) 'model_runtime_io.dart'
@@ -24,6 +25,11 @@ Future<Map<String, String>> providerLaunchEnvironment(
   ModelProvider provider,
   String model,
 ) => platform.providerLaunchEnvironment(provider, model);
+
+/// Where a Codex session sends the requests of BaoCode's own models
+/// ([modelRef]): this machine's proxy, and the token it takes. Null where
+/// there is none.
+Future<ProxyEndpoint?> codexProxyEndpoint() => platform.codexProxyEndpoint();
 
 /// [request]'s pictures, made by [model] (an image model) of [provider]:
 /// the bytes of each (fetched where it answered with a link). Throws

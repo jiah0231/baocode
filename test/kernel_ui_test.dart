@@ -362,13 +362,14 @@ void main() {
     final thread = workspace.selected;
     expect(thread.kernel, MockKernels.codex);
     expect(picker('Codex'), findsOneWidget);
-    expect(picker('GPT-5.5 Codex'), findsOneWidget);
+    // Not known until it starts (or was last known): the server's own.
+    expect(picker('Default'), findsOneWidget);
 
-    // Codex has no Plan mode.
+    // Codex plans first too, or answers without acting.
     await tester.tap(picker('Agent'));
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Read-only: answer questions'), findsOneWidget);
-    expect(find.text('Plan'), findsNothing);
+    expect(find.text('Plan'), findsOneWidget);
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pump(const Duration(milliseconds: 300));
 
@@ -392,7 +393,7 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
   });
 
-  testWidgets('a Codex agent asks leave, and has no undo or tasks', (
+  testWidgets('a Codex agent asks leave, and its work can be undone', (
     tester,
   ) async {
     final session = await pumpSession(tester, MockKernels.codex);
@@ -411,7 +412,8 @@ void main() {
     expect(find.byType(ActivityStrip), findsOneWidget);
     expect(find.text('3 files changed'), findsOneWidget);
     expect(find.text('Keep all'), findsOneWidget);
-    expect(find.text('Undo all'), findsNothing);
+    expect(find.text('Undo all'), findsOneWidget);
+    // No command of its runs on beside the conversation.
     expect(find.textContaining('Running ·'), findsNothing);
     // Done, its work folds before its answer: open it.
     expect(find.byType(CommandStep), findsNothing);

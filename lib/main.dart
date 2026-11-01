@@ -53,9 +53,11 @@ import 'kernel/claude_code/claude_core_setting.dart';
 import 'kernel/claude_code/claude_onboarding.dart';
 import 'kernel/claude_code/claude_path_setting.dart';
 import 'kernel/claude_code/process_transport.dart';
+import 'kernel/codex/codex_kernel.dart';
 import 'kernel/claude_code/turn_stats_stub.dart'
     if (dart.library.io) 'kernel/claude_code/turn_stats_io.dart'
     show turnStatsIn;
+import 'kernel/codex/codex_process_transport.dart';
 import 'kernel/commit_attribution.dart';
 import 'kernel/extension_switches.dart';
 import 'kernel/prompt_suggestions.dart';
@@ -84,6 +86,7 @@ import 'platform/open_requests.dart';
 import 'platform/shell_command.dart';
 import 'remote/project_host.dart';
 import 'remote/remote_claude.dart';
+import 'remote/remote_codex.dart';
 import 'remote/ssh_host.dart';
 import 'search/claude_conversation_search.dart';
 import 'search/conversation_search.dart';
@@ -160,6 +163,7 @@ Future<void> main(List<String> arguments) async {
     watchExit(DataDirectory.current.logsDir);
   }
   unawaited(reapClaudeProcesses());
+  unawaited(reapCodexProcesses());
   unawaited(reapLspProcesses());
   unawaited(reapPtyProcesses());
   WidgetsFlutterBinding.ensureInitialized();
@@ -260,6 +264,8 @@ Future<void> main(List<String> arguments) async {
     // Claude Code's own models as it last listed them: in the picker
     // before a session on them starts.
     ClaudeCodeKernel.modelCache = files.storage;
+    // Codex's own models as it last listed them: as above, for its picker.
+    CodexKernel.modelCache = files.storage;
     // Whether the welcome to setting a model up has shown by itself.
     ModelWelcome.storage = files.storage;
     // The channel build's first start: set up before anything else shows.
@@ -819,7 +825,9 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
       }
       await Future.wait([
         stopClaudeProcesses(),
+        stopCodexProcesses(),
         RemoteClaudeTransport.stopAll(),
+        stopRemoteCodexProcesses(),
         stopModelProxy(),
         stopLspProcesses(),
         ?widget.themeExtensions?.dispose(),

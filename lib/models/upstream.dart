@@ -415,6 +415,26 @@ ModelKind? _listedKind(RemoteModel remote) => switch (remote.kind) {
   _ => null,
 };
 
+/// An OpenAI error, for what the Codex CLI shows of a failed request.
+Map<String, Object?> openAIError(int status, String message) => {
+  'error': {
+    'message': message,
+    'type': switch (status) {
+      400 || 413 || 422 => 'invalid_request_error',
+      401 => 'authentication_error',
+      403 => 'permission_error',
+      404 => 'not_found_error',
+      429 => 'rate_limit_error',
+      _ => 'api_error',
+    },
+    'code': switch (status) {
+      429 => 'rate_limit_exceeded',
+      401 => 'invalid_api_key',
+      _ => null,
+    },
+  },
+};
+
 /// An Anthropic error, for what Claude Code shows of a failed request.
 Map<String, Object?> anthropicError(int status, String message) => {
   'type': 'error',

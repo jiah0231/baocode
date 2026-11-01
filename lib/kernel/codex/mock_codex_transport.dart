@@ -8,8 +8,10 @@ import 'codex_transport.dart';
 /// command. Not the server: shapes follow its protocol closely enough to
 /// drive the adapter.
 class MockCodexTransport implements CodexTransport {
+  // As a process's pipes are: an answer is never delivered inside the
+  // handler of the message that asked.
   final StreamController<Map<String, Object?>> _out =
-      StreamController.broadcast(sync: true);
+      StreamController.broadcast();
 
   @override
   Stream<Map<String, Object?>> get messages => _out.stream;
@@ -21,6 +23,11 @@ class MockCodexTransport implements CodexTransport {
   int _turns = 0;
   int _serverRequests = 0;
   int _tokens = 18400;
+  int _forks = 0;
+  final Completer<void> _exited = Completer();
+
+  @override
+  Future<void> get exited => _exited.future;
 
   Object? _run;
   String? _turnId;
@@ -50,26 +57,149 @@ class MockCodexTransport implements CodexTransport {
     switch (method) {
       case 'initialize':
         _respond(id, {'userAgent': 'codex-mock'});
+      case 'model/list':
+        _respond(id, {
+          'data': [
+            {
+              'id': 'gpt-6-sol',
+              'model': 'gpt-6-sol',
+              'displayName': 'GPT-6 Sol',
+              'description': 'The default coding model',
+              'supportedReasoningEfforts': [
+                {'reasoningEffort': 'low', 'description': 'Quick'},
+                {'reasoningEffort': 'medium', 'description': 'Balanced'},
+                {'reasoningEffort': 'high', 'description': 'Thorough'},
+              ],
+              'defaultReasoningEffort': 'medium',
+              'inputModalities': ['text', 'image'],
+              'hidden': false,
+            },
+          ],
+        });
       case 'thread/start':
         _respond(id, {
-          'thread': {'id': _threadId},
+          'thread': {
+            'id': _threadId,
+            'sessionId': _threadId,
+            'model': 'gpt-6-sol',
+            'reasoningEffort': 'medium',
+            'turns': <Object?>[],
+          },
         });
+      case 'thread/resume':
+        _respond(id, {
+          'thread': {
+            'id': params['threadId'] ?? _threadId,
+            'sessionId': params['threadId'] ?? _threadId,
+            'model': 'gpt-6-sol',
+            'reasoningEffort': 'medium',
+            'turns': <Object?>[],
+          },
+        });
+      case 'thread/revert':
       case 'thread/rollback':
         _respond(id, {
           'thread': {'id': _threadId},
+        });
+      case 'thread/fork':
+        _respond(id, {
+          'thread': {
+            'id': 'thr_fork_${++_forks}',
+            'sessionId': 'thr_fork_$_forks',
+            'model': 'gpt-6-sol',
+            'reasoningEffort': 'medium',
+            'turns': <Object?>[],
+          },
+        });
+      case 'thread/name/set':
+        _respond(id, {});
+      case 'thread/delete':
+        _respond(id, {});
+      case 'mcpServerStatus/list':
+        _respond(id, {
+          'data': [
+            {
+              'name': 'filesystem',
+              'authStatus': 'unsupported',
+              'runtimeStatus': 'connected',
+              'serverInfo': {'name': 'filesystem', 'version': '1.0.0'},
+              'tools': {
+                'read_file': {'name': 'read_file', 'inputSchema': {}},
+              },
+            },
+          ],
+        });
+      case 'config/value/write':
+      case 'config/mcpServer/reload':
+      case 'thread/backgroundTerminals/terminate':
+        _respond(id, {});
+      case 'mcpServer/oauth/login':
+        _respond(id, {'authorizationUrl': 'https://example.com/oauth'});
+      case 'thread/backgroundTerminals/list':
+        _respond(id, {'data': <Object?>[]});
+      case 'thread/turns/list':
+        _respond(id, {'data': <Object?>[]});
+      case 'thread/prediction/request':
+        _respond(id, {});
+        _notify('thread/prediction/updated', {
+          'threadId': _threadId,
+          'sourceTurnId': params['sourceTurnId'] ?? '',
+          'result': {'type': 'completed', 'text': '再跑一遍测试看看'},
+        });
+      case 'fuzzyFileSearch':
+        final roots = params['roots'] as List? ?? const [];
+        final root = roots.isEmpty ? '.' : '${roots.first}';
+        _respond(id, {
+          'files': [
+            {
+              'file_name': 'chat_screen.dart',
+              'path': '$root/lib/chat/chat_screen.dart',
+              'root': root,
+              'match_type': 'file',
+              'score': 100,
+            },
+          ],
+        });
+      case 'account/rateLimits/read':
+        _respond(id, {
+          'rateLimits': {
+            'primary': {
+              'usedPercent': 12,
+              'windowDurationMins': 300,
+              'resetsAt':
+                  DateTime.now()
+                      .add(const Duration(hours: 2))
+                      .millisecondsSinceEpoch ~/
+                  1000,
+            },
+            'secondary': {
+              'usedPercent': 34,
+              'windowDurationMins': 10080,
+              'resetsAt':
+                  DateTime.now()
+                      .add(const Duration(days: 3))
+                      .millisecondsSinceEpoch ~/
+                  1000,
+            },
+          },
         });
       case 'turn/start':
         final turnId = 'turn_${++_turns}';
         _respond(id, {
           'turn': {'id': turnId, 'status': 'inProgress'},
         });
-        final input = (params['input'] as List).first as Map;
+        final inputs = params['input'] as List? ?? const [];
+        final text = inputs
+            .whereType<Map>()
+            .where((input) => input['type'] == 'text')
+            .map((input) => input['text'] as String? ?? '')
+            .join('\n');
         final readOnly =
             (params['sandboxPolicy'] as Map?)?['type'] == 'readOnly';
         final run = Object();
         _run = run;
         _turnId = turnId;
-        unawaited(_script(run, turnId, input['text'] as String, readOnly));
+        unawaited(_script(run, turnId, text, readOnly));
       case 'turn/interrupt':
         _respond(id, {});
         if (_turnId case final turnId? when _run != null) {
@@ -304,6 +434,7 @@ class MockCodexTransport implements CodexTransport {
   void close() {
     _run = null;
     _approvals.clear();
-    _out.close();
+    if (!_out.isClosed) _out.close();
+    if (!_exited.isCompleted) _exited.complete();
   }
 }

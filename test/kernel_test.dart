@@ -32,6 +32,7 @@ import 'package:baocode/kernel/kernel_types.dart';
 import 'package:baocode/kernel/mock/mock_kernels.dart';
 import 'package:baocode/kernel/queued_messages.dart';
 import 'package:baocode/kernel/transcript.dart';
+import 'package:baocode/settings/user_settings.dart';
 
 /// Lines Claude Code 2.1.281 printed (recorded, with paths and account
 /// details replaced).
@@ -5874,7 +5875,7 @@ exec /usr/bin/env "\$@"
 
     setUp(() {
       server = _FakeServer();
-      kernel = CodexKernel(MockKernels.codex, server);
+      kernel = CodexKernel.withTransport(MockKernels.codex, server);
       events = [];
       kernel.events.listen(events.add);
     });
@@ -5890,6 +5891,7 @@ exec /usr/bin/env "\$@"
       await pumpEventQueue();
       expect(server.written.map((m) => m['method']), [
         'initialize',
+        'model/list',
         'thread/start',
         'turn/start',
       ]);
@@ -6004,22 +6006,246 @@ exec /usr/bin/env "\$@"
       expect(events.last, isA<TurnEnded>());
     });
 
-    test('declares no background tasks and no undo', () {
-      expect(kernel, isNot(isA<RunsBackgroundTasks>()));
-      expect(kernel, isNot(isA<RevertsChanges>()));
+    test('asks what the agent needs, and answers it', () async {
+      kernel.send(const KernelTurn(id: 't1', text: 'hi'));
+      await pumpEventQueue();
+      server.push({
+        'id': 9,
+        'method': 'item/tool/requestUserInput',
+        'params': {
+          'threadId': 'th',
+          'turnId': 'st1',
+          'itemId': 'i1',
+          'isBlocking': true,
+          'questions': [
+            {
+              'id': 'q1',
+              'header': 'Library',
+              'question': 'Which one?',
+              'options': [
+                {'label': 'A', 'description': 'first'},
+                {'label': 'B', 'description': 'second'},
+              ],
+            },
+          ],
+        },
+      });
+      final question =
+          events.whereType<InteractionRequested>().single.request
+              as QuestionRequest;
+      final labels = question.questions.single.options.map((o) => o.label);
+      expect(labels, ['A', 'B']);
+      kernel.answer(
+        'ask:9',
+        const QuestionAnswer([
+          ['B'],
+        ]),
+      );
+      final reply = server.written.lastWhere((m) => m['id'] == 9);
+      expect(reply['result'], {
+        'answers': {
+          'q1': {
+            'answers': ['B'],
+          },
+        },
+      });
+    });
+
+    test('takes part in tasks, MCP, fast mode and undo', () {
+      expect(kernel, isA<RunsBackgroundTasks>());
+      expect(kernel, isA<RevertsChanges>());
+      expect(kernel, isA<ManagesMcpServers>());
+      expect(kernel, isA<SuggestsPrompts>());
+      expect(kernel, isA<SuggestsFiles>());
+      expect(kernel, isA<SelectsFast>());
       expect(kernel, isA<SelectsMode>());
+    });
+
+    test('offers the models it last listed before it starts', () async {
+      final folder = await Directory.systemTemp.createTemp('codex-models');
+      addTearDown(() => folder.delete(recursive: true));
+      final storage = GlobalStorage('${folder.path}/storage.json');
+      CodexKernel.modelCache = storage;
+      addTearDown(() => CodexKernel.modelCache = null);
+      await storage.set(CodexKernel.modelCacheKey, [
+        {
+          'id': 'gpt-6-sol',
+          'displayName': 'GPT-6 Sol',
+          'supportedReasoningEfforts': [
+            {'reasoningEffort': 'high', 'description': 'Thorough'},
+          ],
+          'defaultReasoningEffort': 'high',
+        },
+      ]);
+
+      final before = CodexKernel.withTransport(
+        MockKernels.codex,
+        _FakeServer(),
+      );
+      addTearDown(before.dispose);
+      expect(before.model.options.single.label, 'GPT-6 Sol');
+      expect(before.model.selected, 'gpt-6-sol');
+      expect(before.effort.optionsFor('gpt-6-sol').single.id, 'high');
+    });
+
+    test(
+      'BaoCode\'s models are offered too, asked through the proxy',
+      () async {
+        final providers = _codexProviders();
+        final server = _FakeServer();
+        final kernel = CodexKernel.withTransport(
+          MockKernels.codex,
+          server,
+          providers: providers,
+          providerProxy: () async =>
+              (baseUrl: 'http://127.0.0.1:9/p/codex', token: 'tok'),
+        );
+        addTearDown(kernel.dispose);
+
+        final options = kernel.model.options;
+        expect(options.map((option) => option.id), ['default', '@od/gpt-5']);
+        expect(options.last.label, 'GPT-5 Pro');
+        expect(options.last.group?.label, 'Open Design');
+        expect(options.first.group?.label, 'Codex');
+
+        kernel.model.select('@od/gpt-5');
+        expect(kernel.effort.optionsFor('@od/gpt-5').map((o) => o.id), [
+          'low',
+          'high',
+        ]);
+        expect(kernel.effort.selected, 'low');
+        kernel.effort.select('@od/gpt-5', 'high');
+        expect(kernel.fast.optionsFor('@od/gpt-5').single.id, 'fast');
+        kernel.fast.select('@od/gpt-5', 'fast');
+
+        kernel.send(const KernelTurn(id: 't1', text: 'hi'));
+        await pumpEventQueue();
+
+        final startMessage = server.written.firstWhere(
+          (message) => message['method'] == 'thread/start',
+        );
+        final start = startMessage['params'] as Map;
+        expect(start['model'], '@od/gpt-5(high;fast)');
+        expect(start['modelProvider'], 'baocode');
+        final config = start['config'] as Map;
+        expect(config['model_context_window'], 128000);
+        expect(config['web_search'], 'disabled');
+        final provider = (config['model_providers'] as Map)['baocode'] as Map;
+        expect(provider, {
+          'name': 'BaoCode',
+          'base_url': 'http://127.0.0.1:9/p/codex/v1',
+          'wire_api': 'responses',
+          'experimental_bearer_token': 'tok',
+          'supports_websockets': false,
+        });
+        // The proxy reads the effort and fast off the name, not a tier.
+        expect(start.containsKey('serviceTier'), isFalse);
+
+        final turnMessage = server.written.firstWhere(
+          (message) => message['method'] == 'turn/start',
+        );
+        final turn = turnMessage['params'] as Map;
+        expect(turn['model'], '@od/gpt-5(high;fast)');
+        expect(turn['effort'], 'high');
+        expect(turn.containsKey('serviceTierForTurn'), isFalse);
+
+        // The plan's limits are not its provider's.
+        expect(kernel.usageLimitAppliesTo('@od/gpt-5'), isFalse);
+        expect(kernel.usageLimitAppliesTo('gpt-6-sol'), isTrue);
+      },
+    );
+
+    test('another provider once begun is a restart', () async {
+      final providers = _codexProviders();
+      final servers = <_FakeServer>[];
+      final kernel = CodexKernel(
+        MockKernels.codex,
+        const KernelContext(),
+        start: (_) async {
+          final server = _FakeServer();
+          servers.add(server);
+          return server;
+        },
+        providers: providers,
+        providerProxy: () async =>
+            (baseUrl: 'http://127.0.0.1:9/p/codex', token: 'tok'),
+      );
+      addTearDown(kernel.dispose);
+
+      // Before anything is sent, a switch is no restart.
+      kernel.model.select('@od/gpt-5');
+      expect(kernel.switchRestarts('default'), isFalse);
+      kernel.send(const KernelTurn(id: 't1', text: 'hi'));
+      await pumpEventQueue();
+      expect(servers, hasLength(1));
+      expect(kernel.switchRestarts('default'), isTrue);
+      expect(kernel.switchRestarts('@od/gpt-5'), isFalse);
+
+      // That turn over, another goes on another provider.
+      servers.first.push({
+        'method': 'turn/completed',
+        'params': {
+          'turn': {'id': 'st1', 'status': 'completed'},
+        },
+      });
+      await pumpEventQueue();
+
+      // Taken up with the next message: the thread goes on as a copy of
+      // itself on the server's own models.
+      kernel.model.select('default');
+      kernel.send(const KernelTurn(id: 't2', text: 'again'));
+      await pumpEventQueue();
+      expect(servers, hasLength(1));
+      final forkMessage = servers.first.written.firstWhere(
+        (message) => message['method'] == 'thread/fork',
+      );
+      final forked = forkMessage['params'] as Map;
+      expect(forked['threadId'], 'th');
+      // Default: the server's own pick, its own provider.
+      expect(forked.containsKey('model'), isFalse);
+      expect(forked.containsKey('modelProvider'), isFalse);
+      expect(forked.containsKey('config'), isFalse);
+      expect(kernel.sessionId, 'th-fork');
+      final turns = servers.first.written
+          .where((message) => message['method'] == 'turn/start')
+          .toList();
+      expect((turns.last['params'] as Map)['threadId'], 'th-fork');
     });
   });
 }
+
+/// BaoCode's models for the Codex tests: one provider, one model.
+ModelProviders _codexProviders() => ModelProviders.memory(
+  providers: [
+    ModelProvider.fromJson({
+      'id': 'od',
+      'name': 'Open Design',
+      'protocol': 'openai-responses',
+      'baseUrl': 'https://example.com/v1',
+      'models': [
+        {
+          'id': 'gpt-5',
+          'label': 'GPT-5 Pro',
+          'contextWindow': 128000,
+          'efforts': ['low', 'high'],
+        },
+      ],
+    })!,
+  ],
+);
 
 /// Answers Codex requests the way the app server does.
 class _FakeServer implements CodexTransport {
   final StreamController<Map<String, Object?>> _out =
       StreamController.broadcast(sync: true);
   final List<Map<String, Object?>> written = [];
+  final Completer<void> _exited = Completer<void>();
 
   @override
   Stream<Map<String, Object?>> get messages => _out.stream;
+
+  @override
+  Future<void> get exited => _exited.future;
 
   void push(Map<String, Object?> message) => _out.add(message);
 
@@ -6030,17 +6256,27 @@ class _FakeServer implements CodexTransport {
       'thread/start' => {
         'thread': {'id': 'th'},
       },
+      'thread/fork' => {
+        'thread': {'id': 'th-fork', 'modelProvider': 'openai'},
+      },
       'turn/start' => {
         'turn': {'id': 'st1'},
       },
       null => null,
       _ => <String, Object?>{},
     };
-    if (result != null) push({'id': message['id'], 'result': result});
+    if (result != null) {
+      // A real server answers on its own turn, never inside the handler of
+      // the notification that made the client ask.
+      scheduleMicrotask(() => push({'id': message['id'], 'result': result}));
+    }
   }
 
   @override
-  void close() => _out.close();
+  void close() {
+    _out.close();
+    if (!_exited.isCompleted) _exited.complete();
+  }
 }
 
 /// Turns kept in memory, by session and prompt.
