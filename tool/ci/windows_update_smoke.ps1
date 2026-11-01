@@ -4,7 +4,8 @@ param(
   [Parameter(Mandatory = $true)][string]$OldInstaller,
   [Parameter(Mandatory = $true)][string]$NewInstaller,
   [Parameter(Mandatory = $true)][string]$NewBundle,
-  [Parameter(Mandatory = $true)][string]$Version
+  [Parameter(Mandatory = $true)][string]$Version,
+  [Parameter(Mandatory = $true)][string]$OldVersion
 )
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or !$env:RUNNER_TEMP) {
@@ -12,6 +13,8 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or !$env:RUNNER_TEMP) {
 }
 if ($Version -notmatch '^(\d+)\.(\d+)\.(\d+)\+(\d+)$') { throw 'Expected full numeric app version' }
 $expected = @([int]$Matches[1], [int]$Matches[2], [int]$Matches[3], [int]$Matches[4])
+if ($OldVersion -notmatch '^(\d+)\.(\d+)\.(\d+)\+(\d+)$') { throw 'Expected full numeric baseline version' }
+$baseline = @([int]$Matches[1], [int]$Matches[2], [int]$Matches[3], [int]$Matches[4])
 $root = Join-Path $env:RUNNER_TEMP ('baocode-upgrade-' + [guid]::NewGuid())
 $appDir = Join-Path $root 'app'
 $dataDir = Join-Path $root 'data'
@@ -40,7 +43,7 @@ function Install([string]$setup, [string]$log) {
 }
 try {
   Install $old (Join-Path $root 'old-install.log')
-  Assert-Version $exe @(1, 7, 3, 23)
+  Assert-Version $exe $baseline
   if (!(Test-Path (Join-Path $appDir 'unins000.exe'))) { throw 'Missing installation marker' }
   # No running app: exercise same-product same-marketing-version replacement,
   # not forced process closure. WAITPID/quit guards remain unit-tested separately.
@@ -56,7 +59,7 @@ try {
   Start-Sleep -Seconds 15
   $process.Refresh()
   if ($process.HasExited) { throw "Upgraded app failed startup: $($process.ExitCode)" }
-  Write-Host 'PASS: old build 23 -> new per-user Setup, executable/AOT hashes, preserved data, startup'
+  Write-Host "PASS: $OldVersion -> $Version per-user Setup, executable/AOT hashes, preserved data, startup"
 } finally {
   if ($process) {
     $process.Refresh()
