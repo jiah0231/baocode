@@ -46,6 +46,7 @@ import '../chat_models.dart' show CommandStatus;
 import '../../keybindings/chat_keybindings.dart';
 import '../../keybindings/keybinding_service.dart';
 import '../../l10n/l10n.dart';
+import '../../learning/learning_session_view.dart';
 import '../../sidebar/sidebar.dart' show SidebarIconButton;
 import '../../theme/app_theme.dart';
 import '../../theme/codicons.dart';
@@ -88,6 +89,7 @@ class AgentSidePanelArea extends StatefulWidget {
     this.railTop = AppMetrics.titleBarHeight + 4,
     this.hidden = false,
     this.conversation,
+    this.widthConversation,
     required this.child,
   });
 
@@ -98,6 +100,10 @@ class AgentSidePanelArea extends StatefulWidget {
   /// is there ([AgentSidePanel.shownIn]), with a focus of its own. None:
   /// the window's ([AgentSidePanel.shown]).
   final Object? conversation;
+
+  /// The focused conversation for a window-wide panel's section width.
+  /// This does not opt it into pane-specific visibility or focus.
+  final Object? widthConversation;
 
   /// While the panel is hidden, over the conversations' top right (left,
   /// the panel at their left), clear of their scrollbar: their column keeps
@@ -198,7 +204,11 @@ class _AgentSidePanelAreaState extends State<AgentSidePanelArea> {
 
   /// How wide it shows in [room]: as wide as it was made, as far as there
   /// is room for.
-  double _shownWidth(double room) => math.min(_panel.width, _most(room));
+  Object? get _widthConversation =>
+      widget.widthConversation ?? widget.conversation;
+
+  double _shownWidth(double room) =>
+      math.min(_panel.widthFor(_widthConversation), _most(room));
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -365,15 +375,18 @@ class _AgentSidePanelAreaState extends State<AgentSidePanelArea> {
         final moved = details.globalPosition.dx - start.x;
         // No wider than it shows: past that the sash waits, and follows
         // again once the pointer is back.
-        _panel.width = math.min(
-          atLeft ? start.width + moved : start.width - moved,
-          math.max(AgentSidePanel.minWidth, _most(room)),
+        _panel.setWidthFor(
+          _widthConversation,
+          math.min(
+            atLeft ? start.width + moved : start.width - moved,
+            math.max(AgentSidePanel.minWidth, _most(room)),
+          ),
         );
       },
       onHorizontalDragEnd: (_) => _endDrag(),
       onHorizontalDragCancel: _endDrag,
       onDoubleTap: () {
-        _panel.width = AgentSidePanel.defaultWidth;
+        _panel.resetWidthFor(_widthConversation);
         _panel.save();
       },
       child: Container(
@@ -582,6 +595,11 @@ class AgentSidePanelView extends StatelessWidget {
               SidePanelSection.files => _filesPage(context, tabs),
               SidePanelSection.changes => _changesPage(context, tabs),
               SidePanelSection.terminal => _terminalPage(context, tabs),
+              SidePanelSection.learning => LearningSessionView(
+                key: ValueKey(('page', SidePanelSection.learning, session)),
+                session: session,
+                panel: panel,
+              ),
               SidePanelSection.usage => ConversationUsageView(
                 key: ValueKey(('page', SidePanelSection.usage, session)),
                 session: session,
@@ -1334,6 +1352,7 @@ extension SidePanelSectionUi on SidePanelSection {
     SidePanelSection.changes => Codicons.sourceControl,
     SidePanelSection.terminal => Codicons.terminal,
     SidePanelSection.usage => Codicons.graph,
+    SidePanelSection.learning => Codicons.book,
     SidePanelSection.browser => Codicons.globe,
     SidePanelSection.plan => Codicons.checklist,
   };
@@ -1344,7 +1363,9 @@ extension SidePanelSectionUi on SidePanelSection {
     SidePanelSection.changes => ChatCommandIds.sidePanelChanges,
     SidePanelSection.terminal => ChatCommandIds.sidePanelTerminal,
     SidePanelSection.usage => ChatCommandIds.sidePanelUsage,
-    SidePanelSection.browser || SidePanelSection.plan => null,
+    SidePanelSection.browser ||
+    SidePanelSection.learning ||
+    SidePanelSection.plan => null,
   };
 
   String label(BuildContext context) => switch (this) {
@@ -1352,6 +1373,8 @@ extension SidePanelSectionUi on SidePanelSection {
     SidePanelSection.changes => context.l10n.sidePanelChanges,
     SidePanelSection.terminal => context.l10n.sidePanelTerminal,
     SidePanelSection.usage => context.l10n.sidePanelUsage,
+    SidePanelSection.learning =>
+      Localizations.localeOf(context).languageCode == 'zh' ? '学习' : 'Learn',
     SidePanelSection.browser => context.l10n.sidePanelBrowser,
     SidePanelSection.plan => context.l10n.sidePanelPlan,
   };
@@ -1389,6 +1412,7 @@ class SidePanelRail extends StatelessWidget {
           0,
     SidePanelSection.files ||
     SidePanelSection.usage ||
+    SidePanelSection.learning ||
     SidePanelSection.browser ||
     SidePanelSection.plan => 0,
   };
@@ -1579,6 +1603,7 @@ class _SectionBar extends StatelessWidget {
                     count: switch (section) {
                       SidePanelSection.files ||
                       SidePanelSection.usage ||
+                      SidePanelSection.learning ||
                       SidePanelSection.browser ||
                       SidePanelSection.plan => 0,
                       SidePanelSection.changes => changes,

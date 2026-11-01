@@ -67,7 +67,15 @@ class SidePanelTab {
 /// The browser's page is there once a browser of the user's has connected
 /// (see lib/browser/browser_bridge.dart). The usage page: what the
 /// conversation took of its upstream (see lib/usage/).
-enum SidePanelSection { files, changes, terminal, usage, browser, plan }
+enum SidePanelSection {
+  files,
+  changes,
+  terminal,
+  usage,
+  browser,
+  plan,
+  learning,
+}
 
 /// The pages there whether or not there is anything on them: not the
 /// plan's, there only once the agent wrote one.
@@ -76,6 +84,7 @@ const alwaysShownSections = [
   SidePanelSection.changes,
   SidePanelSection.terminal,
   SidePanelSection.usage,
+  SidePanelSection.learning,
 ];
 
 /// Each conversation keeps its page, and the tabs open on each.
@@ -112,6 +121,7 @@ class SidePanelTabs {
     SidePanelSection.changes => activeDiff,
     SidePanelSection.terminal ||
     SidePanelSection.usage ||
+    SidePanelSection.learning ||
     SidePanelSection.browser => null,
     SidePanelSection.plan => plan,
   };
@@ -144,6 +154,9 @@ class AgentSidePanel extends ChangeNotifier {
     if (state?['shown'] case final bool shown) _shown = shown;
     if (state?['width'] case final num width) {
       _width = width.toDouble().clamp(minWidth, maxWidth);
+    }
+    if (state?['learningWidth'] case final num width when width.isFinite) {
+      _learningWidth = width.toDouble().clamp(minWidth, maxLearningWidth);
     }
     if (state?['listWidth'] case final num width) {
       _listWidth = width.toDouble().clamp(minListWidth, maxListWidth);
@@ -184,6 +197,8 @@ class AgentSidePanel extends ChangeNotifier {
   static const defaultWidth = 640.0;
   static const minWidth = 280.0;
   static const maxWidth = 1400.0;
+  static const defaultLearningWidth = 360.0;
+  static const maxLearningWidth = 480.0;
 
   static const defaultListWidth = 220.0;
   static const minListWidth = 140.0;
@@ -198,6 +213,33 @@ class AgentSidePanel extends ChangeNotifier {
 
   double get width => _width;
   double _width = defaultWidth;
+  double _learningWidth = defaultLearningWidth;
+
+  /// Learning stays glanceable without changing the room kept for diffs.
+  bool _learningFor(Object? conversation) =>
+      conversation != null &&
+      tabsOf(conversation).shown == SidePanelSection.learning;
+
+  double widthFor(Object? conversation) =>
+      _learningFor(conversation) ? _learningWidth : _width;
+
+  void setWidthFor(Object? conversation, double value) {
+    if (!value.isFinite) return;
+    if (!_learningFor(conversation)) {
+      width = value;
+      return;
+    }
+    final clamped = value.clamp(minWidth, maxLearningWidth);
+    if (clamped == _learningWidth) return;
+    _learningWidth = clamped;
+    _changed = true;
+    notifyListeners();
+  }
+
+  void resetWidthFor(Object? conversation) => setWidthFor(
+    conversation,
+    _learningFor(conversation) ? defaultLearningWidth : defaultWidth,
+  );
 
   /// The width of the list at the left of each page.
   double get listWidth => _listWidth;
@@ -703,6 +745,7 @@ class AgentSidePanel extends ChangeNotifier {
       // Its tabs are the terminals themselves, killed by their own Close.
       case SidePanelSection.terminal ||
           SidePanelSection.usage ||
+          SidePanelSection.learning ||
           SidePanelSection.browser:
         break;
     }
@@ -712,6 +755,7 @@ class AgentSidePanel extends ChangeNotifier {
   Map<String, Object?> toJson() => {
     'shown': _shown,
     'width': _width,
+    'learningWidth': _learningWidth,
     'listWidth': _listWidth,
     'listShown': _listShown,
     'changesAsTree': _changesAsTree,

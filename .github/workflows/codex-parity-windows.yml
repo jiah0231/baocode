@@ -2,7 +2,7 @@
 name: Codex parity Windows build
 on:
   push:
-    branches: [fix/codex-parity-windows-20261101]
+    branches: [fix/codex-parity-windows-20261101, feat/learning-side-panel-20261101]
   workflow_dispatch:
 permissions:
   contents: read
@@ -31,6 +31,16 @@ jobs:
         run: flutter analyze --no-pub
       - name: Test changed components
         run: flutter test test/kernel test/usage test/models/proxy test/workspace/usage_shutdown_test.dart test/workspace/quit_confirmation_test.dart test/settings/codex_path_settings_test.dart test/settings/codex_install_controls_test.dart test/customize test/bots test/chat/goal_panel_test.dart test/chat/streamed_words_test.dart test/claude_runtime_test.dart test/models/codex_test.dart test/models/codex_quota_format_test.dart test/update/update_service_test.dart test/link/chat_codec_test.dart test/ide/lsp/packs/lsp_settings_template_test.dart
+      - name: Test learning rail and render synthetic UI fixtures
+        run: flutter test test/learning --dart-define=BAOCODE_LEARNING_VISUALS=true
+      - name: Upload synthetic learning UI verification
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: BaoCode-Learning-Synthetic-UI
+          if-no-files-found: error
+          retention-days: 14
+          path: build/learning-visuals/*.png
       - name: Test Codex adapter integration
         if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
         run: flutter test test/kernel_test.dart --plain-name "Codex adapter"

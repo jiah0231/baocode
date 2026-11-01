@@ -3643,7 +3643,8 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       ChatCommandIds.attachSelection: _addSidePanelSelectionToChat,
     },
     for (final section in alwaysShownSections)
-      section.command!: () => _showSidePanelSection(section),
+      if (section.command != null)
+        section.command!: () => _showSidePanelSection(section),
   };
 
   /// The focus of the focused agent's side panel: its pane's, of agents
@@ -3692,6 +3693,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     required bool showToggle,
   }) => AgentSidePanelArea(
     panel: _sidePanel,
+    widthConversation: (_agentThread ?? _workspace.current)?.session,
     // Customize, in place of the conversations, isn't one of theirs.
     hidden: _sidePanelHidden || _replacingChat,
     // Just under the conversation's title bar, whose right has the
@@ -4761,6 +4763,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       },
       SidePanelSection.terminal ||
       SidePanelSection.usage ||
+      SidePanelSection.learning ||
       SidePanelSection.browser ||
       SidePanelSection.plan => null,
     };
