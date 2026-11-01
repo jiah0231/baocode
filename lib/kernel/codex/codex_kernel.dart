@@ -592,7 +592,7 @@ class CodexKernel
   List<McpServer>? get mcpServers => _servers;
 
   @override
-  bool get canFork => _threadId != null && _turn == null;
+  bool get canFork => _threadId != null || _sessionId != null;
 
   /// The project as its host spells it: `ssh://` locations are the
   /// server's paths there.
@@ -680,13 +680,22 @@ class CodexKernel
 
   @override
   void prepare() {
-    if (_disposed || _health.status == KernelHealthStatus.ready) return;
+    if (_disposed ||
+        (_health.status == KernelHealthStatus.ready &&
+            (_sessionId == null || _threadId != null))) {
+      return;
+    }
     unawaited(_ensureStarted().catchError((Object _) {}));
   }
 
   @override
   void release() {
-    if (_disposed || _turn != null || _starting != null) return;
+    if (_disposed ||
+        _turn != null ||
+        _starting != null ||
+        _threadStarting != null) {
+      return;
+    }
     _teardown();
     _released = true;
     _setHealth(KernelHealth.idle);
@@ -725,15 +734,41 @@ class CodexKernel
     _responses.clear();
   }
 
-  Future<void> _ensureStarted() {
+  Future<void> _ensureStarted({bool resume = true}) {
+    if (_starting case final starting?) {
+      return starting.then<void>((_) async {
+        if (resume && _sessionId != null && _threadId == null) {
+          await _resumeInitialized();
+        }
+      });
+    }
     if (_transport != null && _initialized && !_released) {
+      if (resume && _sessionId != null && _threadId == null) {
+        return _resumeInitialized();
+      }
       return Future.value();
     }
-    if (_starting case final starting?) return starting;
-    return _starting = _open().whenComplete(() => _starting = null);
+    return _starting = _open(resume: resume)
+        .whenComplete(() => _starting = null);
   }
 
-  Future<void> _open() async {
+  Future<void> _resumeInitialized() async {
+    try {
+      await _ensureThread();
+    } on Object catch (error) {
+      _teardown();
+      _setHealth(
+        KernelHealth(
+          KernelHealthStatus.failed,
+          message: 'Codex could not resume this conversation',
+          detail: '$error',
+        ),
+      );
+      rethrow;
+    }
+  }
+
+  Future<void> _open({required bool resume}) async {
     _released = false;
     // Off the caller's stack: a chat first built may be the one asking
     // (in its `initState`), and health reported before that build ends
@@ -780,7 +815,7 @@ class CodexKernel
       await _loadPrompts();
       // A new chat starts its thread with its first message, so no empty
       // one is kept for a chat the user only looked at.
-      if (_sessionId != null) await _resumeThread();
+      if (resume && _sessionId != null) await _resumeThread();
       if (_disposed || !identical(_transport, transport)) return;
       _setHealth(KernelHealth.ready);
     } on CodexFolderGone catch (error) {
@@ -1767,18 +1802,57 @@ class CodexKernel
 
   @override
   Future<SessionRecord?> fork({String? before, required String title}) async {
-    final threadId = _threadId;
-    if (threadId == null) return null;
+    if (!canFork) return null;
+    // Capture the boundary before any await: finishing (or starting the
+    // next queued turn) must not change what the user asked to copy.
+    final boundary = before ?? _turn;
+    final boundaryTurn = boundary == _turn ? _serverTurn : null;
     try {
-      await _ensureStarted();
-      final beforeTurn = before == null ? null : _turnOfItem[before];
+      // Initialize a cold history row's transport without resuming its
+      // source: merely copying it must not restart a persisted native goal.
+      // A view already opening it owns its in-flight resume; wait for that.
+      await (_starting ?? _ensureStarted(resume: false));
+      if (_threadStarting case final pending?) await pending;
+      final threadId = _threadId ?? _sessionId;
+      if (threadId == null) {
+        throw StateError('The source conversation could not be loaded.');
+      }
+      // A native goal can start a turn while resume is in flight. Exclude
+      // that too, even if ChatSession has no user message for its turn.
+      final cut = boundary ?? _turn;
+      final beforeTurn = cut == null
+          ? null
+          : _turnOfItem[cut] ??
+                boundaryTurn ??
+                (cut == _turn ? _serverTurn : null);
+      if (cut != null) {
+        if (beforeTurn == null) {
+          throw StateError(
+            'The active turn is still starting. Try Fork again once it has started; the original chat is unchanged.',
+          );
+        }
+        // Older servers may silently ignore unknown parameters. Only send
+        // a cutoff from the stable protocol baseline whose beforeTurnId
+        // semantics we verified; never copy a partial active turn instead.
+        if (!_supportsForkBoundary) {
+          throw StateError(
+            'Forking before an active turn requires stable Codex 0.166.0 or a newer compatible 0.x release. Wait for the reply to finish to copy the whole chat, or select a supported Codex version. The original chat is unchanged.',
+          );
+        }
+      }
       final result = await _request('thread/fork', {
         'threadId': threadId,
         'beforeTurnId': ?beforeTurn,
+        // A copied native goal must wait for the user's next message.
+        if (_supportsForkBoundary) 'deferGoalContinuation': true,
       });
       final thread = (result['thread'] as Map?)?.cast<String, Object?>();
       final id = thread?['id'] as String?;
-      if (id == null) return null;
+      if (id == null || id.isEmpty || id == threadId) {
+        throw StateError(
+          'Codex did not return a separate forked conversation.',
+        );
+      }
       await _name(id, title);
       return SessionRecord(
         id: id,
@@ -1797,6 +1871,14 @@ class CodexKernel
       );
       return null;
     }
+  }
+
+  bool get _supportsForkBoundary {
+    final agent = _serverUserAgent;
+    if (agent == null) return false;
+    final version = RegExp(r'^[A-Za-z0-9_.-]+/0\.(\d+)\.\d+(?:\s|$)')
+        .firstMatch(agent);
+    return version != null && int.parse(version[1]!) >= 166;
   }
 
   @override
@@ -2206,7 +2288,8 @@ class CodexKernel
 
   void _notification(String method, Map<String, Object?> params) {
     final threadId = params['threadId'];
-    if (threadId is String && _threadId != null && threadId != _threadId) {
+    final sourceId = _threadId ?? _sessionId;
+    if (threadId is String && sourceId != null && threadId != sourceId) {
       return;
     }
     if (_goals.notification(method, params)) return;
@@ -2225,6 +2308,9 @@ class CodexKernel
           _beginTurn('codex:$nativeId');
         }
         _serverTurn = nativeId is String ? nativeId : null;
+        if (nativeId is String) {
+          if (_turn case final local?) _turnOfItem[local] = nativeId;
+        }
       case 'turn/completed':
         if (_turn case final ours?) {
           final turn = (params['turn'] as Map?)?.cast<String, Object?>();
@@ -2611,6 +2697,20 @@ class CodexKernel
       );
       return;
     }
+    final source = _threadId ?? _sessionId;
+    final requestedThread = params['threadId'];
+    if (requestedThread is String &&
+        source != null &&
+        requestedThread != source) {
+      _transport?.write({
+        'id': rpcId,
+        'error': {
+          'code': -32602,
+          'message': 'This request belongs to a different conversation.',
+        },
+      });
+      return;
+    }
     if (_restrictedWorkspace) {
       // A bot cannot grant native execution/filesystem/network access or
       // answer MCP prompts. Its gated BaoCode tools are handled above.
@@ -2866,7 +2966,8 @@ class CodexKernel
         final actions = item['commandActions'] as List? ?? const [];
         _commandOutput[id] = CodexCommandOutput(
           onChanged: () => _publishCommand(id),
-          search: actions.isNotEmpty &&
+          search:
+              actions.isNotEmpty &&
               actions.every((a) => a is Map && a['type'] == 'search'),
         );
         emit(ItemUpserted(nextSeq, id, _commandItem(item, done: false)));
@@ -2997,8 +3098,10 @@ class CodexKernel
     final replay = Object();
     final transport = _transport;
     _historyReplay = replay;
-    bool current() => !_disposed &&
-        identical(transport, _transport) && identical(_historyReplay, replay);
+    bool current() =>
+        !_disposed &&
+        identical(transport, _transport) &&
+        identical(_historyReplay, replay);
     _loadingHistory = true;
     emitInfoChanged();
     try {
@@ -3124,8 +3227,7 @@ class CodexKernel
         if (action is Map) action.cast<String, Object?>(),
     ];
     final output =
-        item['aggregatedOutput'] as String? ??
-        _commandOutput[item['id']]?.text;
+        item['aggregatedOutput'] as String? ?? _commandOutput[item['id']]?.text;
     final completed =
         done || item['status'] == 'completed' || item['status'] == 'failed';
     if (actions.isNotEmpty && actions.every((a) => a['type'] == 'read')) {
@@ -3138,10 +3240,12 @@ class CodexKernel
       );
     }
     if (actions.isNotEmpty && actions.every((a) => a['type'] == 'search')) {
-      final matches = searchMatches ?? [
-        for (final line in (output ?? '').split('\n'))
-          if (line.isNotEmpty) line.split(':').take(2).join(':'),
-      ];
+      final matches =
+          searchMatches ??
+          [
+            for (final line in (output ?? '').split('\n'))
+              if (line.isNotEmpty) line.split(':').take(2).join(':'),
+          ];
       return ToolCallItem(
         kind: ToolKind.grep,
         target: actions.first['query'] as String? ?? '',

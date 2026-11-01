@@ -34,6 +34,9 @@ jobs:
       - name: Test Codex adapter integration
         if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
         run: flutter test test/kernel_test.dart --plain-name "Codex adapter"
+      - name: Test conversation fork parity
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
+        run: flutter test test/codex_fork_test.dart
       - name: Verify official Codex package and offline app-server APIs
         if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
         env:

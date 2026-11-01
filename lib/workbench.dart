@@ -2428,8 +2428,9 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// [folder], as the sidebar's Fork does.
   Future<void> _forkIdeChat(String folder, AgentThread thread) async {
     final forked = await _workspace.fork(thread);
-    if (forked == null || !mounted) return;
-    _openIdeChat(folder, forked);
+    if (!mounted) return;
+    // Make the source's error notice visible when a history fork failed.
+    _openIdeChat(folder, forked ?? thread);
   }
 
   /// Deletes [thread]'s conversation once confirmed, as the sidebar's

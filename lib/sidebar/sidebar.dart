@@ -1846,7 +1846,9 @@ class _SidebarState extends State<Sidebar>
       onArchive: () => _workspace.setArchived(thread, !thread.archived),
       onFork: () => unawaited(
         _workspace.fork(thread).then((forked) {
-          if (forked != null && mounted) _open(forked);
+          // Failures are reported in the source conversation, which may
+          // have been a closed history row when Fork was selected.
+          if (mounted) _open(forked ?? thread);
         }),
       ),
       onDelete: () => unawaited(_confirmDelete([thread])),
