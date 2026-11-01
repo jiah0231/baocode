@@ -9,6 +9,7 @@ import '../../ide/ide_menu.dart';
 import '../../ide/ide_notifications.dart' show IdeSeverity;
 import '../../kernel/claude_code/claude_core_setting.dart';
 import '../../kernel/claude_code/claude_path_setting.dart';
+import '../../kernel/codex/codex_path_setting.dart';
 import '../../kernel/commit_attribution.dart';
 import '../../kernel/prompt_suggestions.dart';
 import '../../chat/composer/composer_polish.dart' show ComposerPolishSetting;
@@ -47,6 +48,7 @@ class GeneralSettingsPage extends StatelessWidget {
     this.settings,
     this.tips,
     this.claudeStatus,
+    this.codexStatus,
   });
 
   /// settings.json; none under test, where choices are not kept.
@@ -55,6 +57,9 @@ class GeneralSettingsPage extends StatelessWidget {
   /// The Claude Code that runs now ([localClaudeStatus]); none under
   /// test and on the web, where the path is not shown.
   final Future<LocalClaudeStatus?> Function()? claudeStatus;
+
+  /// The local Codex CLI; remote hosts resolve their own executable.
+  final Future<LocalCodexStatus?> Function()? codexStatus;
 
   /// The feature tips: those not on yet are listed first.
   final FeatureTipsController? tips;
@@ -420,6 +425,26 @@ class GeneralSettingsPage extends StatelessWidget {
                   ),
                 ],
               ),
+            if (codexStatus case final codexStatus? when !kIsWeb)
+              SettingsGroup(
+                title: 'Codex',
+                children: [
+                  SettingsCard(
+                    children: [
+                      _CodexPathSetting(
+                        path: CodexPathSetting.parse(
+                          settings?[CodexPathSetting.settingKey],
+                        ),
+                        status: codexStatus,
+                        onChanged: (path) => _write(
+                          CodexPathSetting.settingKey,
+                          CodexPathSetting.parse(path),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             SettingsGroup(
               title: l10n.generalSettingsWindows,
               children: _windowRows(context),
@@ -742,6 +767,86 @@ class _ClaudePathSettingState extends State<_ClaudePathSetting> {
         value: widget.path ?? '',
         hint: l10n.claudePathSettingHint,
         semanticLabel: 'Claude Code ${l10n.claudePathSetting}',
+        width: 260,
+        onSubmitted: widget.onChanged,
+      ),
+    );
+  }
+}
+
+/// The local CLI override, independently of Claude Code or any SSH host.
+class _CodexPathSetting extends StatefulWidget {
+  const _CodexPathSetting({
+    required this.path,
+    required this.status,
+    required this.onChanged,
+  });
+
+  final String? path;
+  final Future<LocalCodexStatus?> Function() status;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_CodexPathSetting> createState() => _CodexPathSettingState();
+}
+
+class _CodexPathSettingState extends State<_CodexPathSetting> {
+  late Future<LocalCodexStatus?> _status = widget.status();
+
+  @override
+  void didUpdateWidget(_CodexPathSetting old) {
+    super.didUpdateWidget(old);
+    if (old.path != widget.path) _status = widget.status();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return SettingsRow(
+      label: l10n.claudePathSetting,
+      description: l10n.codexPathSettingDescription,
+      below: [
+        FutureBuilder<LocalCodexStatus?>(
+          future: _status,
+          builder: (context, snapshot) {
+            final (text, failed) = switch (snapshot.data) {
+              _ when snapshot.connectionState != ConnectionState.done => (
+                l10n.claudePathChecking,
+                false,
+              ),
+              _ when snapshot.hasError => ('${snapshot.error}', true),
+              LocalCodexFound(:final path, :final version?) => (
+                l10n.claudePathInUse(path, version),
+                false,
+              ),
+              LocalCodexFound(:final path) => (
+                l10n.claudePathInUseUnknown(path),
+                false,
+              ),
+              LocalCodexMissing() => (l10n.codexPathMissing, false),
+              LocalCodexFailed(:final message) => (message, true),
+              null => ('', false),
+            };
+            return SelectableText(
+              text,
+              style: failed
+                  ? SettingsText.path.copyWith(
+                      color: themeColors['errorForeground'],
+                    )
+                  : SettingsText.path,
+            );
+          },
+        ),
+        IdeButton(
+          label: l10n.codexPathRefresh,
+          secondary: true,
+          onPressed: () => setState(() => _status = widget.status()),
+        ),
+      ],
+      trailing: SettingsTextField(
+        value: widget.path ?? '',
+        hint: l10n.claudePathSettingHint,
+        semanticLabel: 'Codex ${l10n.claudePathSetting}',
         width: 260,
         onSubmitted: widget.onChanged,
       ),

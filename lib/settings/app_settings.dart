@@ -8,6 +8,7 @@ import '../diagnostics/diagnostics_upload.dart';
 import '../forge/forge_accounts.dart';
 import '../customize/customization_store.dart';
 import '../kernel/claude_code/claude_path_setting.dart';
+import '../kernel/codex/codex_path_setting.dart';
 import '../keybindings/import_dialog.dart';
 import '../keybindings/keybinding_service.dart';
 import '../keybindings/keybindings_editing.dart';
@@ -63,6 +64,7 @@ class AppSettings {
     this.diagnostics,
     this.workspace,
     this.claudeStatus,
+    this.codexStatus,
     this.link,
     this.customizations,
   }) : keybindings = keybindings ?? KeybindingService.instance;
@@ -100,6 +102,9 @@ class AppSettings {
   /// The Claude Code that runs on this machine, for Settings → General;
   /// none under test, where it is not looked for.
   final Future<LocalClaudeStatus?> Function()? claudeStatus;
+
+  /// The local Codex executable; never the executable on an SSH host.
+  final Future<LocalCodexStatus?> Function()? codexStatus;
 
   /// Claude Code's customizations, for Settings → Customize; none where
   /// there are no files (the web), the page made over the default store.
@@ -152,6 +157,7 @@ class AppSettings {
           settings: files?.settings,
           tips: tips,
           claudeStatus: claudeStatus,
+          codexStatus: codexStatus,
         );
       case SettingsSection.appearance:
         final themes = WorkbenchThemeService.instance;

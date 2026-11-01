@@ -3551,5 +3551,8 @@
   "mobilePublicAddress": "公网地址",
   "mobilePublicAddressDescription": "可从公网访问这台电脑的域名或 IP（需转发端口），会写入二维码；多个用逗号分隔。经只收 HTTPS 的代理（如 Cloudflare Tunnel）访问时，写成 wss://域名。公网 IPv6 地址会自动加入。",
   "mobileRelayUnavailable": "暂不可用",
-  "mobileStatusListening": "正在监听端口 {port}"
+  "mobileStatusListening": "正在监听端口 {port}",
+  "codexPathSettingDescription": "本机 Codex CLI 的绝对路径（Windows 为 codex.exe 或 codex.cmd）。留空则从 PATH 查找。对新的本机会话和历史查询生效，不影响 SSH 主机；不会自动下载。（codex.path）",
+  "codexPathMissing": "未找到 Codex。请运行 npm install -g @openai/codex 安装，或在上方填写可执行文件路径。",
+  "codexPathRefresh": "重新检查"
 }

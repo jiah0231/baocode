@@ -22,8 +22,10 @@ import '../claude_code/claude_elicitation.dart';
 import '../kernel_event.dart';
 import '../kernel_types.dart';
 import '../prompt_suggestions.dart';
+import 'codex_output_meter.dart';
 import 'codex_process_transport.dart';
 import 'codex_transport.dart';
+import 'codex_skills.dart';
 
 /// Adapts `codex app-server` to [AgentKernel].
 ///
@@ -310,8 +312,17 @@ class CodexKernel
     ),
   ];
 
+  List<CodexSkill> _skills = const [];
+  int _skillsLoad = 0;
+
   @override
-  final List<KernelCommand> commands = const [
+  List<KernelCommand> get commands => [
+    ..._builtInCommands,
+    for (final skill in _skills)
+      KernelCommand(skill.name, skill.description, Icons.auto_awesome_outlined),
+  ];
+
+  static const _builtInCommands = [
     KernelCommand(
       'review',
       'Review uncommitted changes',
@@ -324,6 +335,31 @@ class CodexKernel
     ),
     KernelCommand('diff', 'Show the git diff', Icons.difference_outlined),
   ];
+
+  Future<void> _loadSkills({bool forceReload = false}) async {
+    final cwd = _projectPath;
+    final generation = ++_skillsLoad;
+    final transport = _transport;
+    try {
+      final result = await _request('skills/list', {
+        'cwds': [if (cwd != null) cwd],
+        'forceReload': forceReload,
+      });
+      if (_disposed || generation != _skillsLoad || transport != _transport) {
+        return;
+      }
+      _skills = CodexSkill.fromResponse(result, cwd: cwd, paths: _host.paths);
+      emitInfoChanged();
+    } on Object {
+      // Older app-servers may not support skills. Their built-in commands
+      // still work, and a failed refresh must not leave stale paths active.
+      if (_disposed || generation != _skillsLoad || transport != _transport) {
+        return;
+      }
+      _skills = const [];
+      if (!_disposed) emitInfoChanged();
+    }
+  }
 
   /// What a command the CLI would take turns into for the model.
   static String _prompt(String text) {
@@ -373,6 +409,10 @@ class CodexKernel
   String? _turn;
   String? _serverTurn;
   DateTime? _turnStarted;
+  final CodexOutputMeter _output = CodexOutputMeter();
+  DateTime? _outputReported;
+  KernelActivity? _activity;
+  final Map<String, String> _liveItems = {};
   final Set<String> _sentTurns = {};
   final List<String> _queue = [];
   final Map<String, KernelTurn> _turns = {};
@@ -587,6 +627,7 @@ class CodexKernel
       });
       _initialized = true;
       await _loadModels();
+      await _loadSkills();
       // A new chat starts its thread with its first message, so no empty
       // one is kept for a chat the user only looked at.
       if (_sessionId != null) await _resumeThread();
@@ -1188,7 +1229,11 @@ class CodexKernel
     _serverTurn = null;
     _turnStarted = DateTime.now();
     if (!_turnsRun.contains(id)) _turnsRun.add(id);
+    _output.begin();
+    _outputReported = null;
+    _liveItems.clear();
     emit(TurnStarted(nextSeq, id));
+    _reportActivity(KernelActivityKind.waiting);
   }
 
   Future<void> _run(KernelTurn turn) async {
@@ -1264,6 +1309,7 @@ class CodexKernel
       },
     ],
     for (final note in turn.notes) {'type': 'text', 'text': note},
+    if (CodexSkill.invoked(turn.text, _skills) case final skill?) skill.input,
     if (turn.text.isNotEmpty) {'type': 'text', 'text': _prompt(turn.text)},
   ];
 
@@ -1332,6 +1378,7 @@ class CodexKernel
     if (_asks.remove(requestId) case final ask?) {
       emit(InteractionResolved(nextSeq, requestId));
       _transport?.write({'id': ask.rpcId, 'result': ask.result(answer)});
+      _refreshActivity();
       return;
     }
     if (!_approvals.containsKey(requestId)) return;
@@ -1347,6 +1394,7 @@ class CodexKernel
       'id': rpcId,
       'result': {'decision': decision},
     });
+    _refreshActivity();
   }
 
   // --- Queue -----------------------------------------------------------------
@@ -1915,6 +1963,14 @@ class CodexKernel
   }
 
   void _notification(String method, Map<String, Object?> params) {
+    final threadId = params['threadId'];
+    if (threadId is String && _threadId != null && threadId != _threadId) {
+      return;
+    }
+    final turnId = params['turnId'];
+    if (turnId is String && _serverTurn != null && turnId != _serverTurn) {
+      return;
+    }
     switch (method) {
       case 'turn/started':
         final turn = (params['turn'] as Map?)?.cast<String, Object?>();
@@ -1954,6 +2010,12 @@ class CodexKernel
         final id = params['itemId'] as String?;
         final delta = params['delta'] as String?;
         if (id == null || delta == null) return;
+        _reportActivity(null);
+        if (_turn != null) {
+          _liveItems.putIfAbsent(id, () => 'agentMessage');
+          _output.text(id, delta);
+          _reportOutput();
+        }
         final offset = _textLength[id];
         if (offset == null) {
           // Said without starting first.
@@ -2002,6 +2064,8 @@ class CodexKernel
           emit(SessionRenamed(nextSeq, name));
         }
       case 'thread/compacted':
+        _liveItems.removeWhere((_, type) => type == 'contextCompaction');
+        _refreshActivity();
         emit(
           ItemUpserted(
             nextSeq,
@@ -2012,6 +2076,8 @@ class CodexKernel
             ),
           ),
         );
+      case 'skills/changed':
+        unawaited(_loadSkills(forceReload: true));
       case 'mcpServer/startupStatus/updated':
         _mcpStatus(params);
       case 'mcpServer/oauthLogin/completed':
@@ -2082,12 +2148,14 @@ class CodexKernel
       emit(InteractionResolved(nextSeq, id));
       return true;
     });
+    _refreshActivity();
   }
 
   void _reasoningDelta(Map<String, Object?> params) {
     final id = params['itemId'] as String?;
     final delta = params['delta'] as String?;
     if (id == null || delta == null) return;
+    _reportActivity(null);
     final buffer = _reasoning[id] ?? _startThought(id);
     final offset = buffer.length;
     buffer.write(delta);
@@ -2096,6 +2164,10 @@ class CodexKernel
 
   /// A thought said without starting first: its row, and its text to come.
   StringBuffer _startThought(String id) {
+    if (_turn != null) {
+      _liveItems.putIfAbsent(id, () => 'reasoning');
+      _reportActivity(null);
+    }
     final buffer = StringBuffer();
     _reasoning[id] = buffer;
     _reasoningClock[id] = Stopwatch()..start();
@@ -2145,6 +2217,21 @@ class CodexKernel
         (usage['modelContextWindow'] as num?)?.toInt() ?? _contextWindow;
     final last = (usage['last'] as Map?)?.cast<String, Object?>();
     final used = (last?['totalTokens'] as num?)?.toInt();
+    final totals = (usage['total'] as Map?)?.cast<String, Object?>();
+    final threadId = params['threadId'] as String?;
+    if (threadId != null && _threadId != null && threadId != _threadId) {
+      return;
+    }
+    final turnId = params['turnId'] as String?;
+    if (turnId != null && _serverTurn != null && turnId != _serverTurn) {
+      return;
+    }
+    _output.usage(
+      totals ?? const {},
+      last ?? const {},
+      inTurn: _turn != null && _serverTurn != null,
+    );
+    if (_turn != null) _reportOutput(force: true);
     if (used == null) return;
     _contextWindow = window;
     final total = (usage['total'] as Map?)?.cast<String, Object?>();
@@ -2260,6 +2347,7 @@ class CodexKernel
           'error': {'code': -32601, 'message': 'Not supported by BaoCode'},
         });
     }
+    if (_approvals.isNotEmpty || _asks.isNotEmpty) _reportActivity(null);
   }
 
   void _approval(
@@ -2449,6 +2537,12 @@ class CodexKernel
     final id = item['id'] as String?;
     if (id == null) return;
     if (turnId != null) _turnOfItem[id] = turnId;
+    final type = item['type'];
+    if (_turn != null && type is String && type != 'userMessage') {
+      _liveItems[id] = type;
+      _refreshActivity();
+      if (type == 'agentMessage') _output.startText(id);
+    }
     switch (item['type']) {
       case 'userMessage':
         // Sent by this app already (the turn's own id).
@@ -2492,6 +2586,14 @@ class CodexKernel
     final id = item['id'] as String?;
     if (id == null) return;
     if (turnId != null) _turnOfItem[id] = turnId;
+    _liveItems.remove(id);
+    if (_turn != null) {
+      if (item['type'] == 'agentMessage') {
+        _output.endText(id, item['text'] as String? ?? '');
+        _reportOutput(force: true);
+      }
+      _refreshActivity();
+    }
     switch (item['type']) {
       case 'userMessage':
         // Sent by this app already, under the turn's own id.
@@ -2984,11 +3086,46 @@ class CodexKernel
     );
   }
 
+  /// These states describe work hidden from the transcript. Tool/reasoning
+  /// cards already show their own activity; a compaction notice does not
+  /// show whether compaction is still running.
+  void _refreshActivity() {
+    if (_turn == null || _approvals.isNotEmpty || _asks.isNotEmpty) {
+      _reportActivity(null);
+    } else if (_liveItems.containsValue('contextCompaction')) {
+      _reportActivity(KernelActivityKind.compacting);
+    } else {
+      _reportActivity(_liveItems.isEmpty ? KernelActivityKind.waiting : null);
+    }
+  }
+
+  void _reportActivity(KernelActivityKind? kind) {
+    if (_activity?.kind == kind) return;
+    _activity = kind == null ? null : KernelActivity(kind, DateTime.now());
+    emit(ActivityReported(nextSeq, _activity));
+  }
+
+  void _reportOutput({bool force = false}) {
+    if (_turn == null) return;
+    final now = DateTime.now();
+    final previous = _outputReported;
+    if (!force &&
+        previous != null &&
+        now.difference(previous) < const Duration(milliseconds: 100))
+      return;
+    _outputReported = now;
+    emit(OutputReported(nextSeq, _output.output));
+  }
+
   void _endTurn(String turn, {required bool interrupted}) {
     // Ended once: a late word of the server about it changes nothing.
     if (_turn != turn) return;
+    final usage = _output.finish();
+    _reportOutput(force: true);
     _turn = null;
     _serverTurn = null;
+    _liveItems.clear();
+    _reportActivity(null);
     final began = _turnStarted;
     _turnStarted = null;
     for (final id in [..._reasoning.keys]) {
@@ -3030,6 +3167,7 @@ class CodexKernel
         turn,
         interrupted: interrupted,
         worked: began == null ? null : DateTime.now().difference(began),
+        usage: usage,
       ),
     );
     _takeQueued();

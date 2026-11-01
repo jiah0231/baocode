@@ -13060,4 +13060,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String mobileStatusListening(int port) {
     return 'Listening on port $port';
   }
+
+  @override
+  String get codexPathSettingDescription =>
+      'Absolute path to the local Codex CLI (codex.exe or codex.cmd on Windows). Leave empty to find it on PATH. Applies to new local sessions and history requests, not SSH hosts. Nothing is downloaded automatically. (codex.path)';
+
+  @override
+  String get codexPathMissing =>
+      'Codex was not found. Install it with npm install -g @openai/codex, or choose its executable above.';
+
+  @override
+  String get codexPathRefresh => 'Check again';
 }

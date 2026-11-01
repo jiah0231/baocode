@@ -53,6 +53,7 @@ import 'kernel/claude_code/claude_code_kernel.dart';
 import 'kernel/claude_code/claude_core_setting.dart';
 import 'kernel/claude_code/claude_onboarding.dart';
 import 'kernel/claude_code/claude_path_setting.dart';
+import 'kernel/codex/codex_path_setting.dart';
 import 'kernel/claude_code/process_transport.dart';
 import 'kernel/codex/codex_kernel.dart';
 import 'kernel/claude_code/turn_stats_stub.dart'
@@ -399,6 +400,7 @@ Future<void> main(List<String> arguments) async {
       diagnostics: DiagnosticsUploader.platform(),
       workspace: workspace,
       claudeStatus: localClaudeStatus,
+      codexStatus: localCodexStatus,
       link: link,
       customizations: customizations,
     );
@@ -510,8 +512,9 @@ void followSettingsFiles(SettingsFiles files) {
       }
     }
   };
-  // Settings → General → Claude Code: the build to run, read as each
-  // agent starts.
+  // Settings → General: local CLI overrides, read as each agent starts.
+  CodexPathSetting.current = () =>
+      CodexPathSetting.parse(files.settings[CodexPathSetting.settingKey]);
   ClaudePathSetting.current = () =>
       ClaudePathSetting.parse(files.settings[ClaudePathSetting.settingKey]);
   // Settings → General → Claude Code: the core sessions run on (BaoCode's

@@ -203,6 +203,10 @@ class UpdateService extends ChangeNotifier {
     Uri? manifestUrl,
     UpdateMode Function()? mode,
     this.settingsChanges,
+    this.updatesEnabled = const bool.fromEnvironment(
+      'BAOCODE_UPDATES_ENABLED',
+      defaultValue: true,
+    ),
     UpdateStore? store,
     DateTime Function()? now,
     this.firstCheckDelay = const Duration(seconds: 10),
@@ -235,7 +239,11 @@ class UpdateService extends ChangeNotifier {
 
   UpdateMode get mode => _mode();
 
-  bool get supported => platform != null;
+  /// Custom builds can opt out of upstream replacement at build time.
+  /// This overrides saved user settings without changing those settings.
+  final bool updatesEnabled;
+
+  bool get supported => updatesEnabled && platform != null;
 
   UpdateStatus _status = UpdateStatus.idle;
   UpdateStatus get status => _status;

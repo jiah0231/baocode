@@ -9,7 +9,10 @@ import 'codex_transport.dart';
 /// `codex app-server`: no process stays up for the list. A remote project's
 /// are read on its host, where Codex keeps them.
 class CodexCatalog implements SessionCatalog {
-  const CodexCatalog();
+  const CodexCatalog({this.startServer = startCodexCatalogServerFor});
+
+  /// Injectable for catalog tests; production uses the local or SSH host.
+  final Future<CodexTransport> Function(String? location) startServer;
 
   /// Where each session listed was found, to delete it there.
   static final Map<String, String> _locationOf = {};
@@ -71,7 +74,9 @@ class CodexCatalog implements SessionCatalog {
   }) async {
     final sessions = <SessionRecord>[];
     String? cursor;
-    for (var page = 0; page < 20; page++) {
+    final cursors = <String>{};
+    final ids = <String>{};
+    while (true) {
       final result = await server.request('thread/list', {
         if (cwd != null) 'cwd': cwd,
         // Every provider's, not the default one's alone: a thread on one
@@ -87,7 +92,7 @@ class CodexCatalog implements SessionCatalog {
         // other apps' in the same list, which are not this app's history.
         if (raw['originator'] != 'baocode') continue;
         final id = raw['id'] as String?;
-        if (id == null) continue;
+        if (id == null || !ids.add(id)) continue;
         // What its host keeps it under, as a location.
         final at = raw['cwd'] as String? ?? cwd ?? '';
         sessions.add(
@@ -103,7 +108,7 @@ class CodexCatalog implements SessionCatalog {
         );
       }
       final next = result['nextCursor'] as String?;
-      if (next == null || next.isEmpty || next == cursor) break;
+      if (next == null || next.isEmpty || !cursors.add(next)) break;
       cursor = next;
     }
     return sessions;
@@ -131,14 +136,14 @@ class CodexCatalog implements SessionCatalog {
         : DateTime.fromMillisecondsSinceEpoch(value);
   }
 
-  static Future<T> _withServer<T>(
+  Future<T> _withServer<T>(
     String? location,
     Future<T> Function(_Server server) body,
     T empty,
   ) async {
     final CodexTransport transport;
     try {
-      transport = await startCodexCatalogServerFor(location);
+      transport = await startServer(location);
     } on CodexUnavailable {
       // Nothing to list where Codex cannot run (the web).
       return empty;

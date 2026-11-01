@@ -2,6 +2,8 @@
 // Inno Setup makes of it. Run from anywhere in the repository:
 //
 //   dart run tool/build_windows.dart                build, then package
+//   dart run tool/build_windows.dart --no-updates   disable upstream updates
+//                                                  for a custom build
 //   dart run tool/build_windows.dart --skip-build   package what is built
 //   dart run tool/build_windows.dart --remote-built take the remote server
 //                                                  already in build\remote\
@@ -122,6 +124,12 @@ Future<void> main(List<String> arguments) async {
     );
   }
   final skipBuild = arguments.contains('--skip-build');
+  final noUpdates = arguments.contains('--no-updates');
+  if (skipBuild && noUpdates) {
+    _fail(
+      '--no-updates needs a fresh build; it cannot change an existing bundle.',
+    );
+  }
   final remoteBuilt = arguments.contains('--remote-built');
   final releaseAt = arguments.indexOf('--remote-release');
   final remoteRelease = releaseAt < 0
@@ -164,6 +172,7 @@ Future<void> main(List<String> arguments) async {
       'windows',
       '--release',
       if (channel) '--dart-define=BAOCODE_CHANNEL=true',
+      if (noUpdates) '--dart-define=BAOCODE_UPDATES_ENABLED=false',
       // Not --split-debug-info, which would also leave the app's stack
       // traces (errors.log) unnamed, as offsets.
       '--extra-gen-snapshot-options=--save-debugging-info='

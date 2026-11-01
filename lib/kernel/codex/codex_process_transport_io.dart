@@ -10,6 +10,7 @@ import '../../network/network_proxy_io.dart';
 import '../../platform/child_process_registry.dart';
 import '../../platform/data_dir.dart';
 import 'codex_transport.dart';
+import 'codex_path_setting.dart';
 
 /// `codex app-server` as a child process, over its stdin and stdout.
 class CodexProcessTransport implements CodexTransport {
@@ -89,13 +90,16 @@ class CodexProcessTransport implements CodexTransport {
       throw CodexFolderGone(launch.cwd);
     }
     final environment = await ClaudeEnvironment.of();
-    final executable = await _locate(environment);
+    final executable = await locateExecutable(
+      environment,
+      configuredPath: CodexPathSetting.current(),
+    );
     if (executable == null) {
       throw const CodexUnavailable(
         'Codex is not installed',
         detail:
             'Install it with `npm install -g @openai/codex`, then try '
-            'again.',
+            'again, or choose its executable in Settings → General → Codex.',
       );
     }
     final proxy = await NetworkProxy.instance.environment();
@@ -123,7 +127,26 @@ class CodexProcessTransport implements CodexTransport {
 
   /// `codex` on the login shell's PATH, else where it is commonly
   /// installed; null when none is found.
-  static Future<String?> _locate(Map<String, String> environment) async {
+  @visibleForTesting
+  static Future<String?> locateExecutable(
+    Map<String, String> environment, {
+    String? configuredPath,
+  }) async {
+    if (CodexPathSetting.parse(configuredPath) case final configured?) {
+      final home = environment['USERPROFILE'] ?? environment['HOME'] ?? '';
+      final path = configured.startsWith('~/') || configured.startsWith(r'~\')
+          ? p.normalize('$home${configured.substring(1)}')
+          : configured;
+      if (!p.isAbsolute(path) || !File(path).existsSync()) {
+        throw CodexUnavailable(
+          'The configured Codex executable was not found',
+          detail:
+              '$path\nChoose an existing absolute file path in Settings → '
+              'General → Codex, or clear the setting to use PATH.',
+        );
+      }
+      return path;
+    }
     if (Platform.isWindows) {
       // `where` knows PATHEXT: the npm shim is `codex.cmd`.
       try {
@@ -170,6 +193,52 @@ class CodexProcessTransport implements CodexTransport {
       if (seen.add(path) && File(path).existsSync()) return path;
     }
     return null;
+  }
+
+  /// Inspect the same executable local sessions use. Never install anything.
+  static Future<LocalCodexStatus?> status() async {
+    try {
+      final environment = await ClaudeEnvironment.of();
+      final executable = await locateExecutable(
+        environment,
+        configuredPath: CodexPathSetting.current(),
+      );
+      if (executable == null) return const LocalCodexMissing();
+      final process = await Process.start(
+        executable,
+        const ['--version'],
+        environment: environment,
+        includeParentEnvironment: Platform.isWindows,
+        runInShell: Platform.isWindows,
+      );
+      final output = process.stdout.transform(_decoder).join();
+      final errors = process.stderr.transform(_decoder).join();
+      try {
+        final results = await Future.wait<Object>([
+          process.exitCode,
+          output,
+          errors,
+        ]).timeout(const Duration(seconds: 5));
+        final code = results[0] as int;
+        final text = (results[1] as String).trim();
+        final error = (results[2] as String).trim();
+        if (code != 0) {
+          return LocalCodexFailed(
+            '$executable\n${error.isEmpty ? text : error}',
+          );
+        }
+        return LocalCodexFound(executable, text.isEmpty ? null : text);
+      } on TimeoutException {
+        process.kill(ProcessSignal.sigkill);
+        return LocalCodexFailed('$executable\nVersion check timed out.');
+      }
+    } on CodexUnavailable catch (error) {
+      return LocalCodexFailed(error.detail ?? error.message);
+    } on ProcessException catch (error) {
+      return LocalCodexFailed(error.message);
+    } on FileSystemException catch (error) {
+      return LocalCodexFailed(error.message);
+    }
   }
 
   final Process _process;

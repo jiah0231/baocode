@@ -9663,6 +9663,15 @@ abstract class AppLocalizations {
   /// **'Path'**
   String get claudePathSetting;
 
+  /// Local Codex CLI settings.
+  String get codexPathSettingDescription;
+
+  /// Local Codex CLI settings.
+  String get codexPathMissing;
+
+  /// Local Codex CLI settings.
+  String get codexPathRefresh;
+
   /// No description provided for @claudePathSettingDescription.
   ///
   /// In en, this message translates to:

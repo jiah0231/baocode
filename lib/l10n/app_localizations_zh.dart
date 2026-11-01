@@ -12380,4 +12380,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String mobileStatusListening(int port) {
     return '正在监听端口 $port';
   }
+
+  @override
+  String get codexPathSettingDescription =>
+      '本机 Codex CLI 的绝对路径（Windows 为 codex.exe 或 codex.cmd）。留空则从 PATH 查找。对新的本机会话和历史查询生效，不影响 SSH 主机；不会自动下载。（codex.path）';
+
+  @override
+  String get codexPathMissing =>
+      '未找到 Codex。请运行 npm install -g @openai/codex 安装，或在上方填写可执行文件路径。';
+
+  @override
+  String get codexPathRefresh => '重新检查';
 }

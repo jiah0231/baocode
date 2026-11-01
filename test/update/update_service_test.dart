@@ -21,6 +21,25 @@ void main() {
   });
 
   group('UpdateService', () {
+    test('custom builds cannot fetch upstream updates', () async {
+      final backend = FakeBackend(manifestOf('9.0.0+1'));
+      final service = UpdateService(
+        current: AppVersion.parse('1.0.0+1'),
+        platform: 'windows-x64',
+        backend: backend,
+        installer: FakeInstaller(),
+        updatesEnabled: false,
+        firstCheckDelay: Duration.zero,
+      );
+      addTearDown(service.dispose);
+      service.start();
+      await pumpEventQueue();
+      expect(service.supported, isFalse);
+      expect(await service.check(manual: true), isA<UpdatesUnsupported>());
+      expect(backend.fetches, 0);
+      expect(backend.cleanedUp, isEmpty);
+    });
+
     test('finds a newer version for its platform', () async {
       final backend = FakeBackend(manifestOf('1.2.0+12'));
       final store = MemoryUpdateStore();

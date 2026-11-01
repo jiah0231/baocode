@@ -5967,6 +5967,164 @@ exec /usr/bin/env "\$@"
     void notify(String method, Map<String, Object?> params) =>
         server.push({'method': method, 'params': params});
 
+    test('lists enabled Codex skills and sends a typed skill input', () async {
+      server.skills = {
+        'data': [
+          {
+            'cwd': '/project',
+            'skills': [
+              {
+                'name': 'docs',
+                'description': 'Documentation',
+                'path': '/project/.agents/skills/docs/SKILL.md',
+                'enabled': true,
+              },
+            ],
+          },
+        ],
+      };
+      kernel.send(
+        const KernelTurn(id: 'skill-turn', text: '/docs update docs'),
+      );
+      await pumpEventQueue();
+      expect(kernel.commands.map((c) => c.name), contains('docs'));
+      final params =
+          server.written.firstWhere(
+                (m) => m['method'] == 'turn/start',
+              )['params']
+              as Map;
+      expect(
+        params['input'],
+        contains({
+          'type': 'skill',
+          'name': 'docs',
+          'path': '/project/.agents/skills/docs/SKILL.md',
+        }),
+      );
+      server.skills = {};
+      notify('skills/changed', {});
+      await pumpEventQueue();
+      expect(kernel.commands.map((c) => c.name), isNot(contains('docs')));
+      final refresh = server.written.lastWhere(
+        (m) => m['method'] == 'skills/list',
+      );
+      expect((refresh['params'] as Map)['forceReload'], isTrue);
+    });
+
+    test(
+      'reports Codex output and hidden activity through turn lifecycle',
+      () async {
+        kernel.send(const KernelTurn(id: 'meter', text: 'hi'));
+        await pumpEventQueue();
+        expect(
+          events.whereType<ActivityReported>().last.activity?.kind,
+          KernelActivityKind.waiting,
+        );
+
+        notify('item/started', {
+          'turnId': 'st1',
+          'item': {'id': 'text', 'type': 'agentMessage', 'text': ''},
+        });
+        expect(events.whereType<ActivityReported>().last.activity, isNull);
+        notify('item/agentMessage/delta', {
+          'turnId': 'st1',
+          'itemId': 'text',
+          'delta': 'a' * 30,
+        });
+        expect(events.whereType<OutputReported>().last.output.tokens, 10);
+        notify('item/completed', {
+          'turnId': 'st1',
+          'item': {'id': 'text', 'type': 'agentMessage', 'text': 'a' * 30},
+        });
+        expect(
+          events.whereType<ActivityReported>().last.activity?.kind,
+          KernelActivityKind.waiting,
+        );
+
+        notify('item/started', {
+          'turnId': 'st1',
+          'item': {'id': 'compact', 'type': 'contextCompaction'},
+        });
+        expect(
+          events.whereType<ActivityReported>().last.activity?.kind,
+          KernelActivityKind.compacting,
+        );
+        notify('item/completed', {
+          'turnId': 'st1',
+          'item': {'id': 'compact', 'type': 'contextCompaction'},
+        });
+        expect(
+          events.whereType<ActivityReported>().last.activity?.kind,
+          KernelActivityKind.waiting,
+        );
+        notify('thread/tokenUsage/updated', {
+          'threadId': 'th',
+          'turnId': 'st1',
+          'tokenUsage': {
+            'total': {'inputTokens': 1200, 'outputTokens': 530},
+            'last': {
+              'inputTokens': 200,
+              'outputTokens': 30,
+              'totalTokens': 230,
+            },
+          },
+        });
+        expect(events.whereType<OutputReported>().last.output.tokens, 30);
+        notify('turn/completed', {
+          'turn': {'id': 'st1', 'status': 'completed'},
+        });
+        expect(events.whereType<ActivityReported>().last.activity, isNull);
+        final usage = events.whereType<TurnEnded>().last.usage!;
+        expect(usage.inputTokens, 200);
+        expect(usage.outputTokens, 30);
+      },
+    );
+
+    test(
+      'ignores foreign output and clears activity on cancel and approval',
+      () async {
+        kernel.send(const KernelTurn(id: 't1', text: 'hi'));
+        await pumpEventQueue();
+        notify('item/agentMessage/delta', {
+          'threadId': 'other',
+          'turnId': 'st1',
+          'itemId': 'foreign',
+          'delta': 'a' * 30,
+        });
+        notify('item/agentMessage/delta', {
+          'threadId': 'th',
+          'turnId': 'old-turn',
+          'itemId': 'late',
+          'delta': 'a' * 30,
+        });
+        expect(events.whereType<OutputReported>(), isEmpty);
+        server.push({
+          'id': 7,
+          'method': 'item/commandExecution/requestApproval',
+          'params': {'command': 'flutter test'},
+        });
+        expect(events.whereType<ActivityReported>().last.activity, isNull);
+        kernel.answer(
+          'approval:7',
+          const ApprovalAnswer(ApprovalDecision.deny),
+        );
+        expect(
+          events.whereType<ActivityReported>().last.activity?.kind,
+          KernelActivityKind.waiting,
+        );
+        kernel.cancel();
+        expect(events.whereType<ActivityReported>().last.activity, isNull);
+        expect(events.whereType<TurnEnded>().last.interrupted, isTrue);
+        kernel.send(const KernelTurn(id: 't2', text: 'again'));
+        await pumpEventQueue();
+        notify('item/agentMessage/delta', {
+          'itemId': 'fresh',
+          'delta': 'a' * 30,
+        });
+        expect(events.whereType<OutputReported>().last.output.tokens, 10);
+      },
+    );
+
     test('translates items, and asks leave to run a command', () async {
       kernel.model.select('gpt-5.5');
       kernel.mode.select('ask');
@@ -5975,6 +6133,7 @@ exec /usr/bin/env "\$@"
       expect(server.written.map((m) => m['method']), [
         'initialize',
         'model/list',
+        'skills/list',
         'thread/start',
         'turn/start',
       ]);
@@ -6323,6 +6482,7 @@ class _FakeServer implements CodexTransport {
       StreamController.broadcast(sync: true);
   final List<Map<String, Object?>> written = [];
   final Completer<void> _exited = Completer<void>();
+  Map<String, Object?> skills = {};
 
   @override
   Stream<Map<String, Object?>> get messages => _out.stream;
@@ -6336,6 +6496,7 @@ class _FakeServer implements CodexTransport {
   void write(Map<String, Object?> message) {
     written.add(message);
     final result = switch (message['method']) {
+      'skills/list' => skills,
       'thread/start' => {
         'thread': {'id': 'th'},
       },
