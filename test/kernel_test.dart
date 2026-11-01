@@ -6181,7 +6181,11 @@ exec /usr/bin/env "\$@"
           const ApprovalAnswer(ApprovalDecision.allowAlways),
         )
         ..answer('approval:7', const ApprovalAnswer(ApprovalDecision.deny));
-      final replies = server.written.where((m) => m['id'] == 7).toList();
+      // JSON-RPC request IDs are independent in each direction. The new
+      // startup queries can use 7 too; count only our response, not requests.
+      final replies = server.written
+          .where((m) => m['id'] == 7 && !m.containsKey('method'))
+          .toList();
       expect(replies.single['result'], {'decision': 'acceptForSession'});
 
       notify('turn/completed', {

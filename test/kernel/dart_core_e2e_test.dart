@@ -37,11 +37,13 @@ void main() {
   late ModelProviders providers;
   HttpOverrides? previousHttpOverrides;
   final opened = <ClaudeCodeKernel>[];
+  final upstreams = <FakeApi>[];
 
   setUp(() async {
     previousHttpOverrides = HttpOverrides.current;
     HttpOverrides.global = _LoopbackHttpOverrides();
     opened.clear();
+    upstreams.clear();
     root = Directory.systemTemp
         .createTempSync('baocode-core-e2e-')
         .resolveSymbolicLinksSync();
@@ -61,6 +63,7 @@ void main() {
         return null;
       },
     );
+    upstreams.add(api);
     // The machine's own Claude Code setup: another key, other models.
     // None of it is what the core runs on.
     ClaudeEnvironment.use({
@@ -112,7 +115,12 @@ void main() {
         for (final kernel in opened)
           kernel.stopped.timeout(const Duration(seconds: 10)),
       ]);
-      await api.close();
+      // Secondary upstreams share the same lifetime as the main upstream.
+      // Close only after every kernel has stopped, and drain accepted HTTP
+      // requests rather than force-cutting a body still being decoded.
+      for (final upstream in upstreams.reversed) {
+        await upstream.close(force: false).timeout(const Duration(seconds: 10));
+      }
       await _deleteFixtureDirectory(Directory(root));
     } finally {
       ClaudeEnvironment.use(null);
@@ -430,7 +438,7 @@ void main() {
       script: [Reply.text('nothing here')],
       errands: (_) => Reply.text('Looking around'),
     );
-    addTearDown(other.close);
+    upstreams.add(other);
     await ModelProviders.current.save(
       ModelProviders.current
           .provider('up')!

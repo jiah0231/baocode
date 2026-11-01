@@ -49,7 +49,7 @@ class FakeApi {
   }) async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final api = FakeApi._(server, FakeModel(script, errands));
-    server.listen(api._handle);
+    server.listen(api._trackedHandle);
     return api;
   }
 
@@ -76,6 +76,19 @@ class FakeApi {
   ];
 
   int _messages = 0;
+  final _active = <Future<void>>{};
+
+  Future<void> _trackedHandle(HttpRequest request) async {
+    final completion = Completer<void>();
+    _active.add(completion.future);
+    try {
+      await _handle(request);
+    } finally {
+      // Track completion only; handler errors still reach the test zone.
+      _active.remove(completion.future);
+      completion.complete();
+    }
+  }
 
   Future<void> _handle(HttpRequest request) async {
     final response = request.response;
@@ -207,5 +220,16 @@ class FakeApi {
     response.write('event: ${event['type']}\ndata: ${jsonEncode(event)}\n\n');
   }
 
-  Future<void> close() => _server.close(force: true);
+  /// [force] false drains active requests before closing their connections.
+  /// Useful when a fixture has already stopped all of its clients.
+  Future<void> close({bool force = true}) async {
+    await _server.close(force: force);
+    if (!force) {
+      // HttpServer.close only waits for the listening socket to stop.
+      // Its accepted request handlers must be awaited separately.
+      while (_active.isNotEmpty) {
+        await Future.wait(_active.toList());
+      }
+    }
+  }
 }

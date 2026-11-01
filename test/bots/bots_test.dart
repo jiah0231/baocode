@@ -255,6 +255,18 @@ void main() {
       workspace.dispose();
     });
 
+    test('ordinary hidden untouched agents still reuse their thread', () {
+      final setup = workspace.agentSetup;
+      workspace.agentSetup = null;
+      try {
+        final project = Project('app', app);
+        final first = workspace.startAgent(project);
+        expect(workspace.startAgent(project), same(first));
+      } finally {
+        workspace.agentSetup = setup;
+      }
+    });
+
     Future<List<String>> offered(String cwd) async {
       final answer = await ClaudeSdkTools.handle({
         'jsonrpc': '2.0',
@@ -298,7 +310,9 @@ void main() {
       expect(assistant.name, '小宝');
       expect(assistant.abilities, {BotAbility.agents, BotAbility.browser});
       // Its card, a file of its folder.
-      final card = utf8.decode(folders.files['${assistant.folder}/BOT.md']!);
+      final card = utf8.decode(
+        folders.files[p.join(assistant.folder, 'BOT.md')]!,
+      );
       expect(card, contains('name: 小宝'));
       expect(card, contains('agents: true'));
       expect(card, contains('proactive: false'));
@@ -368,7 +382,9 @@ void main() {
           workspace.agentSetup!(selected.folder)!.settings['permission'],
           'read-only',
         );
-        final card = utf8.decode(folders.files['${selected.folder}/BOT.md']!);
+        final card = utf8.decode(
+          folders.files[p.join(selected.folder, 'BOT.md')]!,
+        );
         expect(BotFiles.read(selected.folder, card)!.kernel, 'codex');
         bots.setKernel(selected, 'claude-code');
         expect(bots.threadFor(bots.bots.single), same(oldThread));
@@ -526,8 +542,8 @@ void main() {
       await pumpEventQueue();
       final kept = BotFiles.read(
         mia.folder,
-        utf8.decode(folders.files['${mia.folder}/BOT.md']!),
-        style: utf8.decode(folders.files['${mia.folder}/STYLE.md']!),
+        utf8.decode(folders.files[p.join(mia.folder, 'BOT.md')]!),
+        style: utf8.decode(folders.files[p.join(mia.folder, 'STYLE.md')]!),
       )!;
       expect(
         (kept.gender, kept.signature, kept.style, kept.model),
@@ -680,13 +696,13 @@ void main() {
       expect(loading.threads, isEmpty);
       listed.complete([
         ProjectRecord(
-          path: '/bots/assistant',
+          path: p.join('/bots', 'assistant'),
           sessions: [
             SessionRecord(
               id: 'kept',
               title: '在吗',
               updatedAt: now.subtract(const Duration(hours: 1)),
-              cwd: '/bots/assistant',
+              cwd: p.join('/bots', 'assistant'),
             ),
           ],
         ),
@@ -711,7 +727,7 @@ void main() {
       expect(bots.laters(bot).single.at, DateTime(2026, 10, 29, 15, 30));
       // A line of its LATER.md.
       expect(
-        utf8.decode(folders.files['${bot.folder}/LATER.md']!),
+        utf8.decode(folders.files[p.join(bot.folder, 'LATER.md')]!),
         '- 2026-10-29 15:30 Ask how the interview went\n',
       );
       // Not before its time.
@@ -724,7 +740,7 @@ void main() {
       expect(ChatCodec.botEvent(note), contains('Ask how the interview went'));
       expect(ChatCodec.botEvent(note), contains('Now: Thursday'));
       expect(bots.laters(bot), isEmpty);
-      expect(folders.files, isNot(contains('${bot.folder}/LATER.md')));
+      expect(folders.files, isNot(contains(p.join(bot.folder, 'LATER.md'))));
 
       // At night too: the hour is its to mind, as it is told.
       now = DateTime(2026, 10, 29, 22, 30);
@@ -745,7 +761,7 @@ void main() {
       expect('${set10['content']}', contains('23:00:10'));
       expect(bots.laters(soon).single.at, DateTime(2026, 10, 29, 23, 0, 10));
       expect(
-        utf8.decode(folders.files['${soon.folder}/LATER.md']!),
+        utf8.decode(folders.files[p.join(soon.folder, 'LATER.md')]!),
         '- 2026-10-29 23:00:10 Ping\n',
       );
       now = DateTime(2026, 10, 29, 23, 0, 9);
@@ -767,7 +783,7 @@ void main() {
       });
       expect(bots.selfNotes(bot), '- Loves rainy days');
       expect(
-        utf8.decode(folders.files['${bot.folder}/SELF.md']!),
+        utf8.decode(folders.files[p.join(bot.folder, 'SELF.md')]!),
         '- Loves rainy days\n',
       );
       expect(bots.memory(bot), isEmpty);
@@ -853,12 +869,12 @@ void main() {
       bots.setMemory(bot, 'Name is Leo');
       expect(bots.memory(bot), 'Name is Leo');
       expect(
-        utf8.decode(folders.files['${bot.folder}/MEMORY.md']!),
+        utf8.decode(folders.files[p.join(bot.folder, 'MEMORY.md')]!),
         'Name is Leo\n',
       );
       bots.setMemory(bot, '');
       expect(bots.memory(bot), '');
-      expect(folders.files, isNot(contains('${bot.folder}/MEMORY.md')));
+      expect(folders.files, isNot(contains(p.join(bot.folder, 'MEMORY.md'))));
     });
 
     test('it writes first of an agent done, in a note of the app\'s', () async {
@@ -1044,7 +1060,7 @@ void main() {
       expect(told, contains('Their name: Leo.'));
       expect(told, contains('写代码的'));
       // Their USER.md, their picture beside it.
-      final user = utf8.decode(folders.files['/bots/USER.md']!);
+      final user = utf8.decode(folders.files[p.join('/bots', 'USER.md')]!);
       expect(user, contains('name: Leo'));
       expect(user, contains('signature: 写代码的'));
       expect(user, contains('picture: me-'));
@@ -1063,7 +1079,7 @@ void main() {
       void write(String path, String text) =>
           folders.writeFile(path, Uint8List.fromList(utf8.encode(text)));
       String read(String path) => utf8.decode(folders.files[path]!);
-      final cardPath = '${assistant.folder}/BOT.md';
+      final cardPath = p.join(assistant.folder, 'BOT.md');
       // Its own card: its name, its to change; its abilities not.
       write(
         cardPath,
@@ -1073,14 +1089,17 @@ void main() {
             .replaceFirst('browser: true', 'browser: false'),
       );
       // A bot it made, saying it is the assistant, on the computer.
-      folders.make('/bots/cat');
+      folders.make(p.join('/bots', 'cat'));
       write(
-        '/bots/cat/BOT.md',
+        p.join('/bots', 'cat', 'BOT.md'),
         '---\nname: 阿猫\navatar: 🐱\nagents: true\nassistant: true\n'
-            '---\n\n你是一只懒猫\n',
+        '---\n\n你是一只懒猫\n',
       );
-      write('/bots/cat/LATER.md', '- 2026-10-29 16:00 喊用户喝水\nmine\n');
-      write('/bots/USER.md', '---\nname: Leo\n---\n');
+      write(
+        p.join('/bots', 'cat', 'LATER.md'),
+        '- 2026-10-29 16:00 喊用户喝水\nmine\n',
+      );
+      write(p.join('/bots', 'USER.md'), '---\nname: Leo\n---\n');
       // Its turn, done.
       final session = bots.threadFor(assistant).session;
       session.send(const ComposerMessage(text: 'hi'));
@@ -1103,16 +1122,16 @@ void main() {
       expect(cat.assistant, isFalse);
       expect(cat.abilities, isEmpty);
       expect(cat.created, now);
-      expect(read('/bots/cat/BOT.md'), contains('agents: false'));
+      expect(read(p.join('/bots', 'cat', 'BOT.md')), contains('agents: false'));
       expect(bots.threadOf(cat), isNotNull);
       expect(bots.laters(cat).single.at, DateTime(2026, 10, 29, 16));
       expect(bots.me.name, 'Leo');
       // Come due: its line gone, what else it wrote kept.
       now = DateTime(2026, 10, 29, 16, 1);
       bots.deliver();
-      expect(read('/bots/cat/LATER.md'), 'mine\n');
+      expect(read(p.join('/bots', 'cat', 'LATER.md')), 'mine\n');
       // Gone with its folder.
-      folders.delete('/bots/cat');
+      folders.delete(p.join('/bots', 'cat'));
       bots.reload(by: self);
       expect(bots.byId('cat'), isNull);
       // The user, by hand: as they wrote it.
@@ -1162,7 +1181,7 @@ void main() {
 
       // Its card, the picture's path in it (by the user's hand).
       final self = bots.bots.first;
-      final card = '${self.folder}/BOT.md';
+      final card = p.join(self.folder, 'BOT.md');
       void write(String text) =>
           folders.writeFile(card, Uint8List.fromList(utf8.encode(text)));
       String read() => utf8.decode(folders.files[card]!);
@@ -1184,12 +1203,12 @@ void main() {
       expect((square.width, square.height), (2, 2));
       expect(made.existsSync(), isTrue);
       // One copied into its folder: taken, the copy gone.
-      folders.writeFile('${self.folder}/cat.png', wide);
+      folders.writeFile(p.join(self.folder, 'cat.png'), wide);
       write(read().replaceFirst('avatar: ${taken.avatar}', 'avatar: cat.png'));
       bots.reload(by: self);
       final again = await changed(self.id, (b) => b.avatar != taken.avatar);
       expect(again.avatar, matches(RegExp(r'^avatar-[0-9a-f]{12}\.png$')));
-      expect(folders.files, isNot(contains('${self.folder}/cat.png')));
+      expect(folders.files, isNot(contains(p.join(self.folder, 'cat.png'))));
       // None there: as it was, and told.
       write(
         read().replaceFirst('avatar: ${again.avatar}', 'avatar: /no/x.png'),
@@ -1228,7 +1247,7 @@ void main() {
             ],
           ),
         );
-        final kept = '${mia.folder}/${Bots.receivedPicture(3)}';
+        final kept = p.join(mia.folder, Bots.receivedPicture(3));
         for (var i = 0; i < 300 && !folders.files.containsKey(kept); i++) {
           await Future<void>.delayed(const Duration(milliseconds: 10));
         }
@@ -1236,7 +1255,9 @@ void main() {
         expect((png.width, png.height), (4, 2));
         session.stop();
         // By its path from its folder.
-        await call(mia, 'bot_edit_me', {'picture': 'received/image-3.png'});
+        await call(mia, 'bot_edit_me', {
+          'picture': p.join('received', 'image-3.png'),
+        });
         expect(isAvatarImage(bots.byId(mia.id)!.avatar), isTrue);
       },
     );
@@ -1260,7 +1281,7 @@ void main() {
       expect(fresh.identity, isNot('另一个设定'));
       expect(bots.memory(fresh), isEmpty);
       expect(
-        utf8.decode(folders.files['${fresh.folder}/BOT.md']!),
+        utf8.decode(folders.files[p.join(fresh.folder, 'BOT.md')]!),
         contains('name: 小宝'),
       );
       final thread = bots.threadFor(fresh);
@@ -1352,7 +1373,7 @@ void main() {
       // An old card, saying nothing of it: off still.
       expect(
         BotFiles.read(
-          '/bots/assistant',
+          p.join('/bots', 'assistant'),
           '---\nname: 小宝\nassistant: true\n---\n',
         )!.abilities,
         BotFiles.assistantAbilities,

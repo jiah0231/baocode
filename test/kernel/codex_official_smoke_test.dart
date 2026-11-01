@@ -11,9 +11,10 @@ import 'package:path/path.dart' as p;
 /// Opt-in CI integration check. It installs only the verified official package
 /// in a temporary directory; there is no login, model turn, or API credential.
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   test(
     'official managed Codex package and app-server protocol smoke',
-    () async {
+    () => HttpOverrides.runWithHttpOverrides(() async {
       final root = await Directory.systemTemp.createTemp(
         'baocode-official-smoke-',
       );
@@ -224,10 +225,41 @@ void main() {
           await _deleteTemp(root);
         }
       }
-    },
+    }, _RealHttpOverrides()),
     skip: Platform.environment['BAOCODE_CODEX_OFFICIAL_SMOKE'] != '1',
     timeout: const Timeout(Duration(minutes: 20)),
   );
+}
+
+// The opt-in integration test must use real HTTPS rather than Flutter's test
+// client, which responds 400 to every request. Base HttpOverrides creates the
+// actual Dart client without calling the factory recursively. This is scoped
+// to the test's zone; global test overrides are never modified. The production
+// package source still enforces its official HTTPS host/redirect allowlist.
+class _RealHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    final client = super.createHttpClient(context);
+    client.findProxy = (_) => 'DIRECT';
+    client.connectionFactory = (uri, proxyHost, proxyPort) {
+      const officialHosts = {
+        'api.github.com',
+        'github.com',
+        'release-assets.githubusercontent.com',
+        'objects.githubusercontent.com',
+      };
+      if (uri.scheme != 'https' ||
+          uri.port != 443 ||
+          uri.userInfo.isNotEmpty ||
+          !officialHosts.contains(uri.host) ||
+          proxyHost != null ||
+          proxyPort != null) {
+        throw StateError('Official smoke blocked connection to $uri');
+      }
+      return Socket.startConnect(uri.host, uri.port);
+    };
+    return client;
+  }
 }
 
 Future<void> _deleteTemp(Directory root) async {

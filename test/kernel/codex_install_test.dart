@@ -12,8 +12,8 @@ const target = 'x86_64-pc-windows-msvc';
 final payload = utf8.encode('verified package fixture');
 Map<String, dynamic> metadata() => {
   'tag_name': 'rust-v1.2.3',
-  'assets': [
-    {
+  'assets': <Map<String, dynamic>>[
+    <String, dynamic>{
       'name': 'codex-package-$target.tar.gz',
       'browser_download_url':
           'https://github.com/openai/codex/releases/download/rust-v1.2.3/codex-package-$target.tar.gz',
