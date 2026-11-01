@@ -684,6 +684,24 @@ void main() {
     return workspace;
   }
 
+  // Prompt discovery uses real filesystem I/O. Pumping a fixed number of
+  // microtasks does not establish completion on a Windows runner.
+  Future<void> pumpUntil(WidgetTester tester, bool Function() done) async {
+    final clock = Stopwatch()..start();
+    while (!done() && clock.elapsed < const Duration(seconds: 10)) {
+      await tester.pump();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+    }
+    await tester.pump();
+    expect(
+      done(),
+      isTrue,
+      reason: 'The requested asynchronous UI transition did not complete',
+    );
+  }
+
   testWidgets(
     'cold sidebar menu forks into a usable independent conversation',
     (tester) async {
@@ -697,9 +715,10 @@ void main() {
       await tester.pump();
       expect(find.text('Fork'), findsOneWidget);
       await tester.tap(find.text('Fork'));
-      await tester.pump();
-      await tester.runAsync(() => pumpEventQueue());
-      await tester.pump();
+      await pumpUntil(
+        tester,
+        () => workspace.threads.any((thread) => thread.id == 'forked'),
+      );
       final fork = workspace.threads.singleWhere(
         (thread) => thread.id == 'forked',
       );
@@ -712,9 +731,20 @@ void main() {
       )) {
         expect(fork.session.selected(kind), source.session.selected(kind));
       }
+      await pumpUntil(
+        tester,
+        () => h.kernels.any(
+          (kernel) =>
+              kernel.sessionId == 'forked' &&
+              kernel.health.status == KernelHealthStatus.ready,
+        ),
+      );
       fork.session.send(const ComposerMessage(text: 'Continue the copy'));
-      await tester.runAsync(() => pumpEventQueue());
-      await tester.pump();
+      await pumpUntil(
+        tester,
+        () =>
+            h.servers.any((server) => server.requests('turn/start').isNotEmpty),
+      );
       final sends = h.servers
           .expand((server) => server.requests('turn/start'))
           .toList();
@@ -739,9 +769,12 @@ void main() {
       await tester.tap(row('Chat source'), buttons: kSecondaryButton);
       await tester.pump();
       await tester.tap(find.text('Fork'));
-      await tester.pump();
-      await tester.runAsync(() => pumpEventQueue());
-      await tester.pump();
+      await pumpUntil(
+        tester,
+        () =>
+            identical(workspace.current, source) &&
+            _items(source.session).whereType<NoticeItem>().isNotEmpty,
+      );
       expect(
         workspace.threads.where((thread) => thread.id == 'forked'),
         isEmpty,
@@ -759,23 +792,31 @@ void main() {
     final h = _Harness();
     final workspace = await app(tester, h);
     await tester.tap(row('Chat source'));
-    await tester.pump();
-    await tester.runAsync(() => pumpEventQueue());
-    await tester.pump();
+    await pumpUntil(
+      tester,
+      () => h.kernels.any(
+        (kernel) =>
+            kernel.sessionId == 'source' &&
+            kernel.health.status == KernelHealthStatus.ready,
+      ),
+    );
     final source = workspace.threads.firstWhere(
       (thread) => thread.id == 'source',
     );
     source.session.send(const ComposerMessage(text: 'Working in the source'));
-    await tester.runAsync(() => pumpEventQueue());
-    await tester.pump();
+    await pumpUntil(
+      tester,
+      () => h.servers.any((server) => server.requests('turn/start').isNotEmpty),
+    );
     expect(source.session.isStreaming, isTrue);
     await tester.tap(row('Chat source'), buttons: kSecondaryButton);
     await tester.pump();
     expect(find.text('Fork'), findsOneWidget);
     await tester.tap(find.text('Fork'));
-    await tester.pump();
-    await tester.runAsync(() => pumpEventQueue());
-    await tester.pump();
+    await pumpUntil(
+      tester,
+      () => workspace.threads.any((thread) => thread.id == 'forked'),
+    );
     expect(
       workspace.threads.where((thread) => thread.id == 'forked'),
       hasLength(1),
