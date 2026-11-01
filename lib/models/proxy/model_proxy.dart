@@ -91,8 +91,8 @@ class ModelProxy {
 
   /// Where [providerId]'s requests go, the proxy started if not yet.
   Future<ProxyEndpoint> endpoint(String providerId) async {
-    while (_closing case final closing?) {
-      await closing;
+    while (_closing != null) {
+      await _closing;
     }
     if (_shutdown.isCompleted) _shutdown = Completer<void>();
     final server = await (_server ??= _bind());
