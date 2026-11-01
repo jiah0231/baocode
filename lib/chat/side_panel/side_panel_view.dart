@@ -47,6 +47,7 @@ import '../../keybindings/chat_keybindings.dart';
 import '../../keybindings/keybinding_service.dart';
 import '../../l10n/l10n.dart';
 import '../../learning/work_trace_panel.dart';
+import '../../learning/learning_scope.dart';
 import '../../sidebar/sidebar.dart' show SidebarIconButton;
 import '../../theme/app_theme.dart';
 import '../../theme/codicons.dart';
@@ -609,6 +610,13 @@ class AgentSidePanelView extends StatelessWidget {
                         session,
                       )),
                       controller: session.workTrace,
+                      narrative: session.learning,
+                      onConfigure: switch (LearningScope.maybeOf(context)) {
+                        final scope? => () => unawaited(
+                          scope.configure(context),
+                        ),
+                        null => null,
+                      },
                       onOpenItem: session.revealOperation,
                     ),
               SidePanelSection.usage => ConversationUsageView(

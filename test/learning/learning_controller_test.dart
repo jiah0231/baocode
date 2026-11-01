@@ -699,8 +699,14 @@ void main() {
       controller.observe(command(i));
       await settle();
     }
-    expect(generator.requests.length, LearningController.maxRequestsPerSession);
-    expect(controller.budgetReached, isTrue);
+    expect(
+      generator.requests.length,
+      LearningController.maxRequestsPerSession - 2,
+    );
+    expect(
+      controller.budgetReached,
+      isFalse,
+    ); // Two slots reserved for narrative.
     controller.switchSession('next');
     controller.enable(generator, interval: const Duration(days: 1));
     for (var i = 0; i < 100; i++) {

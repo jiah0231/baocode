@@ -6,6 +6,7 @@ import 'package:baocode/kernel/kernel_event.dart';
 import 'package:baocode/learning/learning_backend.dart';
 import 'package:baocode/learning/learning_controller.dart';
 import 'package:baocode/learning/learning_models.dart';
+import 'package:baocode/learning/narrative_models.dart';
 import 'package:baocode/learning/learning_preferences.dart';
 import 'package:baocode/models/model_provider.dart';
 import 'package:baocode/models/model_providers.dart';
@@ -30,6 +31,26 @@ const request = LearningRequest(
     ),
   ],
   depth: LearningDepth.brief,
+);
+const narrativeRequest = LearningRequest(
+  evidence: [],
+  depth: LearningDepth.brief,
+  kind: LearningRequestKind.narrative,
+  narrative: NarrativeSnapshot(
+    turnId: 'synthetic-turn',
+    revision: 1,
+    facts: [
+      NarrativeFact(
+        id: 'fact-1',
+        kind: 'edit',
+        label: 'synthetic.dart',
+        status: 'completed',
+        sourceItemId: 'item-1',
+        added: 1,
+        removed: 0,
+      ),
+    ],
+  ),
 );
 const reply =
     '{"title":"Guard clauses","summary":"Added a check.","why":"May avoid invalid input.","concept":"Fail early.","evidenceIds":["e1"]}';
@@ -374,6 +395,184 @@ void main() {
       second.dispose();
     },
   );
+
+  test(
+    'bubble-only consent is invalidated without new model requests',
+    () async {
+      final values = <String, Object?>{};
+      final prefs = LearningPreferences(
+        read: (key) => values[key],
+        write: (key, value) async {
+          values[key] = value;
+        },
+        providers: providers,
+      );
+      addTearDown(prefs.dispose);
+      await prefs.configure(modelRef: '@lesson/explain-model', consent: true);
+      await prefs.setDepth(LearningDepth.detailed);
+      await prefs.setPace(LearningPace.balanced);
+      final saved = Map<String, Object?>.from(
+        values[LearningPreferences.settingKey] as Map,
+      );
+      values[LearningPreferences.settingKey] = {...saved, 'consentVersion': 1};
+      expect(prefs.enabled, isFalse);
+      expect(prefs.needsConsentReview, isTrue);
+      expect(prefs.modelRef, '@lesson/explain-model');
+      expect(prefs.depth, LearningDepth.detailed);
+      expect(prefs.pace, LearningPace.balanced);
+      var calls = 0;
+      final backend = LearningBackend(
+        preferences: prefs,
+        transport: (_, _, _, _) async {
+          calls++;
+          return reply;
+        },
+      );
+      await expectLater(
+        backend.generate(request, LearningCancellation()),
+        throwsA(isA<LearningBackendException>()),
+      );
+      await expectLater(
+        backend.generate(narrativeRequest, LearningCancellation()),
+        throwsA(isA<LearningBackendException>()),
+      );
+      expect(calls, 0);
+      await expectLater(
+        prefs.configure(modelRef: '@lesson/explain-model', consent: false),
+        throwsArgumentError,
+      );
+      expect(prefs.enabled, isFalse);
+      await prefs.configure(modelRef: '@lesson/explain-model', consent: true);
+      expect(prefs.enabled, isTrue);
+      expect(prefs.needsConsentReview, isFalse);
+      expect(
+        (values[LearningPreferences.settingKey] as Map)['consentVersion'],
+        LearningPreferences.consentVersion,
+      );
+      await backend.generate(request, LearningCancellation());
+      expect(calls, 1);
+    },
+  );
+
+  test(
+    'unsupported routes and image models are unavailable without fallback',
+    () async {
+      const unsupported = ModelProvider(
+        id: 'unsupported',
+        name: 'Unsupported',
+        baseUrl: 'file:///synthetic/config',
+        models: [ProviderModel(id: 'chat')],
+      );
+      const empty = ModelProvider(
+        id: 'empty',
+        name: 'Empty',
+        models: [ProviderModel(id: 'chat')],
+      );
+      final image = provider.copyWith(
+        models: const [ProviderModel(id: 'image', kind: ModelKind.image)],
+      );
+      final catalog = ModelProviders.memory(
+        providers: [unsupported, empty, image],
+      );
+      final prefs = LearningPreferences.memory(providers: catalog);
+      addTearDown(catalog.dispose);
+      addTearDown(prefs.dispose);
+      expect(LearningBackend.choices(catalog), isEmpty);
+      for (final ref in ['@unsupported/chat', '@empty/chat', '@lesson/image']) {
+        expect(LearningPreferences.exactModel(catalog, ref), isNull);
+        await expectLater(
+          prefs.configure(modelRef: ref, consent: true),
+          throwsArgumentError,
+        );
+      }
+      var calls = 0;
+      final backend = LearningBackend(
+        preferences: prefs,
+        transport: (_, _, _, _) async {
+          calls++;
+          return reply;
+        },
+      );
+      await expectLater(
+        backend.generate(request, LearningCancellation()),
+        throwsA(isA<LearningBackendException>()),
+      );
+      expect(calls, 0);
+    },
+  );
+
+  test('effective endpoint overrides and managed OAuth remain selectable', () {
+    final catalog = ModelProviders.memory(
+      providers: const [
+        ModelProvider(
+          id: 'oauth',
+          name: 'Managed OAuth',
+          protocol: ProviderProtocol.codex,
+          models: [ProviderModel(id: 'chat')],
+        ),
+        ModelProvider(
+          id: 'explicit',
+          name: 'Explicit endpoint',
+          endpointUrl: 'https://synthetic.invalid/messages',
+          models: [ProviderModel(id: 'chat')],
+        ),
+        ModelProvider(
+          id: 'per-model',
+          name: 'Per model',
+          models: [
+            ProviderModel(
+              id: 'chat',
+              protocol: ProviderProtocol.openaiChat,
+              endpointUrl: 'https://synthetic.invalid/completions',
+            ),
+          ],
+        ),
+      ],
+    );
+    addTearDown(catalog.dispose);
+    expect(LearningBackend.choices(catalog).map((choice) => choice.ref), [
+      '@oauth/chat',
+      '@explicit/chat',
+      '@per-model/chat',
+    ]);
+  });
+
+  test('narrative uses the same independently consented tools-free model transport', () async {
+    await enable();
+    var calls = 0;
+    final backend = LearningBackend(
+      preferences: preferences,
+      transport: (p, m, body, cancellation) async {
+        calls++;
+        expect(p.id, 'lesson');
+        expect(m.id, 'explain-model');
+        expect(body['max_tokens'], 1100);
+        expect(body.containsKey('tools'), isFalse);
+        expect(body.containsKey('tool_choice'), isFalse);
+        final messages = body['messages'] as List;
+        final context =
+            jsonDecode((messages.single as Map)['content'] as String) as Map;
+        expect(context['kind'], 'narrative');
+        expect((context['facts'] as List).length, 1);
+        expect(context.containsKey('transcript'), isFalse);
+        return '{"phases":[{"id":"phase-1","title":"Small change","summary":"An edit was observed.","status":"observed","evidenceIds":["fact-1"]}]}';
+      },
+    );
+    expect(
+      (await backend.generate(
+        narrativeRequest,
+        LearningCancellation(),
+      ))['phases'],
+      hasLength(1),
+    );
+    expect(calls, 1);
+    await preferences.disable();
+    await expectLater(
+      backend.generate(narrativeRequest, LearningCancellation()),
+      throwsA(isA<LearningBackendException>()),
+    );
+    expect(calls, 1);
+  });
 
   test('oversized context rejected before any transport', () async {
     await enable();

@@ -41,7 +41,11 @@ class LearningBackend implements LearningGenerator {
   static List<LearningModelChoice> choices(ModelProviders providers) => [
     for (final provider in providers.enabled)
       for (final model in provider.enabledModels)
-        if (!model.missing && !model.kind.generatesImages)
+        if (LearningPreferences.exactModel(
+              providers,
+              modelRef(provider.id, model.id),
+            ) !=
+            null)
           LearningModelChoice(
             ref: modelRef(provider.id, model.id),
             label: '${provider.name} · ${model.displayName}',

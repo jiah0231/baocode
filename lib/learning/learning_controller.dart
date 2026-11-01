@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import '../chat/chat_models.dart';
 import '../kernel/kernel_event.dart';
 import 'learning_models.dart';
+import 'narrative_models.dart';
 
 /// Ephemeral, opt-in teaching projection. It never writes to the conversation,
 /// reads files, executes tools, or sends agent thoughts/user messages.
@@ -23,6 +24,36 @@ class LearningController extends ChangeNotifier {
   final _seen = <String>{};
   final _itemFingerprints = <String, String>{};
   String? _busyItemId;
+  final _confirmedEvidence = <String, LearningEvidence>{};
+  NarrativeSnapshot? _latestNarrative, _pendingNarrative, _narrativeInFlight;
+  final _narrativePhases = <NarrativePhase>[];
+  bool _lastWasNarrative = false;
+  String? _narrativeError;
+  int _narrativeRevision = -1;
+  int _narrativeOmitted = 0;
+
+  List<NarrativePhase> get narrativePhases =>
+      List.unmodifiable(_narrativePhases);
+  bool get narrativeBusy => _narrativeInFlight != null;
+  String? get narrativeError => _narrativeError;
+  String? get narrativeTurnId => _latestNarrative?.turnId;
+  bool get narrativeEnded => _latestNarrative?.ended ?? false;
+  int get narrativeRevision => _narrativeRevision;
+  int get narrativeOmittedCount {
+    final latest = _latestNarrative?.omittedCount ?? 0;
+    return latest > _narrativeOmitted ? latest : _narrativeOmitted;
+  }
+
+  bool get explanationBudgetReached => _requests >= maxRequestsPerSession - 2;
+  // The final two slots are never spent on bubbles. The last slot is reserved
+  // for an ended snapshot, so continuous narration cannot starve the recap.
+  bool get _canNarrate =>
+      _pendingNarrative != null &&
+      !budgetReached &&
+      (_requests < maxRequestsPerSession - 1 || _pendingNarrative!.ended);
+  bool get _canExplain =>
+      _queue.isNotEmpty && _requests < maxRequestsPerSession - 2;
+  bool get _hasWork => _canNarrate || _canExplain;
   final _cards = <LearningCard>[];
   LearningGenerator? _generator;
   LearningCancellation? _cancellation;
@@ -86,7 +117,11 @@ class LearningController extends ChangeNotifier {
     _invalidate();
     _enabled = false;
     _generator = null;
-    if (clearCards) _cards.clear();
+    if (clearCards) {
+      _cards.clear();
+      _narrativePhases.clear();
+    }
+    _narrativeError = null;
     _error = null;
     notifyListeners();
   }
@@ -121,7 +156,12 @@ class LearningController extends ChangeNotifier {
     _cards.clear();
     _seen.clear();
     _itemFingerprints.clear();
+    _latestNarrative = null;
+    _narrativePhases.clear();
+    _narrativeError = null;
+    _narrativeRevision = -1;
     _requests = 0;
+    _lastWasNarrative = false;
     _error = null;
     notifyListeners();
   }
@@ -132,6 +172,8 @@ class LearningController extends ChangeNotifier {
     _timer = null;
     _queue.clear();
     _diffCandidates.clear();
+    _confirmedEvidence.clear();
+    _pendingNarrative = null;
     _cancellation?.cancel();
     // Do not release the single-flight slot until its transport settles.
   }
@@ -147,6 +189,8 @@ class LearningController extends ChangeNotifier {
     if (event is Rewound || event is ChangesReverted) {
       _invalidate();
       _cards.clear();
+      _narrativePhases.clear();
+      _latestNarrative = null;
       notifyListeners();
       return;
     }
@@ -237,6 +281,15 @@ class LearningController extends ChangeNotifier {
       _stageDiff(evidence);
       return;
     }
+    _confirmedEvidence[itemId] = evidence;
+    while (_confirmedEvidence.length > maxQueue ||
+        _confirmedEvidence.values.fold<int>(
+              0,
+              (sum, item) => sum + jsonEncode(item.toJson()).length,
+            ) >
+            maxContextCharacters) {
+      _confirmedEvidence.remove(_confirmedEvidence.keys.first);
+    }
     if (!_seen.add(fingerprint)) return;
     if (_seen.length > 512) _seen.remove(_seen.first);
     if (_queue.length >= maxQueue) _queue.removeFirst();
@@ -270,6 +323,33 @@ class LearningController extends ChangeNotifier {
 
   void _forgetItem(String itemId) {
     _itemFingerprints.remove(itemId);
+    _confirmedEvidence.remove(itemId);
+    NarrativeSnapshot? withoutSource(NarrativeSnapshot? snapshot) {
+      if (snapshot == null) return null;
+      return NarrativeSnapshot(
+        turnId: snapshot.turnId,
+        revision: snapshot.revision,
+        facts: List.unmodifiable(
+          snapshot.facts.where((fact) => fact.sourceItemId != itemId),
+        ),
+        ended: snapshot.ended,
+        interrupted: snapshot.interrupted,
+        omittedCount: snapshot.omittedCount,
+      );
+    }
+
+    _latestNarrative = withoutSource(_latestNarrative);
+    _pendingNarrative = withoutSource(_pendingNarrative);
+    if (_pendingNarrative?.facts.isEmpty ?? false) _pendingNarrative = null;
+    final oldPhaseCount = _narrativePhases.length;
+    _narrativePhases.removeWhere(
+      (phase) => phase.evidence.any((fact) => fact.sourceItemId == itemId),
+    );
+    if (_narrativeInFlight?.facts.any((fact) => fact.sourceItemId == itemId) ??
+        false) {
+      _cancellation?.cancel();
+    }
+    if (oldPhaseCount != _narrativePhases.length) notifyListeners();
     _diffCandidates.remove(itemId);
     _queue.removeWhere((item) => item.sourceItemId == itemId);
     final hadCard = _cards.any((card) => card.sourceItemId == itemId);
@@ -361,7 +441,7 @@ class LearningController extends ChangeNotifier {
         _paused ||
         _busy ||
         _timer != null ||
-        _queue.isEmpty ||
+        !_hasWork ||
         budgetReached) {
       return;
     }
@@ -371,13 +451,135 @@ class LearningController extends ChangeNotifier {
     });
   }
 
+  /// Only a bridge of accepted live runtime facts may call this method.
+  /// The latest snapshot replaces pending work rather than growing a queue.
+  void submitNarrative(NarrativeSnapshot snapshot) {
+    if (_disposed) return;
+    final previous = _latestNarrative;
+    if (previous != null &&
+        previous.turnId == snapshot.turnId &&
+        snapshot.revision <= previous.revision) {
+      return;
+    }
+    if (previous?.turnId != snapshot.turnId) {
+      _lastWasNarrative = false;
+      _narrativePhases.clear();
+      _narrativeRevision = -1;
+      _narrativeOmitted = 0;
+      if (_narrativeInFlight != null) _cancellation?.cancel();
+    }
+    final facts = <NarrativeFact>[];
+    final factIds = <String>{};
+    for (final fact in snapshot.facts.reversed.take(12).toList().reversed) {
+      if (fact.id.isEmpty ||
+          fact.id.length > 256 ||
+          (fact.sourceItemId?.length ?? 0) > 256 ||
+          !factIds.add(fact.id) ||
+          !{
+            'running',
+            'completed',
+            'failed',
+            'denied',
+            'unknown',
+          }.contains(fact.status) ||
+          _sensitivePath(fact.label)) {
+        continue;
+      }
+      final confirmed = _confirmedEvidence[fact.sourceItemId];
+      facts.add(
+        NarrativeFact(
+          id: fact.id,
+          kind: _clip(fact.kind, 40),
+          label: _safeLabel(fact.label),
+          status: fact.status,
+          sourceItemId: fact.sourceItemId,
+          added: fact.added,
+          removed: fact.removed,
+          excerpt: confirmed == null
+              ? null
+              : redactLearningText(_clip(confirmed.excerpt, 900)),
+        ),
+      );
+    }
+    final clean = NarrativeSnapshot(
+      turnId: snapshot.turnId,
+      revision: snapshot.revision,
+      facts: List.unmodifiable(facts),
+      ended: snapshot.ended,
+      interrupted: snapshot.interrupted,
+      omittedCount:
+          snapshot.omittedCount + snapshot.facts.length - facts.length,
+    );
+    _latestNarrative = clean;
+    final known = {
+      for (final fact in facts) fact.id: jsonEncode(fact.toJson()),
+    };
+    _narrativePhases.removeWhere(
+      (phase) => phase.evidence.any(
+        (fact) => known[fact.id] != jsonEncode(fact.toJson()),
+      ),
+    );
+    if (_enabled && _active && !_paused && facts.isNotEmpty && !budgetReached) {
+      _pendingNarrative = clean;
+      _schedule();
+    } else {
+      _pendingNarrative = null;
+    }
+    notifyListeners();
+  }
+
+  LearningRequest _narrativeRequest(NarrativeSnapshot snapshot) {
+    final facts = snapshot.facts.toList();
+    var phases = _narrativePhases.toList();
+    LearningRequest build() {
+      final bounded = NarrativeSnapshot(
+        turnId: snapshot.turnId,
+        revision: snapshot.revision,
+        facts: List.unmodifiable(facts),
+        ended: snapshot.ended,
+        interrupted: snapshot.interrupted,
+        omittedCount:
+            snapshot.omittedCount + snapshot.facts.length - facts.length,
+      );
+      return LearningRequest(
+        kind: LearningRequestKind.narrative,
+        narrative: bounded,
+        depth: _depth,
+        languageCode: _languageCode,
+        evidence: List.unmodifiable([
+          for (final fact in facts)
+            LearningEvidence(
+              id: fact.id,
+              kind: fact.kind,
+              label: fact.label,
+              excerpt: jsonEncode(fact.toJson()),
+              sourceItemId: fact.sourceItemId,
+            ),
+        ]),
+        previousPhases: List.unmodifiable(phases),
+      );
+    }
+
+    var request = build();
+    if (jsonEncode(request.toJson()).length > maxContextCharacters) {
+      phases = [];
+      request = build();
+    }
+    while (facts.isNotEmpty &&
+        jsonEncode(request.toJson()).length > maxContextCharacters) {
+      facts.removeAt(0);
+      request = build();
+    }
+    return request;
+  }
+
   Future<void> _generate() async {
     if (_disposed ||
         !_enabled ||
         !_active ||
         _paused ||
         _busy ||
-        _queue.isEmpty ||
+        !_hasWork ||
         budgetReached) {
       return;
     }
@@ -386,66 +588,147 @@ class LearningController extends ChangeNotifier {
     final generation = _generation;
     final cancellation = LearningCancellation();
     _cancellation = cancellation;
-    final evidence = <LearningEvidence>[];
-    var characters = 0;
-    while (_queue.isNotEmpty && evidence.isEmpty) {
-      final next = _queue.first;
-      final size = jsonEncode(next.toJson()).length;
-      if (characters + size > maxContextCharacters) break;
-      evidence.add(_queue.removeFirst());
-      characters += size;
+    final useNarrative = _canNarrate && (!_canExplain || !_lastWasNarrative);
+    late final LearningRequest request;
+    if (useNarrative) {
+      request = _narrativeRequest(_pendingNarrative!);
+      _pendingNarrative = null;
+      if (request.evidence.isEmpty) {
+        _schedule();
+        return;
+      }
+      _narrativeInFlight = request.narrative;
+      _narrativeError = null;
+    } else {
+      final evidence = _queue.removeFirst();
+      if (jsonEncode(evidence.toJson()).length > maxContextCharacters) {
+        _schedule();
+        return;
+      }
+      request = LearningRequest(
+        evidence: List.unmodifiable([evidence]),
+        depth: _depth,
+        languageCode: _languageCode,
+      );
+      _busyItemId = evidence.sourceItemId;
+      _error = null;
     }
-    if (evidence.isEmpty) {
-      _queue.removeFirst();
-      _schedule();
-      return;
-    }
+    _lastWasNarrative = useNarrative;
     _busy = true;
-    _busyItemId = evidence.single.sourceItemId;
     _requests++;
-    if (budgetReached) {
+    if (_requests >= maxRequestsPerSession - 2) {
       _queue.clear();
-      _diffCandidates.clear();
     }
-    _error = null;
+    if (budgetReached) _pendingNarrative = null;
     notifyListeners();
     try {
-      final output = await generator.generate(
-        LearningRequest(
-          evidence: List.unmodifiable(evidence),
-          depth: _depth,
-          languageCode: _languageCode,
-        ),
-        cancellation,
-      );
-      if (_disposed || generation != _generation || cancellation.isCancelled) {
+      final output = await generator.generate(request, cancellation);
+      if (_disposed || generation != _generation || cancellation.isCancelled)
         return;
+      if (useNarrative) {
+        final phases = _validateNarrative(output, request.narrative!);
+        if (phases != null) {
+          _narrativePhases
+            ..clear()
+            ..addAll(phases);
+          _narrativeRevision = request.narrative!.revision;
+          _narrativeOmitted = request.narrative!.omittedCount;
+        }
+      } else {
+        final evidence = request.evidence.single;
+        if (_itemFingerprints[evidence.sourceItemId] != _fingerprint(evidence))
+          return;
+        final card = _validate(output, request.evidence);
+        _cards.removeWhere((old) => old.sourceItemId == card.sourceItemId);
+        _cards.add(card);
+        if (_cards.length > maxCards) _cards.removeAt(0);
       }
-      if (_itemFingerprints[evidence.single.sourceItemId] !=
-          _fingerprint(evidence.single)) {
-        return;
-      }
-      final card = _validate(output, evidence);
-      _cards.removeWhere((old) => old.sourceItemId == card.sourceItemId);
-      _cards.add(card);
-      if (_cards.length > maxCards) _cards.removeAt(0);
     } catch (_) {
       if (!_disposed &&
           generation == _generation &&
           !cancellation.isCancelled) {
-        // Never surface transport exception bodies: they can contain keys,
-        // provider payloads, or raw private evidence.
-        _error = '讲解暂时不可用。请检查模型设置；主任务不受影响。';
+        if (useNarrative) {
+          _narrativeError = '工作脉络暂时未能整理。主任务不受影响。';
+        } else {
+          _error = '讲解暂时不可用。请检查模型设置；主任务不受影响。';
+        }
       }
     } finally {
       _busy = false;
       _busyItemId = null;
+      _narrativeInFlight = null;
       if (identical(_cancellation, cancellation)) _cancellation = null;
       if (!_disposed) {
         notifyListeners();
         _schedule();
       }
     }
+  }
+
+  List<NarrativePhase>? _validateNarrative(
+    Map<String, Object?> output,
+    NarrativeSnapshot snapshot,
+  ) {
+    final current = _latestNarrative;
+    if (current == null || current.turnId != snapshot.turnId) return null;
+    final raw = output['phases'];
+    if (raw is! List || raw.isEmpty || raw.length > 5)
+      throw const FormatException('Invalid phases');
+    final known = {for (final fact in snapshot.facts) fact.id: fact};
+    final latest = {for (final fact in current.facts) fact.id: fact};
+    final phaseIds = <String>{};
+    final phases = <NarrativePhase>[];
+    for (final value in raw) {
+      if (value is! Map) throw const FormatException('Invalid phase');
+      final id = value['id'],
+          title = value['title'],
+          summary = value['summary'],
+          ids = value['evidenceIds'];
+      if (id is! String ||
+          !RegExp(r'^phase-[1-5]$').hasMatch(id) ||
+          !phaseIds.add(id) ||
+          title is! String ||
+          title.trim().isEmpty ||
+          title.length > 80 ||
+          summary is! String ||
+          summary.trim().isEmpty ||
+          summary.length > 360 ||
+          ids is! List ||
+          ids.isEmpty ||
+          ids.length > 12 ||
+          ids.any((id) => id is! String || !known.containsKey(id))) {
+        throw const FormatException('Ungrounded phase');
+      }
+      final facts = ids.toSet().map((id) => known[id]!).toList();
+      // Appended facts do not starve a valid in-flight summary. Modified or
+      // removed referenced facts and a new turn always invalidate it.
+      if (facts.any(
+        (fact) =>
+            latest[fact.id] == null ||
+            jsonEncode(latest[fact.id]!.toJson()) != jsonEncode(fact.toJson()),
+      )) {
+        return null;
+      }
+      final status = facts.any((f) => f.status == 'failed')
+          ? 'failed'
+          : facts.any((f) => f.status == 'denied' || f.status == 'unknown')
+          ? 'unconfirmed'
+          : facts.any((f) => f.status == 'running')
+          ? 'inProgress'
+          : 'observed';
+      if (value['status'] != status)
+        throw const FormatException('Unsupported outcome');
+      phases.add(
+        NarrativePhase(
+          id: '${snapshot.turnId}:$id',
+          title: redactLearningText(title.trim()),
+          summary: redactLearningText(summary.trim()),
+          status: status,
+          evidence: List.unmodifiable(facts),
+        ),
+      );
+    }
+    return phases;
   }
 
   LearningCard _validate(
@@ -492,6 +775,8 @@ class LearningController extends ChangeNotifier {
     _cards.clear();
     _seen.clear();
     _itemFingerprints.clear();
+    _narrativePhases.clear();
+    _latestNarrative = null;
     super.dispose();
   }
 }
@@ -557,3 +842,7 @@ String redactLearningText(String text) {
   );
   return value.replaceAll(RegExp(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]'), '');
 }
+
+/// Shared privacy filter for local progress-fact collection.
+bool isLearningSensitivePath(String path) => _sensitivePath(path);
+bool isLearningSensitiveCommand(String command) => _sensitiveCommand(command);

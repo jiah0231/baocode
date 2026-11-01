@@ -68,28 +68,46 @@ class LearningControls extends StatelessWidget {
             secondary: true,
             padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
             onPressed: activate,
-            dropdownTooltip: t('讲解模型与设置', 'Explanation model and settings'),
+            dropdownTooltip: t(
+              '气泡与过程讲述设置',
+              'Bubble and work narrative settings',
+            ),
             onDropdown: (anchor) =>
                 unawaited(scope.configure(context, anchor: anchor)),
           ),
         ),
       ),
     );
-    final status = !controller.enabled
+    final review = scope.preferences.needsConsentReview;
+    final status = review
+        ? t('请重新确认分享范围', 'Review expanded sharing')
+        : !controller.enabled
         ? null
         : controller.budgetReached
         ? t('本次额度已用完', 'Session limit reached')
-        : controller.error != null
+        : controller.explanationBudgetReached
+        ? t('余量留给工作过程', 'Remaining budget reserved for progress')
+        : (controller.error != null || controller.narrativeError != null)
         ? t('讲解暂不可用', 'Learning unavailable')
         : null;
-    final detail = controller.budgetReached
+    final detail = review
         ? t(
-            '本次会话的讲解请求已到安全上限，不再发送新的讲解请求。已有讲解仍可阅读，主任务不受影响。',
-            'This conversation has reached its explanation request limit. No new explanation requests will be sent. Existing lessons remain readable; the working agent is unaffected.',
+            '过程讲述现在也由独立模型生成。旧版气泡授权已失效；请打开设置，查看两项功能的上下文分享与费用说明后重新确认。在此之前不会发送新请求。',
+            'The work narrative is now model-generated too. Earlier bubble-only consent is no longer sufficient. Open settings to review context sharing and shared costs for both features. No new requests are sent until you confirm.',
+          )
+        : controller.budgetReached
+        ? t(
+            '知识气泡和过程讲述共用的本次会话请求已到安全上限，两者都不再发送新请求。已有内容仍可阅读，主任务不受影响。',
+            'Knowledge bubbles and the work narrative have reached their shared session request limit. Neither sends new requests. Existing content remains readable; the working agent is unaffected.',
+          )
+        : controller.explanationBudgetReached
+        ? t(
+            '本次会话不再生成新气泡；剩余请求专用于阶段叙述与收尾整理。已有内容仍可阅读。',
+            'No more bubbles will be generated this session. Remaining requests are reserved for progress narration and its closing summary. Existing content remains readable.',
           )
         : t(
-            '未能生成这次讲解，主任务不受影响。可暂停讲解，或通过右侧菜单检查独立模型设置。不会显示提供商的原始错误内容。',
-            'This explanation could not be prepared; the working agent is unaffected. Pause learning or check the independent model in the menu. Raw provider errors are not displayed.',
+            '这次气泡或过程讲述未能生成，主任务不受影响。暂停会一起停止两者；也可在菜单中检查独立模型设置。不显示提供商的原始错误。',
+            'This bubble or work narrative could not be prepared; the working agent is unaffected. Pause stops both, or check the independent model in the menu. Raw provider errors are not displayed.',
           );
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 280),

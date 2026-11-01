@@ -25,8 +25,8 @@ Future<void> showLearningSettingsDialog(
       type: IdeDialogType.info,
       message: t('先添加一个讲解模型', 'Add an explanation model first'),
       detail: t(
-        '在设置 → 模型中添加并启用提供商和聊天模型，再回来选择。讲解模型独立于工作 Agent，当前不会发送任何上下文。',
-        'Add and enable a provider and chat model in Settings → Models, then return here. The explanation model is independent of your working agent. No context is being sent.',
+        '在设置 → 模型中添加并启用提供商和聊天模型，再回来选择。此独立模型同时用于知识气泡和过程讲述；当前没有可用模型，不会发送上下文或用本地模板冒充模型讲述。',
+        'Add and enable a provider and chat model in Settings → Models, then return here. This independent model supplies both knowledge bubbles and the work narrative. No model is currently available: no context is sent and no local template is presented as a model narrative.',
       ),
       buttons: [t('知道了', 'Got it')],
       cancel: null,
@@ -112,12 +112,12 @@ Future<void> showLearningSettingsDialog(
       final result = await showIdeDialog(
         context,
         type: IdeDialogType.info,
-        message: t('开启独立讲解？', 'Enable independent explanations?'),
+        message: t('开启讲解与过程讲述？', 'Enable explanations and work narrative?'),
         detail: t(
-          '讲解模型：${choice.label}\n\n只发送已完成操作中经过限量、尽力脱敏的代码、diff 或工具输出摘录，不发送完整对话、环境或 Agent 的内部思考。自动脱敏并不保证识别所有敏感内容；请仅在允许向该提供商分享当前项目内容时开启。\n\n请求可能产生额外模型费用。讲解只读，不使用工具、不修改代码；可以随时暂停或关闭。更换提供商或模型需要重新确认。',
-          'Explanation model: ${choice.label}\n\nOnly bounded excerpts of completed operations—code, diffs or tool output—with best-effort secret redaction are sent. The full transcript, environment and agent’s private reasoning are not sent. Redaction cannot identify all sensitive content; enable only if you may share this project context with this provider.\n\nRequests may incur additional model costs. Explanations are read-only: no tools or code changes. Pause or turn off at any time. Changing the provider or model requires confirmation again.',
+          '独立模型：${choice.label}\n\n此模型同时生成操作旁的知识讲解气泡，以及右侧用自然语言串联阶段与进展的过程讲述；后者不是本地工具列表。两者共用请求频率和本次会话预算，可能产生额外模型费用。\n\n仅发送当前项目中限量、尽力脱敏的操作事实、代码、diff 和工具输出摘录；不发送完整对话、环境或 Agent 内部思考。自动脱敏不能保证识别所有敏感内容，请仅在允许向此提供商分享时开启。\n\n讲述基于可见证据，推测会明确标注，不代表 Agent 隐藏的真实思考。两者均只读、无工具、不修改代码，暂停或关闭会一起停止。旧版气泡授权不会自动开启过程讲述。',
+          'Independent model: ${choice.label}\n\nThis model generates both inline explanation bubbles and a model-written work narrative connecting stages and progress on the right—not a local tool list. Both share the request pace and session budget; additional model costs may apply.\n\nOnly bounded, best-effort-redacted operation facts, code, diffs and tool excerpts from this project are sent. No full transcript, environment or private agent reasoning is sent. Redaction is imperfect; enable only if you may share this context with this provider.\n\nNarratives use observable evidence and label speculation, not hidden reasoning. Both are read-only with no tools or code changes. Pause/off stops both. Earlier bubble-only consent does not enable the narrative.',
         ),
-        buttons: [t('同意并开启讲解', 'Agree and enable explanations')],
+        buttons: [t('同意并开启两项', 'Agree and enable both')],
       );
       if (result == 0 && context.mounted) {
         await preferences.configure(modelRef: choice.ref, consent: true);

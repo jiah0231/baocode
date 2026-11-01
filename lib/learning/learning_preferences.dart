@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/model_provider.dart';
 import '../models/model_providers.dart';
+import '../models/upstream.dart';
 import '../settings/user_settings.dart';
 import 'learning_models.dart';
 
@@ -52,6 +53,10 @@ class LearningPreferences extends ChangeNotifier {
   }
 
   static const settingKey = 'learning.sidebar';
+
+  /// Version 2 explicitly covers both operation bubbles and model-written
+  /// process narratives. Version 1 consent never authorizes the new requests.
+  static const consentVersion = 2;
   final Object? Function(String key) _read;
   final Future<void> Function(String key, Object? value) _write;
   final Listenable? _changes;
@@ -78,10 +83,17 @@ class LearningPreferences extends ChangeNotifier {
   /// disabled or changed provider cannot silently redirect background evidence.
   bool get enabled =>
       _value['enabled'] == true &&
-      _value['consentVersion'] == 1 &&
+      _value['consentVersion'] == consentVersion &&
       _value['scope'] == _scopeDigest &&
       selection != null &&
       _value['fingerprint'] == _fingerprint(modelRef!);
+
+  /// Preserve the saved model/depth/pace, but ask again before expanding what
+  /// the provider is asked to generate. Opening a trace is not consent.
+  bool get needsConsentReview =>
+      _value['enabled'] == true &&
+      modelRef != null &&
+      _value['consentVersion'] != consentVersion;
 
   (ModelProvider, ProviderModel)? get selection =>
       exactModel(providers, modelRef);
@@ -98,7 +110,8 @@ class LearningPreferences extends ChangeNotifier {
       Duration(seconds: pace == LearningPace.calm ? 24 : 12);
 
   /// Call only from the explicit consent action after showing the chosen
-  /// provider/model, contextual code disclosure, and possible usage costs.
+  /// provider/model, both generated surfaces (operation bubbles and process
+  /// narratives), bounded context sharing, and their shared usage costs.
   Future<void> configure({required String modelRef, required bool consent}) {
     if (!consent || exactModel(providers, modelRef) == null) {
       return Future.error(
@@ -109,14 +122,19 @@ class LearningPreferences extends ChangeNotifier {
     return _update({
       'model': modelRef,
       'enabled': true,
-      'consentVersion': 1,
+      'consentVersion': consentVersion,
       'scope': _scopeDigest,
       'fingerprint': fingerprint,
     });
   }
 
-  String get configurationToken =>
-      jsonEncode([enabled, modelRef, depth.name, pace.name]);
+  String get configurationToken => jsonEncode([
+    enabled,
+    needsConsentReview,
+    modelRef,
+    depth.name,
+    pace.name,
+  ]);
 
   Future<void> disable() => _update({'enabled': false});
   Future<void> setDepth(LearningDepth depth) => _update({'depth': depth.name});
@@ -161,6 +179,11 @@ class LearningPreferences extends ChangeNotifier {
         !model.enabled ||
         model.missing ||
         model.kind.generatesImages) {
+      return null;
+    }
+    // Explicit model endpoints and the managed Codex OAuth route are retained.
+    // An empty/invalid ordinary API base is not a usable default endpoint.
+    if (UpstreamUrls.endpoint(provider.speakingFor(model.id)) == null) {
       return null;
     }
     return (provider, model);

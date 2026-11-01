@@ -150,7 +150,7 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   List<String> openAgents = const [];
 
   // A session owns ephemeral explanations; observing is explicitly opt-in.
-  // The local work trace is independent of model configuration.
+  // Local trace facts feed the same consent-gated explanation scheduler.
   LearningController? _learning;
   LearningController get learning =>
       _learning ??= LearningController()
@@ -205,6 +205,7 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
         final index = _transcript.indexOf(event.id);
         if (index != null) completed = _transcript.itemAt(index);
       }
+      final traceRevision = workTrace.revision;
       workTrace.accept(event, completedItem: completed);
       // Post-turn/restored records may invalidate a stale bubble, but never
       // authorize a paid request. History and thought streams are ignored.
@@ -213,6 +214,14 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
         completedItem: completed,
         allowGeneration: _transcript.activeTurn != null,
       );
+      // Only meaningful accepted facts project a small cached snapshot. Token
+      // deltas and historical pages never enumerate the trace or pay a model.
+      if (workTrace.revision != traceRevision &&
+          (_transcript.activeTurn != null ||
+              event is TurnEnded && event.turnId == workTrace.currentTurnId)) {
+        final snapshot = workTrace.narrativeSnapshot;
+        if (snapshot != null) _learning?.submitNarrative(snapshot);
+      }
       notifyListeners();
     }
   }

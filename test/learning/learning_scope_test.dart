@@ -41,14 +41,21 @@ class ScopeGenerator implements LearningGenerator {
 }
 
 class StatusController extends LearningController {
-  StatusController({this.failure = false, this.limited = false});
-  final bool failure, limited;
+  StatusController({
+    this.failure = false,
+    this.limited = false,
+    this.narrativeFailure = false,
+  });
+  final bool failure, limited, narrativeFailure;
   @override
   bool get enabled => true;
   @override
   String? get error => failure ? 'private raw provider error' : null;
   @override
   bool get budgetReached => limited;
+  @override
+  String? get narrativeError =>
+      narrativeFailure ? 'private narrative transport error' : null;
 }
 
 void main() {
@@ -66,6 +73,7 @@ void main() {
         ModelProvider(
           id: 'synthetic',
           name: 'Synthetic provider',
+          baseUrl: 'https://synthetic.invalid',
           models: [ProviderModel(id: 'teaching')],
         ),
       ],
@@ -263,6 +271,35 @@ void main() {
       },
     );
   }
+
+  learningWidgetTest(
+    'shared controls expose narrative failure without raw provider text',
+    (tester) async {
+      initialize();
+      final controller = StatusController(narrativeFailure: true);
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Align(
+            child: LearningScope(
+              controller: controller,
+              preferences: preferences,
+              modelLabel: 'Synthetic model',
+              child: const LearningControls(),
+            ),
+          ),
+        ),
+      );
+      expect(find.text('Learning unavailable'), findsOneWidget);
+      expect(
+        find.textContaining('private narrative transport error'),
+        findsNothing,
+      );
+      expect(find.text('Pause learning'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 
   learningWidgetTest('legacy side panel never activates teaching', (
     tester,
