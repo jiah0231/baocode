@@ -60,9 +60,10 @@ class _UiCodexTransport extends MockCodexTransport {
 
 Future<ChatSession> pumpSession(
   WidgetTester tester,
-  KernelDescriptor kernel,
-) async {
-  final session = ChatSession(kernel: kernel, historyCount: 0);
+  KernelDescriptor kernel, {
+  List<KernelDescriptor>? kernels,
+}) async {
+  final session = ChatSession(kernel: kernel, kernels: kernels, historyCount: 0);
   addTearDown(session.dispose);
   await tester.pumpWidget(
     MaterialApp(
@@ -474,7 +475,12 @@ void main() {
         descriptor, context, start: (_) async => transport,
       ),
     );
-    final session = await pumpSession(tester, descriptor);
+    final session = await pumpSession(
+      tester,
+      descriptor,
+      kernels: [MockKernels.claudeCode, descriptor],
+    );
+    expect(session.kernelChoice?.selected.id, 'codex');
     session.send(const ComposerMessage(text: '把输入框改成随内容增高'));
     await runWhile(tester, () => session.pendingInteraction == null);
     expect(transport.methods, containsAllInOrder([

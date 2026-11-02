@@ -47,12 +47,16 @@ class TextMateWorkerTokenizer implements ITokenizedLines {
     this._host,
     this._languageId,
     this._encodedLanguageId,
-    this._maxTokenizationLineLength,
-  ) : _lines = lines {
+    this._maxTokenizationLineLength, {
+    // Instance-local clock injection lets tests exercise the yield deterministically.
+    Stopwatch Function() createStopwatch = Stopwatch.new,
+  }) : _lines = lines,
+       _createStopwatch = createStopwatch {
     unawaited(_resetTokenization());
   }
 
   final TextMateModelTokenizerHost _host;
+  final Stopwatch Function() _createStopwatch;
   List<String> _lines;
   int _versionId;
   String _languageId;
@@ -61,6 +65,7 @@ class TextMateWorkerTokenizer implements ITokenizedLines {
   TokenizerWithStateStore? _tokenizerWithStateStore;
   bool _isDisposed = false;
   Timer? _tokenizeDebouncer;
+  Timer? _tokenizeYield;
   bool _tokenizing = false;
   (int, int)? _viewport;
 
@@ -75,6 +80,9 @@ class TextMateWorkerTokenizer implements ITokenizedLines {
   void dispose() {
     _isDisposed = true;
     _tokenizeDebouncer?.cancel();
+    _tokenizeYield?.cancel();
+    _tokenizeYield = null;
+    _tokenizing = false;
   }
 
   void onLanguageId(String languageId, int encodedLanguageId) {
@@ -139,11 +147,13 @@ class TextMateWorkerTokenizer implements ITokenizedLines {
   }
 
   void _scheduleTokenize() {
+    if (_isDisposed) return;
     _tokenizeDebouncer?.cancel();
     _tokenizeDebouncer = Timer(const Duration(milliseconds: 10), _tokenize);
   }
 
   Future<void> _resetTokenization() async {
+    if (_isDisposed) return;
     _tokenizerWithStateStore = null;
 
     final languageId = _languageId;
@@ -181,7 +191,7 @@ class TextMateWorkerTokenizer implements ITokenizedLines {
     final tokenizer = _tokenizerWithStateStore;
     if (_isDisposed || tokenizer == null) return;
 
-    final watch = Stopwatch()..start();
+    final watch = _createStopwatch()..start();
 
     while (true) {
       var tokenizedLines = 0;
@@ -213,11 +223,14 @@ class TextMateWorkerTokenizer implements ITokenizedLines {
       if (tokenizedLines == 0) break;
 
       _host.setTokens(_versionId, tokenBuilder);
+      // The host may close this document while accepting its tokens.
+      if (_isDisposed) return;
 
       if (watch.elapsedMilliseconds > 20) {
         // yield to check for changes
         _tokenizing = true;
-        Timer.run(() {
+        _tokenizeYield = Timer(Duration.zero, () {
+          _tokenizeYield = null;
           _tokenizing = false;
           _tokenize();
         });
