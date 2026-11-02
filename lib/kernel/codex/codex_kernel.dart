@@ -615,11 +615,13 @@ class CodexKernel
 
   Future<Map<String, Object?>> _workspaceOptions({required bool start}) async {
     final workspace = _context.workspace?.call();
-    if (workspace == null) return const {};
     return {
-      ...CodexAppTools.instructions(workspace),
-      if (start && _restrictedWorkspace)
-        'dynamicTools': await _appTools.specs(),
+      if (workspace != null) ...CodexAppTools.instructions(workspace),
+      // Ordinary project chats need the same gated app-tool bridge as bots.
+      // The dispatcher is persisted at creation, so new registry tools remain
+      // discoverable after reload without changing the saved tool catalogue.
+      // thread/resume has no dynamicTools field; do not send an ignored field.
+      if (start) 'dynamicTools': await _appTools.specs(),
     };
   }
 
@@ -2683,8 +2685,7 @@ class CodexKernel
     if (method == 'item/tool/call') {
       final transport = _transport;
       final thread = _threadId;
-      if (!_restrictedWorkspace ||
-          thread == null ||
+      if (thread == null ||
           params['threadId'] != thread ||
           params['turnId'] != _serverTurn ||
           _serverTurn == null) {

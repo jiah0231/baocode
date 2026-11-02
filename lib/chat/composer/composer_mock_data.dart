@@ -22,9 +22,10 @@ class Suggestion {
     required String title,
     required this.id,
     required String project,
+    String kernel = '',
   }) : kind = SuggestionKind.session,
        label = title,
-       detail = '',
+       detail = kernel,
        icon = null,
        group = project,
        path = null;

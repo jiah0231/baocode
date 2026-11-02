@@ -54,6 +54,8 @@ jobs:
       - run: flutter pub get
       - run: flutter gen-l10n
       - run: flutter analyze --no-pub
+      - name: Test selected cross-kernel session retrieval
+        run: flutter test test/chat/session_query_test.dart test/chat/session_mentions_test.dart test/chat/composer_intercept_test.dart test/chat/composer_draft_sync_test.dart test/workspace/session_query_workspace_test.dart
       - name: Test updater and quit protections
         run: flutter test test/update test/workspace/quit_confirmation_test.dart test/workspace/usage_shutdown_test.dart
       - name: Test custom build configuration

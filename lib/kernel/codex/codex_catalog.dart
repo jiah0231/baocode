@@ -9,7 +9,7 @@ import 'codex_session_locations.dart';
 /// The conversations Codex keeps (`thread/list`), read from a short-lived
 /// `codex app-server`: no process stays up for the list. A remote project's
 /// are read on its host, where Codex keeps them.
-class CodexCatalog implements SessionCatalog, MovesSessions {
+class CodexCatalog implements SessionCatalog, MovesSessions, SessionHistoryCatalog {
   const CodexCatalog({
     this.startServer = startCodexCatalogServerFor,
     this.locations,
@@ -87,6 +87,60 @@ class CodexCatalog implements SessionCatalog, MovesSessions {
     },
     const [],
     ignoreUnavailable: !strict,
+  );
+
+  /// Query persisted turns without loading the target into a runtime. In
+  /// particular, thread/resume can activate a native goal and is forbidden here.
+  @override
+  Future<SessionTextPage> readTextPage(
+    SessionRecord session, {
+    String? cursor,
+  }) => _withServer(
+    session.cwd,
+    (server) async {
+      final result = await server.request('thread/turns/list', {
+        'threadId': session.id,
+        'limit': 30,
+        'itemsView': 'full',
+        'sortDirection': 'desc',
+        if (cursor != null) 'cursor': cursor,
+      });
+      final messages = <SessionTextMessage>[];
+      for (final turn in (result['data'] as List? ?? const []).reversed) {
+        if (turn is! Map) continue;
+        for (final item in turn['items'] as List? ?? const []) {
+          if (item is! Map) continue;
+          final role = switch (item['type']) {
+            'userMessage' => 'user',
+            'agentMessage' => 'assistant',
+            _ => '',
+          };
+          if (role.isEmpty) continue;
+          final text = role == 'assistant'
+              ? item['text'] as String? ?? ''
+              : [
+                  for (final part in item['content'] as List? ?? const [])
+                    if (part is Map && part['type'] == 'text' && part['text'] is String)
+                      part['text'] as String,
+                ].join('\n');
+          if (text.isNotEmpty) {
+            messages.add(SessionTextMessage(
+              role: role,
+              text: text,
+              id: item['id'] as String?,
+            ));
+          }
+        }
+      }
+      final next = result['nextCursor'] as String?;
+      return SessionTextPage(
+        messages: List.unmodifiable(messages),
+        nextCursor: next == null || next.isEmpty || next == cursor ? null : next,
+      );
+    },
+    const SessionTextPage(messages: []),
+    ignoreUnavailable: false,
+    experimentalApi: true,
   );
 
   /// Preserve history under the new project without rewriting Codex state.
@@ -205,6 +259,7 @@ class CodexCatalog implements SessionCatalog, MovesSessions {
     Future<T> Function(_Server server) body,
     T empty, {
     bool ignoreUnavailable = true,
+    bool experimentalApi = false,
   }) async {
     final CodexTransport transport;
     try {
@@ -218,6 +273,7 @@ class CodexCatalog implements SessionCatalog, MovesSessions {
     try {
       await server.request('initialize', {
         'clientInfo': {'name': 'baocode', 'version': '1.0.0'},
+        if (experimentalApi) 'capabilities': {'experimentalApi': true},
       });
       return await body(server);
     } on CodexUnavailable {

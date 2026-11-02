@@ -66,17 +66,37 @@ class ComposerDraft extends ChangeNotifier {
 
   /// A message to put back in, to be edited (a queued one taken back),
   /// taken by the composer that shows the draft, or by the next to.
-  ({String text, List<ImageAttachment> images})? get pendingMessage =>
+  ({
+    String text,
+    List<ImageAttachment> images,
+    List<String> sessionMentions,
+  })? get pendingMessage =>
       _pendingMessage;
-  ({String text, List<ImageAttachment> images})? _pendingMessage;
+  ({
+    String text,
+    List<ImageAttachment> images,
+    List<String> sessionMentions,
+  })? _pendingMessage;
 
-  void restore(String text, List<ImageAttachment> images) {
-    _pendingMessage = (text: text, images: images);
+  void restore(
+    String text,
+    List<ImageAttachment> images, {
+    List<String> sessionMentions = const [],
+  }) {
+    _pendingMessage = (
+      text: text,
+      images: images,
+      sessionMentions: List.unmodifiable(sessionMentions),
+    );
     notifyListeners();
   }
 
   /// [pendingMessage], no longer pending.
-  ({String text, List<ImageAttachment> images})? takeMessage() {
+  ({
+    String text,
+    List<ImageAttachment> images,
+    List<String> sessionMentions,
+  })? takeMessage() {
     final message = _pendingMessage;
     _pendingMessage = null;
     return message;

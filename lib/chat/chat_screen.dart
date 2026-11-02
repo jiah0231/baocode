@@ -738,6 +738,7 @@ class _ChatScreenState extends State<ChatScreen>
     final question = ComposerMessage(
       text: text.substring(_asideCommand.length + 1).trim(),
       mentions: message.mentions,
+      sessionMentions: message.sessionMentions,
       images: message.images,
     );
     if (!question.isEmpty) handler(question);

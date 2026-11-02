@@ -168,8 +168,46 @@ Future<String?> claudeUsageOffByAt(String? cwd) async {
 
 /// Claude Code's sessions: this machine's, and those of a remote project's
 /// host, listed as that project's (their folders as locations).
-class ClaudeCatalog implements SessionCatalog, MovesSessions {
-  const ClaudeCatalog({this.local = const ClaudeStorage()});
+class ClaudeCatalog implements SessionCatalog, MovesSessions, SessionHistoryCatalog {
+  const ClaudeCatalog({
+    this.local = const ClaudeStorage(),
+    this.readPage = readClaudeHistoryPage,
+  });
+
+  final Future<ClaudeHistoryPage> Function(
+    SessionRecord session, {required int turns, String? before}
+  ) readPage;
+
+  @override
+  Future<SessionTextPage> readTextPage(
+    SessionRecord session, {
+    String? cursor,
+  }) async {
+    final page = await readPage(session, turns: 30, before: cursor);
+    final messages = <SessionTextMessage>[];
+    for (final entry in page.entries) {
+      final role = entry['type'];
+      if (role != 'user' && role != 'assistant') continue;
+      final message = entry['message'];
+      if (message is! Map) continue;
+      final content = message['content'];
+      final text = content is String ? content : [
+        for (final part in content is List ? content : const [])
+          if (part is Map && part['type'] == 'text' && part['text'] is String)
+            part['text'] as String,
+      ].join('\n');
+      if (text.isEmpty) continue;
+      messages.add(SessionTextMessage(
+        role: role as String,
+        text: text,
+        id: entry['uuid'] as String?,
+      ));
+    }
+    return SessionTextPage(
+      messages: List.unmodifiable(messages),
+      nextCursor: page.earlier == cursor ? null : page.earlier,
+    );
+  }
 
   final ClaudeStorage local;
 

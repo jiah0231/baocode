@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:baocode/chat/session_query.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/claude_code/claude_sdk_tools.dart';
 import 'package:baocode/kernel/codex/codex_kernel.dart';
@@ -107,6 +108,114 @@ void main() {
     kernel.send(const KernelTurn(id: 'ours', text: 'hello'));
     await pumpEventQueue(times: 50);
   }
+
+  for (final hasWorkspace in [false, true]) {
+    test('ordinary chat registers and invokes tools (workspace=$hasWorkspace)', () async {
+      kernel.dispose();
+      server = _Server();
+      kernel = CodexKernel.withTransport(
+        MockKernels.codex,
+        server,
+        context: KernelContext(
+          cwd: '/ordinary',
+          workspace: hasWorkspace
+              ? () => const KernelWorkspace(folders: [], instructions: 'project rules')
+              : null,
+        ),
+      );
+      await begin();
+      final params = server.written.firstWhere(
+        (m) => m['method'] == 'thread/start',
+      )['params'] as Map;
+      final names = (params['dynamicTools'] as List)
+          .map((tool) => (tool as Map)['name']);
+      expect(names, containsAll(['baocode_dispatch', 'bot_probe']));
+      expect(params['sandbox'], isNot('read-only'));
+      server.request(910, 'item/tool/call', {
+        'threadId': 'thread', 'turnId': 'turn', 'callId': 'ordinary-call',
+        'tool': 'bot_probe', 'arguments': {},
+      });
+      server.request(911, 'item/tool/call', {
+        'threadId': 'foreign', 'turnId': 'turn', 'callId': 'foreign-call',
+        'tool': 'bot_probe', 'arguments': {},
+      });
+      await pumpEventQueue();
+      expect(calls, 1);
+      expect((server.written.firstWhere((m) => m['id'] == 910)['result'] as Map)['success'], true);
+      expect((server.written.firstWhere((m) => m['id'] == 911)['result'] as Map)['success'], false);
+    });
+  }
+
+  test('ordinary transport retrieves only selected Claude conversation', () async {
+    kernel.dispose();
+    server = _Server();
+    kernel = CodexKernel.withTransport(
+      MockKernels.codex,
+      server,
+      context: const KernelContext(cwd: '/ordinary'),
+    );
+    final reads = <String>[];
+    final queries = SessionQueryService(read: (id) async {
+      reads.add(id);
+      return SessionQuerySnapshot(
+        targetId: id, title: 'Claude task', kernel: 'Claude Code',
+        messages: const [SessionQueryMessage(
+          index: 0, role: 'assistant', text: 'The port is 8123.',
+        )],
+      );
+    })..register();
+    addTearDown(queries.dispose);
+    final capability = queries.grant(
+      ['claude-code:target'], callerSessionId: () => kernel.sessionId,
+    );
+    await begin();
+    final start = server.written.firstWhere(
+      (m) => m['method'] == 'thread/start',
+    )['params'] as Map;
+    expect((start['dynamicTools'] as List).map((t) => (t as Map)['name']),
+        contains('session_query'));
+    for (final (rpc, target) in [(913, 'claude-code:target'), (914, 'claude-code:secret')]) {
+      server.request(rpc, 'item/tool/call', {
+        'threadId': 'thread', 'turnId': 'turn', 'callId': 'query-$rpc',
+        'tool': 'session_query',
+        'arguments': {'capability': capability, 'session_id': target},
+      });
+    }
+    await pumpEventQueue();
+    expect(reads, ['claude-code:target']);
+    final answer = server.written.firstWhere((m) => m['id'] == 913)['result'] as Map;
+    expect(answer['success'], true);
+    expect(answer['contentItems'].toString(), contains('8123'));
+    expect((server.written.firstWhere((m) => m['id'] == 914)['result'] as Map)['success'], false);
+  });
+
+  test('resumed ordinary chat serves persisted dispatcher with current registry', () async {
+    kernel.dispose();
+    server = _Server();
+    kernel = CodexKernel.withTransport(
+      MockKernels.codex,
+      server,
+      context: KernelContext(
+        cwd: '/ordinary',
+        resume: SessionRecord(id: 'thread', title: 'Saved', updatedAt: DateTime(2026)),
+      ),
+    );
+    await begin();
+    final params = server.written.firstWhere(
+      (m) => m['method'] == 'thread/resume',
+    )['params'] as Map;
+    // Existing dispatcher metadata is restored by app-server, not replaced
+    // by an unsupported dynamicTools argument on resume.
+    expect(params.containsKey('dynamicTools'), false);
+    server.request(912, 'item/tool/call', {
+      'threadId': 'thread', 'turnId': 'turn', 'callId': 'resumed-call',
+      'tool': 'baocode_dispatch',
+      'arguments': {'operation': 'call', 'name': 'bot_probe', 'arguments': {}},
+    });
+    await pumpEventQueue();
+    expect(calls, 1);
+    expect((server.written.firstWhere((m) => m['id'] == 912)['result'] as Map)['success'], true);
+  });
 
   test('bot thread uses dynamic tools and isolated restrictions even with full-access choice', () async {
     await begin();

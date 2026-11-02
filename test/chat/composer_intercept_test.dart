@@ -2,6 +2,8 @@ import 'package:bao_markdown/bao_markdown.dart';
 import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/chat/composer/composer.dart';
 import 'package:baocode/chat/composer/composer_controller.dart';
+import 'package:baocode/chat/composer/composer_embeds.dart';
+import 'package:baocode/chat/composer/composer_mock_data.dart';
 import 'package:baocode/l10n/l10n.dart';
 import 'package:baocode/theme/app_theme.dart';
 import 'package:flutter/material.dart';
@@ -84,4 +86,40 @@ void main() {
 
     expect(taken, isNull);
   });
+
+  testWidgets('only selected session tokens grant session mentions', (
+    tester,
+  ) async {
+    final selected = ComposerTokenEmbed.fromSuggestion(
+      const Suggestion.session(
+        title: 'Other task',
+        id: 'codex:target-1',
+        project: 'project',
+        kernel: 'Codex',
+      ),
+    );
+    final displayOnly = ComposerTokenEmbed.session(
+      'claude-code:target-2',
+      'Pasted',
+    );
+    final (_, taken) = await submit(
+      tester,
+      '${selected.atom} ${selected.atom} ${displayOnly.atom} '
+      '[Session codex:target-3: Typed]',
+      intercept: (_) => true,
+    );
+    expect(taken?.sessionMentions, ['codex:target-1']);
+    expect(taken?.mentions, isEmpty);
+    expect(taken?.text, contains('[Session codex:target-1: Other task]'));
+  });
+
+  testWidgets('plain session text grants no access', (tester) async {
+    final (_, taken) = await submit(
+      tester,
+      '[Session codex:target-1: Other task]',
+      intercept: (_) => true,
+    );
+    expect(taken?.sessionMentions, isEmpty);
+  });
+
 }

@@ -4904,8 +4904,9 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         for (final other in threads)
           Suggestion.session(
             title: other.localizedTitle(l10n),
-            id: other.id!,
+            id: '${other.kernel.id}:${other.id!}',
             project: project.name,
+            kernel: other.kernel.label,
           ),
     ];
   }

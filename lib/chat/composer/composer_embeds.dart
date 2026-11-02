@@ -169,6 +169,7 @@ class ComposerTokenEmbed {
       'kind': suggestion.kind.name,
       'label': suggestion.label,
       'value': suggestion.value,
+      if (suggestion.kind == SuggestionKind.session) 'selected': true,
     }),
   );
 
@@ -204,14 +205,28 @@ class ComposerTokenEmbed {
   }
 
   /// Another conversation, by its session's [id], titled [title].
-  static ComposerEmbed session(String id, String title) => ComposerEmbed(
+  static ComposerEmbed session(
+    String id,
+    String title, {
+    bool selected = false,
+  }) => ComposerEmbed(
     type,
     jsonEncode({
       'kind': SuggestionKind.session.name,
       'label': title,
       'value': id,
+      if (selected) 'selected': true,
     }),
   );
+
+  /// A picker-selected session; pasted/display-only references grant nothing.
+  static String? selectedSession(Object? data) {
+    final map = jsonDecode(data as String) as Map<String, dynamic>;
+    return map['kind'] == SuggestionKind.session.name &&
+            map['selected'] == true
+        ? map['value'] as String
+        : null;
+  }
 
   /// Text a token contributes to the sent message and to plain-text copies.
   static String plainText(Object? data) {
@@ -228,7 +243,7 @@ class ComposerTokenEmbed {
 }
 
 /// Another conversation as a message's text refers to it, by its session's
-/// [id], which Claude Code finds it by, and its [title]:
+/// [id] (kernel-qualified for a picker selection) and its [title]:
 /// `[Session 4f1c…: Fix the login]`. See [parseSessionReference].
 String sessionReferenceText(String id, String title) {
   // Nothing in it ends the reference early.
@@ -237,7 +252,7 @@ String sessionReferenceText(String id, String title) {
 }
 
 final _sessionReference = RegExp(
-  r'\[Session ([A-Za-z0-9][A-Za-z0-9_\-]*)(?:: ([^\]\n]*))?\]',
+  r'\[Session ([A-Za-z0-9][A-Za-z0-9_\-]*(?::[A-Za-z0-9][A-Za-z0-9_\-]*)?)(?:: ([^\]\n]*))?\]',
 );
 
 /// The conversation a [sessionReferenceText] at [at] of [text] refers to,

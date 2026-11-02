@@ -29,6 +29,8 @@ jobs:
       - name: Analyze
         id: analyze
         run: flutter analyze --no-pub
+      - name: Test selected cross-kernel session retrieval
+        run: flutter test test/chat/session_query_test.dart test/chat/session_mentions_test.dart test/chat/composer_intercept_test.dart test/chat/composer_draft_sync_test.dart test/workspace/session_query_workspace_test.dart
       - name: Test changed components
         run: flutter test test/kernel test/usage test/models/proxy test/workspace/usage_shutdown_test.dart test/workspace/quit_confirmation_test.dart test/settings/codex_path_settings_test.dart test/settings/codex_install_controls_test.dart test/customize test/bots test/chat/goal_panel_test.dart test/chat/streamed_words_test.dart test/claude_runtime_test.dart test/models/codex_test.dart test/models/codex_quota_format_test.dart test/update test/link/chat_codec_test.dart test/ide/lsp/packs/lsp_settings_template_test.dart
       - name: Test custom update channel fail-closed configuration

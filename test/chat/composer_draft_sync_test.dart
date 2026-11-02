@@ -79,4 +79,32 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
   });
+
+  testWidgets('restored queued selections survive but plain references do not', (
+    tester,
+  ) async {
+    final session = ChatSession(historyCount: 0);
+    addTearDown(session.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(),
+        home: Scaffold(
+          body: ChatComposer(session: session, draft: session.draft),
+        ),
+      ),
+    );
+    await tester.pump();
+    session.draft.restore(
+      '[Session codex:one: Selected] [Session claude-code:two: Plain]',
+      const [],
+      sessionMentions: ['codex:one'],
+    );
+    await tester.pump();
+    final selected = composerPieces(_controller(tester, 0).text)
+        .whereType<ComposerEmbed>()
+        .map((embed) => ComposerTokenEmbed.selectedSession(embed.data))
+        .toList();
+    expect(selected, ['codex:one', null]);
+  });
+
 }

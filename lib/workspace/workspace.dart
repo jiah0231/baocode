@@ -12,6 +12,7 @@ import '../chat/composer/composer_draft.dart';
 import '../chat/composer/composer_embeds.dart' show composerContentFromOps;
 import '../chat/mock_conversation.dart';
 import '../chat/resume_after_reset.dart';
+import '../chat/session_query.dart';
 import '../icons/emoji_sheet.dart';
 import '../icons/icon_library.dart';
 import '../icons/project_icon.dart';
@@ -282,9 +283,98 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
        _preferredKernel = (kernels ?? KernelRegistry.all).first,
        _store = preferences,
        _draftStore = drafts {
+    sessionQueries = SessionQueryService(
+      read: _readSelectedSession,
+      readOlder: (id, cursor) => _readSelectedSession(id, cursor: cursor),
+      isAvailable: (id) => _queryTarget(id) != null,
+    )..register();
     this.icons
       ..onRemoved = _forgetIconImage
       ..addListener(notifyListeners);
+  }
+
+  /// Shared read-only tool route for both kernels; no target turn is sent.
+  late final SessionQueryService sessionQueries;
+
+  AgentThread? _queryTarget(String targetId) {
+    if (_disposed) return null;
+    return _threads.where((thread) => !thread.archived &&
+        listsInSidebar(thread) && thread.id != null &&
+        '${thread.kernel.id}:${thread.id}' == targetId).firstOrNull;
+  }
+
+  Future<SessionQuerySnapshot?> _readSelectedSession(
+    String targetId, {String? cursor}
+  ) async {
+    final thread = _queryTarget(targetId);
+    if (thread == null) return null;
+    final catalog = thread.kernel.catalog;
+    if (catalog is SessionHistoryCatalog) {
+      var record = thread.record;
+      // A newly running conversation may not yet have its storage path in the
+      // sidebar. Resolve only its catalog identity; never guess a storage path.
+      if (record == null) {
+        record = (await catalog.sessionsIn(thread.project.path))
+            .where((record) => record.id == thread.id).firstOrNull;
+      }
+      record ??= SessionRecord(
+        id: thread.id!, title: thread.title, updatedAt: thread.updatedAt,
+        cwd: thread.project.path,
+      );
+      final position = cursor == null ? null : jsonDecode(cursor) as Map;
+      final page = await catalog.readTextPage(
+        record, cursor: position?['cursor'] as String?,
+      );
+      if (!identical(_queryTarget(targetId), thread)) return null;
+      final end = position?['end'] as int? ?? page.messages.length;
+      final start = end - page.messages.length;
+      return SessionQuerySnapshot(
+        targetId: targetId,
+        title: thread.title,
+        kernel: thread.kernel.label,
+        busy: thread.isOpen && thread.session.isStreaming,
+        messages: [
+          for (var i = 0; i < page.messages.length; i++)
+            SessionQueryMessage(index: start + i,
+                role: page.messages[i].role, text: page.messages[i].text),
+        ],
+        hasEarlierHistory: page.nextCursor != null,
+        olderCursor: page.nextCursor == null ? null : jsonEncode({
+          'cursor': page.nextCursor, 'end': start,
+        }),
+      );
+    }
+    // Test/custom kernels without a read-only catalog can expose only their
+    // already-loaded history. Never open/resume a target to query it: Codex
+    // thread/resume can wake a native goal, even without turn/start.
+    if (!thread.isOpen || cursor != null) return null;
+    final session = thread.session;
+    final messages = <SessionQueryMessage>[];
+    var characters = 0;
+    var truncated = session.hasEarlierHistory;
+    for (var i = session.itemCount - 1; i >= 0; i--) {
+      final item = session.itemAt(i);
+      final (role, text) = switch (item) {
+        UserMessageItem(:final text, queued: false) => ('user', text),
+        AssistantTextItem(:final text) => ('assistant', text),
+        _ => ('', ''),
+      };
+      if (text.isEmpty) continue;
+      if (messages.length >= 500 || characters >= 200000) {
+        truncated = true;
+        break;
+      }
+      final available = 200000 - characters;
+      final bounded = text.length <= available ? text : text.substring(0, available);
+      truncated |= bounded.length < text.length;
+      characters += bounded.length;
+      messages.add(SessionQueryMessage(index: i, role: role, text: bounded));
+    }
+    return SessionQuerySnapshot(
+      targetId: targetId, title: thread.title, kernel: thread.kernel.label,
+      messages: List.unmodifiable(messages.reversed),
+      busy: session.isStreaming, hasEarlierHistory: truncated,
+    );
   }
 
   /// The kernels new agents may run on.
@@ -2682,6 +2772,12 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
 
   void _listen(AgentThread thread) {
     if (_listeners.containsKey(thread)) return;
+    thread.session
+      ..sessionQueries = sessionQueries
+      ..canQuerySession = (id) {
+        final target = _queryTarget(id);
+        return target != null && !identical(target, thread);
+      };
     // Named while closed: its CLI keeps the name once running.
     if (_names[thread.record?.id] case final name?) thread.session.rename(name);
     _followDraft(thread);
@@ -3687,6 +3783,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   @override
   void dispose() {
     _disposed = true;
+    sessionQueries.dispose();
     if (resumes.resume == _resumeAfterReset) resumes.resume = null;
     icons.removeListener(notifyListeners);
     for (final MapEntry(key: path, value: listener) in _unreached.entries) {

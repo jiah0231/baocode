@@ -443,6 +443,30 @@ abstract interface class SessionCatalog {
   Future<void> delete(String id);
 }
 
+/// A read-only catalog history page. Reading never starts/resumes a target
+/// agent or grants it the querying conversation's permissions.
+abstract interface class SessionHistoryCatalog {
+  Future<SessionTextPage> readTextPage(
+    SessionRecord session, {
+    String? cursor,
+  });
+}
+
+class SessionTextMessage {
+  const SessionTextMessage({required this.role, required this.text, this.id});
+  final String role;
+  final String text;
+  final String? id;
+}
+
+class SessionTextPage {
+  const SessionTextPage({required this.messages, this.nextCursor});
+
+  /// User/assistant prose only, oldest first; no tool output or reasoning.
+  final List<SessionTextMessage> messages;
+  final String? nextCursor;
+}
+
 /// A [SessionCatalog] that can have a directory's sessions belong to
 /// another (a project's folder moved): listed, and continued, there.
 abstract interface class MovesSessions {

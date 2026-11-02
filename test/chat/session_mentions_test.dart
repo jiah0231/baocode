@@ -69,11 +69,11 @@ void main() {
     // The highlighted row says so to assistive technologies.
     final semantics = tester.ensureSemantics();
     expect(
-      tester.getSemantics(find.bySemanticsLabel('Chat a2, a')),
+      tester.getSemantics(find.bySemanticsLabel('Chat a2, Claude Code, a')),
       isSemantics(isButton: true, isSelected: true),
     );
     expect(
-      tester.getSemantics(find.bySemanticsLabel('Chat b1, b')),
+      tester.getSemantics(find.bySemanticsLabel('Chat b1, Claude Code, b')),
       isSemantics(isButton: true, isSelected: false),
     );
     semantics.dispose();
@@ -89,9 +89,13 @@ void main() {
     await pressKey(tester, LogicalKeyboardKey.enter);
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.byType(SuggestionMenu), findsNothing);
-    expect(content(tester), 'see [[Session b1: Chat b1]] ');
+    expect(content(tester), 'see [[Session claude-code:b1: Chat b1]] ');
+    final selected = composerPieces(composerController(tester).text)
+        .whereType<ComposerEmbed>()
+        .single;
+    expect(ComposerTokenEmbed.selectedSession(selected.data), 'claude-code:b1');
 
-    // Sent, it names the session for Claude Code to find.
+    // Sent, it names the kernel-qualified session for the query bridge.
     final session = workspace.selected.session;
     await pressKey(tester, LogicalKeyboardKey.enter);
     expect(
@@ -99,7 +103,7 @@ void main() {
         for (var i = 0; i < session.itemCount; i++)
           if (session.itemAt(i) case final UserMessageItem item) item.text,
       ],
-      ['see [Session b1: Chat b1]'],
+      ['see [Session claude-code:b1: Chat b1]'],
     );
     session.stop();
     await tester.pump(const Duration(seconds: 1));
@@ -188,6 +192,10 @@ void main() {
       expect(parseSessionReference(text, 0), isNull);
       expect(parseSessionReference('[Session 4f1c]', 0)?.title, '');
       expect(parseSessionReference('[Sessions are fun]', 0), isNull);
+      expect(
+        parseSessionReference('[Session codex:4f1c-9a: Fix login]', 0)?.id,
+        'codex:4f1c-9a',
+      );
     });
 
     test('pasted or shown again, is the conversation\'s tag', () {
@@ -204,6 +212,10 @@ void main() {
         (pieces[1] as ComposerEmbed).data,
       );
       expect((token.label, token.value), ('Chat b1', 'b1'));
+      expect(
+        ComposerTokenEmbed.selectedSession((pieces[1] as ComposerEmbed).data),
+        isNull,
+      );
       expect(pieces[2], ' now');
     });
   });
