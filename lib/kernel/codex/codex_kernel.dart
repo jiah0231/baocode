@@ -19,10 +19,12 @@ import '../../models/model_provider.dart';
 import '../../models/model_providers.dart';
 import '../../models/model_runtime.dart';
 import '../../remote/project_host.dart';
+import '../../remote/remote_codex.dart' show remoteCodexProxy;
 import '../../settings/user_settings.dart';
 import '../../workspace/editor_launcher.dart' show openExternal;
 import '../agent_kernel.dart';
 import '../claude_code/claude_elicitation.dart';
+import '../claude_code/claude_sdk_tools.dart';
 import '../kernel_event.dart';
 import '../kernel_types.dart';
 import '../prompt_suggestions.dart';
@@ -33,6 +35,7 @@ import 'codex_goals.dart';
 import 'codex_process_transport.dart';
 import 'codex_transport.dart';
 import 'codex_skills.dart';
+import 'codex_session_mcp.dart';
 
 /// Adapts `codex app-server` to [AgentKernel].
 ///
@@ -457,6 +460,8 @@ class CodexKernel
   CodexTransport? _transport;
   StreamSubscription<Map<String, Object?>>? _subscription;
   Future<void>? _starting;
+  int _lifecycleEpoch = 0;
+  final Set<CodexKernel> _forkHelpers = {};
   Future<void>? _threadStarting;
   late final _goals = CodexGoals(
     request: (method, params) => _request(method, params),
@@ -625,10 +630,88 @@ class CodexKernel
     };
   }
 
+  CodexSessionMcp? _sessionMcp;
+  Future<Map<String, Object?>>? _sessionMcpConfig;
+  int _sessionMcpGeneration = 0;
+  bool _sessionMcpUnavailable = false;
+
+  void _closeSessionMcp() {
+    _sessionMcpGeneration++;
+    _sessionMcpConfig = null;
+    final bridge = _sessionMcp;
+    _sessionMcp = null;
+    if (bridge != null) unawaited(bridge.close());
+  }
+
+  Future<Map<String, Object?>> _legacySessionMcpConfig() =>
+      _sessionMcpConfig ??= _openSessionMcp();
+
+  Future<Map<String, Object?>> _openSessionMcp() async {
+    final generation = _sessionMcpGeneration;
+    final cwd = _context.cwd ?? _context.resume?.cwd ?? '';
+    final bridge = await CodexSessionMcp.start(
+      cwd: cwd, sessionId: () => _sessionId,
+    );
+    try {
+      final endpoint = await remoteCodexProxy(bridge.endpoint, cwd);
+      if (_disposed || generation != _sessionMcpGeneration) {
+        throw StateError('Session MCP startup cancelled.');
+      }
+      _sessionMcp = bridge;
+      return bridge.configuration(endpoint: endpoint);
+    } on Object {
+      await bridge.close();
+      rethrow;
+    }
+  }
+
   Future<Map<String, Object?>?> _threadConfig(
     Map<String, Object?>? proxy,
   ) async {
-    if (!_restrictedWorkspace) return proxy;
+    final checkRuntime = _runtimeGuard();
+    if (!_restrictedWorkspace) {
+      // Older saved threads cannot add dynamic tools on resume. An authenticated
+      // MCP server is a supported per-thread config override, with exactly the
+      // same caller-bound grants. Never apply this to isolated bot workspaces.
+      if (_sessionId == null ||
+          ClaudeSdkTools.called('mcp__baocode__session_query') == null) {
+        return proxy;
+      }
+      try {
+        final response = await _request('config/read', {
+          'includeLayers': false, 'cwd': ?_projectPath,
+        });
+        checkRuntime();
+        final configured = response['config'];
+        if (configured is! Map) {
+          throw const CodexUnavailable('Cannot preserve existing MCP configuration');
+        }
+        final bridge = await _legacySessionMcpConfig();
+        checkRuntime();
+        _sessionMcpUnavailable = false;
+        return {
+          ...?proxy,
+          'mcp_servers': {
+            ...?(configured['mcp_servers'] as Map?)?.cast<String, Object?>(),
+            ...?(proxy?['mcp_servers'] as Map?)?.cast<String, Object?>(),
+            ...(bridge['mcp_servers'] as Map).cast<String, Object?>(),
+          },
+        };
+      } on Object {
+        // A compatibility endpoint is optional for ordinary conversation use.
+        // Do not swallow lifecycle cancellation or revive a stopped runtime.
+        checkRuntime();
+        _closeSessionMcp();
+        _sessionMcpUnavailable = true;
+        emit(ItemUpserted(nextSeq, 'session-query-unavailable', const NoticeItem(
+          NoticeKind.warning,
+          'The @session compatibility bridge is unavailable. Ordinary chat '
+          'still works; older conversations may need a new chat to retrieve '
+          'selected sessions.',
+        )));
+        return proxy;
+      }
+    }
     if (!CodexAppTools.supportsRestrictedBots(_serverUserAgent)) {
       throw const CodexUnavailable(
         'Codex bots require the reviewed stable Codex 0.166.x release. Select a compatible Codex path in Settings; ordinary Codex chats remain available.',
@@ -638,6 +721,7 @@ class CodexKernel
       'includeLayers': false,
       'cwd': ?_projectPath,
     });
+    checkRuntime();
     final config = response['config'];
     if (config is! Map) {
       throw const CodexUnavailable(
@@ -721,16 +805,34 @@ class CodexKernel
   void restart() {
     if (_disposed) return;
     final turn = _turn;
+    final previous = _starting;
     _teardown();
-    _starting = null;
+    final epoch = _lifecycleEpoch;
+    _setHealth(KernelHealth.idle);
+    // A launch already in flight must finish (and close its transport)
+    // before its replacement starts. Repeated retries join this chain.
+    final restart = () async {
+      try {
+        await previous;
+      } on Object {
+        // The previous launch was cancelled by teardown.
+      }
+      if (!_disposed && epoch == _lifecycleEpoch) {
+        await _open(resume: true);
+      }
+    }();
+    unawaited(_trackStarting(restart).catchError((Object _) {}));
+    // Ending a turn can synchronously start its queued successor. Install
+    // the handoff first so that successor joins it instead of opening a
+    // second replacement process.
     if (turn != null) {
       _endTurn(turn, interrupted: true);
     }
-    _setHealth(KernelHealth.idle);
-    unawaited(_ensureStarted().catchError((Object _) {}));
   }
 
   void _teardown() {
+    _lifecycleEpoch++;
+    _closeSessionMcp();
     _cancelHistoryReplay();
     _appTools.cancel();
     for (final output in _commandOutput.values) {
@@ -741,6 +843,8 @@ class CodexKernel
     if (subscription != null) unawaited(subscription.cancel());
     _transport?.close();
     _transport = null;
+    _threadId = null;
+    _threadStarting = null;
     _initialized = false;
     _serverUserAgent = null;
     final stopped = StateError('Codex stopped');
@@ -753,6 +857,10 @@ class CodexKernel
   Future<void> _ensureStarted({bool resume = true}) {
     if (_starting case final starting?) {
       return starting.then<void>((_) async {
+        if (_disposed) return;
+        if (_starting != null && !identical(_starting, starting)) {
+          return _ensureStarted(resume: resume);
+        }
         if (resume && _sessionId != null && _threadId == null) {
           await _resumeInitialized();
         }
@@ -760,18 +868,36 @@ class CodexKernel
     }
     if (_transport != null && _initialized && !_released) {
       if (resume && _sessionId != null && _threadId == null) {
-        return _resumeInitialized();
+        return _trackStarting(_resumeInitialized());
       }
       return Future.value();
     }
-    return _starting = _open(resume: resume)
-        .whenComplete(() => _starting = null);
+    return _trackStarting(_open(resume: resume));
   }
 
+  Future<void> _trackStarting(Future<void> operation) {
+    late final Future<void> tracked;
+    tracked = operation.whenComplete(() {
+      if (identical(_starting, tracked)) _starting = null;
+    });
+    return _starting = tracked;
+  }
+
+  Future<void> _waitForStopped() => _stopped.timeout(
+    const Duration(seconds: 10),
+    onTimeout: () => throw const CodexUnavailable(
+      'Codex is still closing this conversation',
+      detail: 'The previous app-server has not exited. Wait for it to finish, '
+          'then retry. The conversation and its writer lock were not changed.',
+    ),
+  );
+
   Future<void> _resumeInitialized() async {
+    final epoch = _lifecycleEpoch;
     try {
       await _ensureThread();
     } on Object catch (error) {
+      if (_disposed || epoch != _lifecycleEpoch) rethrow;
       _teardown();
       _setHealth(
         KernelHealth(
@@ -785,13 +911,20 @@ class CodexKernel
   }
 
   Future<void> _open({required bool resume}) async {
+    final epoch = _lifecycleEpoch;
+    bool cancelled() => _disposed || epoch != _lifecycleEpoch;
     _released = false;
     // Off the caller's stack: a chat first built may be the one asking
     // (in its `initState`), and health reported before that build ends
     // would notify its listeners mid-build.
     await null;
+    if (cancelled()) throw StateError('Codex startup cancelled');
     _setHealth(const KernelHealth(KernelHealthStatus.starting));
     try {
+      // close() requests shutdown; only exited proves the old writer is gone.
+      // Never replace this barrier with lock deletion or an unbounded retry.
+      await _waitForStopped();
+      if (cancelled()) throw StateError('Codex startup cancelled');
       final transport = await _start(
         CodexLaunch(
           cwd: _context.cwd ?? _context.resume?.cwd ?? '',
@@ -802,12 +935,13 @@ class CodexKernel
           effort: _effort,
         ),
       );
-      if (_disposed) {
+      _stopped = transport.exited;
+      if (cancelled()) {
         transport.close();
-        return;
+        await _waitForStopped();
+        throw StateError('Codex startup cancelled');
       }
       _transport = transport;
-      _stopped = transport.exited;
       _subscription = transport.messages.listen(
         (message) => _receive(message, transport),
       );
@@ -827,20 +961,27 @@ class CodexKernel
       }
       _initialized = true;
       await _loadModels();
+      if (cancelled()) throw StateError('Codex startup cancelled');
       await _loadSkills();
+      if (cancelled()) throw StateError('Codex startup cancelled');
       await _loadPrompts();
+      if (cancelled()) throw StateError('Codex startup cancelled');
       // A new chat starts its thread with its first message, so no empty
       // one is kept for a chat the user only looked at.
       if (resume && _sessionId != null) await _resumeThread();
-      if (_disposed || !identical(_transport, transport)) return;
+      if (cancelled() || !identical(_transport, transport)) {
+        throw StateError('Codex startup cancelled');
+      }
       _setHealth(KernelHealth.ready);
     } on CodexFolderGone catch (error) {
+      if (cancelled()) rethrow;
       _teardown();
       _setHealth(
         KernelHealth(KernelHealthStatus.failed, missingFolder: error.folder),
       );
       rethrow;
     } on CodexUnavailable catch (error) {
+      if (cancelled()) rethrow;
       _teardown();
       _setHealth(
         KernelHealth(
@@ -851,6 +992,7 @@ class CodexKernel
       );
       rethrow;
     } on Object catch (error) {
+      if (cancelled()) rethrow;
       _teardown();
       _setHealth(
         KernelHealth(
@@ -877,8 +1019,12 @@ class CodexKernel
     for (final output in _commandOutput.values) {
       output.close();
     }
+    _lifecycleEpoch++;
     _cancelHistoryReplay();
+    _closeSessionMcp();
     _transport = null;
+    _threadId = null;
+    _threadStarting = null;
     _initialized = false;
     final stopped = StateError('Codex stopped');
     for (final response in _responses.values) {
@@ -900,6 +1046,9 @@ class CodexKernel
     if (_disposed) return;
     _disposed = true;
     _providers.removeListener(_providersChanged);
+    for (final helper in _forkHelpers.toList()) {
+      helper.dispose();
+    }
     _teardown();
     closeEvents();
   }
@@ -1243,18 +1392,37 @@ class CodexKernel
     );
   }
 
+  /// Bind asynchronous preparation to the process that requested it.
+  void Function() _runtimeGuard() {
+    final epoch = _lifecycleEpoch;
+    final transport = _transport;
+    return () {
+      if (_disposed ||
+          transport == null ||
+          epoch != _lifecycleEpoch ||
+          !identical(_transport, transport)) {
+        throw StateError('Codex runtime was replaced');
+      }
+    };
+  }
+
   /// The thread [threadId] as a copy of itself on the provider the model
   /// now picked is of, its id the conversation's from here on: the server
   /// keeps a thread to the provider it began on, a resume on another
   /// staying on its own.
   Future<void> _forkToProvider(String threadId) async {
+    final checkRuntime = _runtimeGuard();
     final proxied = await _proxyThread();
+    checkRuntime();
     final config = await _threadConfig(proxied?.config);
+    checkRuntime();
     final workspaceOptions = await _workspaceOptions(start: false);
+    checkRuntime();
     final Map<String, Object?>? thread;
     try {
       final result = await _request('thread/fork', {
         'threadId': threadId,
+        if (_supportsForkBoundary) 'deferGoalContinuation': true,
         'approvalPolicy': _approvalPolicy,
         'sandbox': _sandboxMode,
         // None for Default: the server's own pick.
@@ -1263,8 +1431,10 @@ class CodexKernel
         'config': ?config,
         ...workspaceOptions,
       });
+      checkRuntime();
       thread = (result['thread'] as Map?)?.cast<String, Object?>();
     } on CodexRpcError catch (error) {
+      checkRuntime();
       // A thread no turn ran on is nothing to copy: begun again on the
       // provider picked (see [_ensureThread]).
       if (!error.message.toLowerCase().contains('no rollout')) rethrow;
@@ -1279,17 +1449,23 @@ class CodexKernel
         'Codex could not go on with another provider',
       );
     }
-    _threadId = id;
     _sessionId = id;
-    _goals.attach(id);
-    unawaited(_goals.refresh());
-    _threadProvider = _providerOf(_modelId);
+    _threadId = null;
+    // This server now owns both the old and forked threads. Moving the UI
+    // to the fork without closing it strands the old writer, so opening
+    // the original history row would conflict even in one BaoCode window.
+    _teardown();
+    await _ensureStarted();
   }
 
   Future<void> _startThread() async {
+    final checkRuntime = _runtimeGuard();
     final proxied = await _proxyThread();
+    checkRuntime();
     final config = await _threadConfig(proxied?.config);
+    checkRuntime();
     final workspaceOptions = await _workspaceOptions(start: true);
+    checkRuntime();
     final result = await _request('thread/start', {
       'cwd': ?_projectPath,
       'model': ?_modelForServer,
@@ -1300,16 +1476,21 @@ class CodexKernel
       'approvalPolicy': _approvalPolicy,
       'sandbox': _sandboxMode,
     });
+    checkRuntime();
     _applyThread((result['thread'] as Map?)?.cast<String, Object?>());
     _applyTier(result['serviceTier']);
   }
 
   Future<void> _resumeThread() async {
+    final checkRuntime = _runtimeGuard();
     final id = _sessionId;
     if (id == null) return _startThread();
     final proxied = await _proxyThread();
+    checkRuntime();
     final config = await _threadConfig(proxied?.config);
+    checkRuntime();
     final workspaceOptions = await _workspaceOptions(start: false);
+    checkRuntime();
     final result = await _request('thread/resume', {
       'threadId': id,
       'cwd': ?_projectPath,
@@ -1321,6 +1502,7 @@ class CodexKernel
       'approvalPolicy': _approvalPolicy,
       'sandbox': _sandboxMode,
     });
+    checkRuntime();
     final thread = (result['thread'] as Map?)?.cast<String, Object?>();
     _applyThread(thread);
     _applyTier(result['serviceTier']);
@@ -1338,6 +1520,7 @@ class CodexKernel
         // A server without paged turns keeps no earlier history to show.
       }
     }
+    checkRuntime();
     unawaited(_refreshTasks());
   }
 
@@ -1494,6 +1677,7 @@ class CodexKernel
   Future<void> _run(KernelTurn turn) async {
     try {
       await _ensureStarted();
+      if (_disposed || _stoppedTurns.contains(turn.id) || _turn != turn.id) return;
       // Picked on the other side of BaoCode since the thread began: the
       // server keeps it to the side it began on, so it goes on as a copy
       // of itself there (see [_forkToProvider]).
@@ -1501,6 +1685,7 @@ class CodexKernel
           when !_sameWay(_threadProvider, _modelId ?? '')) {
         await _forkToProvider(threadId);
       }
+      if (_disposed || _stoppedTurns.contains(turn.id) || _turn != turn.id) return;
       await _ensureThread();
       if (_stoppedTurns.contains(turn.id) || _turn != turn.id) return;
       // A native goal may start work while thread/resume is pending.
@@ -1563,11 +1748,13 @@ class CodexKernel
   }
 
   Future<void> _createThread() async {
+    final checkRuntime = _runtimeGuard();
     if (_sessionId != null) {
       await _resumeThread();
     } else {
       await _startThread();
     }
+    checkRuntime();
     final threadId = _threadId;
     final name = _pendingName;
     if (threadId != null && name != null) {
@@ -1585,7 +1772,17 @@ class CodexKernel
         'url': 'data:${image.mediaType};base64,${base64Encode(image.bytes)}',
       },
     ],
-    for (final note in turn.notes) {'type': 'text', 'text': note},
+    for (final note in turn.notes) {
+      'type': 'text',
+      'text': _sessionMcpUnavailable &&
+              note.contains('session_query') && note.contains('capability=')
+          ? 'The user selected @session targets, but cross-conversation retrieval '
+              'is unavailable for this request because its compatibility bridge '
+              'could not start. Tell the user to retry; do not claim to have read '
+              'the targets, infer their contents from IDs, read raw session files, '
+              'or fork/restart another conversation as a fallback.'
+          : note,
+    },
     if (CodexSkill.invoked(turn.text, _skills) case final skill?) skill.input,
     if (turn.text.isNotEmpty)
       {
@@ -1856,12 +2053,46 @@ class CodexKernel
           );
         }
       }
-      final result = await _request('thread/fork', {
-        'threadId': threadId,
-        'beforeTurnId': ?beforeTurn,
-        // A copied native goal must wait for the user's next message.
-        if (_supportsForkBoundary) 'deferGoalContinuation': true,
-      });
+      // A fork is a live writer, not just a saved record. Creating it on
+      // the source server would leave that server owning the child's lock
+      // when Workspace opens the child on another server. Use an isolated
+      // server and wait for its exit before publishing the child record.
+      final helper = CodexKernel(
+        descriptor,
+        _context,
+        start: _start,
+        providers: _providers,
+        providerProxy: _proxy,
+      );
+      _forkHelpers.add(helper);
+      Map<String, Object?> result;
+      try {
+        await helper._ensureStarted(resume: false);
+        if (_disposed) throw StateError('The source conversation was closed.');
+        if (cut != null && !helper._supportsForkBoundary) {
+          throw const CodexUnavailable(
+            'The fork server cannot preserve the requested history boundary.',
+          );
+        }
+        result = await helper._request('thread/fork', {
+          'threadId': threadId,
+          'beforeTurnId': ?beforeTurn,
+          // A copied native goal must wait for the user's next message.
+          if (helper._supportsForkBoundary) 'deferGoalContinuation': true,
+        });
+        final childId = (result['thread'] as Map?)?['id'] as String?;
+        if (childId != null && childId.isNotEmpty && childId != threadId) {
+          await helper._name(childId, title);
+        }
+      } finally {
+        helper.dispose();
+        try {
+          await helper._waitForStopped();
+        } finally {
+          _forkHelpers.remove(helper);
+        }
+      }
+      if (_disposed) throw StateError('The source conversation was closed.');
       final thread = (result['thread'] as Map?)?.cast<String, Object?>();
       final id = thread?['id'] as String?;
       if (id == null || id.isEmpty || id == threadId) {
@@ -1869,7 +2100,6 @@ class CodexKernel
           'Codex did not return a separate forked conversation.',
         );
       }
-      await _name(id, title);
       return SessionRecord(
         id: id,
         title: title,

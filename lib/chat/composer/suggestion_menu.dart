@@ -305,7 +305,15 @@ class _SuggestionRow extends StatelessWidget {
                 // A conversation's title takes the room it needs, up to all.
                 if (suggestion.detail.isEmpty)
                   Expanded(child: label)
-                else ...[
+                else if (suggestion.kind == SuggestionKind.session) ...[
+                  Expanded(child: label),
+                  const SizedBox(width: 8),
+                  Text(
+                    suggestion.detail,
+                    maxLines: 1,
+                    style: TextStyle(color: AppColors.textFaint, fontSize: 11.5),
+                  ),
+                ] else ...[
                   label,
                   const SizedBox(width: 8),
                   Expanded(

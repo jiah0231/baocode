@@ -72,6 +72,22 @@ void main() {
   });
   tearDown(() => service.dispose());
 
+  test('oversized page clearly reports unavailable within-page text', () async {
+    service.dispose();
+    service = SessionQueryService(read: (id) async => SessionQuerySnapshot(
+      targetId: id, title: 'Large page', kernel: 'Codex',
+      messages: [SessionQueryMessage(index: 0, role: 'assistant',
+          text: List.filled(200001, 'x').join())],
+    ))..register();
+    final token = service.grant(['codex:target'], callerSessionId: () => 'source');
+    final output = await ClaudeSdkTools.called('mcp__baocode__session_query')!.run({
+      'capability': token, 'session_id': 'codex:target',
+    }, const ClaudeSdkCall(cwd: '/project', sessionId: 'source'));
+    final result = jsonDecode(output as String) as Map;
+    expect(result['truncated_window'], true);
+    expect(result['coverage_warning'], contains('cannot be recovered'));
+  });
+
   test('Claude route reads selected Codex snapshot with attribution and pages', () async {
     final result = payload(await invoke());
     expect(result['source']['kernel'], 'Codex');

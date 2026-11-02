@@ -15,12 +15,23 @@ class _Catalog implements SessionCatalog, SessionHistoryCatalog {
   _Catalog(this.id);
   final String id;
   int reads = 0;
+  bool oversized = false;
+  String? oversizedText;
+  final readIds = <String>[];
   bool paged = false;
   final cursors = <String?>[];
 
   @override
   Future<SessionTextPage> readTextPage(SessionRecord session, {String? cursor}) async {
     reads++;
+    readIds.add(session.id);
+    if (oversized) {
+      return SessionTextPage(messages: [
+        const SessionTextMessage(role: 'assistant', text: 'Earlier port 7000', id: 'old'),
+        SessionTextMessage(role: 'assistant', id: 'large',
+            text: oversizedText ?? 'Important port 9000. ${List.filled(200010, 'x').join()}'),
+      ]);
+    }
     cursors.add(cursor);
     if (cursor == 'older-1') {
       return SessionTextPage(
@@ -66,7 +77,7 @@ class _Kernel implements AgentKernel, PreparesConversation, QueuesMessages {
   @override
   final KernelDescriptor descriptor;
   @override
-  final String? sessionId;
+  String? sessionId;
   final controller = StreamController<KernelEvent>.broadcast(sync: true);
   final sent = <KernelTurn>[];
   int seq = 0;
@@ -228,6 +239,52 @@ void main() {
     expect(catalogs['target']!.reads, 1);
   });
 
+  test('a provider-forked live ID never reads its stale sidebar record', () async {
+    await target.session.prepareConversation();
+    kernels['target']!.sessionId = 'forked-target';
+    final token = grant(ids: ['claude-code:forked-target']);
+    final result = await query(token, targetId: 'claude-code:forked-target');
+    expect((result['source'] as Map)['session_id'], 'claude-code:forked-target');
+    expect(catalogs['target']!.readIds, ['forked-target']);
+  });
+
+  test('oversized storage page continues within the page without losing older text', () async {
+    catalogs['target']!.oversized = true;
+    final token = grant();
+    final first = await query(token);
+    expect(first['messages'], isEmpty); // the tail has no matching keyword
+    expect(first['truncated_window'], false);
+    expect(first['next_history_available'], true);
+    final rest = await query(token, older: true);
+    final messages = rest['messages'] as List;
+    expect(messages.map((m) => m['text']).join(' '), contains('Important port 9000'));
+    expect(messages.map((m) => m['text']).join(' '), contains('Earlier port 7000'));
+    expect(messages.last['start_character'], 0);
+    expect(rest['next_history_available'], false);
+    expect(catalogs['target']!.reads, 2);
+  });
+
+  test('literal queries spanning a large-message window boundary are found', () async {
+    final catalog = catalogs['target']!..oversized = true;
+    catalog.oversizedText = '${List.filled(200000, 'x').join()}'
+        'port${List.filled(199998, 'x').join()}';
+    final token = grant();
+    final first = await query(token); // first window starts halfway through port
+    expect(first['messages'], isEmpty);
+    final next = await query(token, older: true);
+    expect((next['messages'] as List).map((m) => m['text']).join(), contains('port'));
+  });
+
+  test('same-page continuation rejects changed history rather than shifting offsets', () async {
+    catalogs['target']!.oversized = true;
+    final token = grant();
+    await query(token);
+    catalogs['target']!.oversized = false;
+    await expectLater(query(token, older: true), throwsA(isA<StateError>()
+        .having((error) => error.message, 'message', contains('changed'))));
+    expect(target.isOpen, isFalse);
+  });
+
   test('older windows use internal cursors and negative before indexes', () async {
     final catalog = catalogs['target']!..paged = true;
     final token = grant();
@@ -289,8 +346,27 @@ void main() {
     source.session.cancelQueued(kernel.sent.last.id);
     await expectLater(query(token), throwsStateError);
     token = grant();
+    kernel.controller.add(TurnStarted(++kernel.seq, kernel.sent.last.id));
     source.session.stop();
     await expectLater(query(token), throwsStateError);
+  });
+
+  test('ending one request preserves still-queued grants only', () async {
+    final first = grant();
+    final kernel = kernels['source']!;
+    final firstId = kernel.sent.last.id;
+    final queued = grant();
+    final queuedId = kernel.sent.last.id;
+    kernel.controller.add(TurnEnded(++kernel.seq, firstId));
+    await expectLater(query(first), throwsStateError);
+    expect((await query(queued))['mode'], 'read_only_history');
+    // A queued message taken into the active turn must not retain access after
+    // that turn ends, even if the CLI does not give it a separate end event.
+    kernel.controller.add(ItemUpserted(
+      ++kernel.seq, queuedId, const UserMessageItem(text: 'taken into turn'),
+    ));
+    kernel.controller.add(TurnEnded(++kernel.seq, 'shared-active-turn'));
+    await expectLater(query(queued), throwsStateError);
   });
 
   test('editing a local queued message preserves only its explicit selections', () async {

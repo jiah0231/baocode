@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:baocode/chat/session_query.dart';
+import 'package:baocode/chat/chat_models.dart';
+import 'package:baocode/kernel/kernel_event.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/claude_code/claude_sdk_tools.dart';
 import 'package:baocode/kernel/codex/codex_kernel.dart';
@@ -189,6 +191,63 @@ void main() {
     expect((server.written.firstWhere((m) => m['id'] == 914)['result'] as Map)['success'], false);
   });
 
+  test('legacy ordinary resume adds authenticated MCP and preserves configured servers', () async {
+    kernel.dispose();
+    server = _Server();
+    kernel = CodexKernel.withTransport(
+      MockKernels.codex, server,
+      context: KernelContext(cwd: '/ordinary', resume: SessionRecord(
+        id: 'thread', title: 'Legacy', updatedAt: DateTime(2026), cwd: '/ordinary',
+      )),
+    );
+    final queries = SessionQueryService(read: (_) async => null)..register();
+    addTearDown(queries.dispose);
+    expect(await kernel.prepareConversation(), true);
+    final params = server.written.firstWhere(
+      (m) => m['method'] == 'thread/resume',
+    )['params'] as Map;
+    expect(params.containsKey('dynamicTools'), false);
+    final mcp = (params['config'] as Map)['mcp_servers'] as Map;
+    expect(mcp['external'], {'enabled': true});
+    final bridge = mcp['baocode_session'] as Map;
+    final url = Uri.parse(bridge['url'] as String);
+    expect(url.host, '127.0.0.1');
+    expect(url.path, '/mcp');
+    expect(url.hasPort, true);
+    expect((bridge['http_headers'] as Map)['Authorization'], startsWith('Bearer '));
+    expect(bridge['enabled_tools'], ['session_query']);
+    expect(server.written.any((m) => m['method'] == 'turn/start'), false);
+  });
+
+  test('optional MCP setup failure warns but ordinary legacy chat still resumes', () async {
+    kernel.dispose();
+    server = _Server()..configAvailable = false;
+    kernel = CodexKernel.withTransport(
+      MockKernels.codex, server,
+      context: KernelContext(cwd: '/ordinary', resume: SessionRecord(
+        id: 'thread', title: 'Legacy', updatedAt: DateTime(2026), cwd: '/ordinary',
+      )),
+    );
+    final queries = SessionQueryService(read: (_) async => null)..register();
+    addTearDown(queries.dispose);
+    final events = <KernelEvent>[];
+    kernel.events.listen(events.add);
+    expect(await kernel.prepareConversation(), true);
+    kernel.send(const KernelTurn(id: 'ours', text: 'Read selected session', notes: [
+      'Use session_query capability=secret-placeholder for selected target',
+    ]));
+    await pumpEventQueue(times: 50);
+    expect(server.written.any((m) => m['method'] == 'thread/resume'), true);
+    expect(server.written.any((m) => m['method'] == 'turn/start'), true);
+    final turn = server.written.firstWhere((m) => m['method'] == 'turn/start')['params'] as Map;
+    expect(turn['input'].toString(), contains('unavailable for this request'));
+    expect(turn['input'].toString(), isNot(contains('secret-placeholder')));
+    expect(events.whereType<ItemUpserted>().any((event) =>
+      event.item is NoticeItem &&
+      (event.item as NoticeItem).kind == NoticeKind.warning &&
+      (event.item as NoticeItem).text.contains('@session')), true);
+  });
+
   test('resumed ordinary chat serves persisted dispatcher with current registry', () async {
     kernel.dispose();
     server = _Server();
@@ -197,7 +256,7 @@ void main() {
       server,
       context: KernelContext(
         cwd: '/ordinary',
-        resume: SessionRecord(id: 'thread', title: 'Saved', updatedAt: DateTime(2026)),
+        resume: SessionRecord(id: 'thread', title: 'Saved', updatedAt: DateTime(2026), cwd: '/ordinary'),
       ),
     );
     await begin();

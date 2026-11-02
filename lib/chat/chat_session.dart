@@ -178,12 +178,7 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
 
   void _apply(KernelEvent event) {
     if (event case TurnEnded(:final turnId)) {
-      // During-turn queued messages may share the active turn's end event.
-      // Keep only grants whose messages are still waiting in the queue.
-      final waiting = _transcript.queued.map((entry) => entry.$1).toSet();
-      for (final id in _sessionQueryGrants.keys.toList()) {
-        if (id == turnId || !waiting.contains(id)) _revokeSessionQuery(id);
-      }
+      _revokeActiveSessionQueries(turnId);
     }
     if (event case SessionRenamed(:final title)) {
       _renamed = title;
@@ -1085,13 +1080,6 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
     return [editor?.note ?? OpenEditor.closedNote];
   }
 
-  /// Sends [message]; [now], taken up at once, the turn running stopped
-  /// for it (rather than queued behind it). With a plan awaiting (see
-  /// [awaitingPlan]), it says what should change in it.
-  ///
-  /// [editor] gives the file open in the editor beside the chat, where
-  /// there is one; the agent is told of it as it changes. [notes] go to the
-  /// agent with it, not shown (each a `<system-reminder>`).
   /// Set by the workspace, which revalidates picker selections at send time.
   SessionQueryService? sessionQueries;
   bool Function(String targetId)? canQuerySession;
@@ -1102,6 +1090,15 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
     _sessionQuerySelections.remove(turnId);
     final token = _sessionQueryGrants.remove(turnId);
     if (token != null) sessionQueries?.revoke(token);
+  }
+
+  void _revokeActiveSessionQueries(String? turnId) {
+    // During-turn messages share an end event; after-turn messages still in
+    // the queue retain their own authorization when the current turn stops.
+    final waiting = _transcript.queued.map((entry) => entry.$1).toSet();
+    for (final id in _sessionQueryGrants.keys.toList()) {
+      if (id == turnId || !waiting.contains(id)) _revokeSessionQuery(id);
+    }
   }
 
   void _revokeSessionQueries() {
@@ -1130,7 +1127,8 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
     return ['The user explicitly selected these conversations for this request: '
         '${jsonEncode(targets)}. Retrieve needed context on demand with '
         'session_query (Claude: mcp__baocode__session_query; Codex: session_query '
-        'or baocode_dispatch operation=call name=session_query). '
+        'or baocode_dispatch operation=call name=session_query; saved Codex sessions '
+        'can use the baocode_session MCP server session_query tool). '
         'Arguments: capability=${jsonEncode(token)}, session_id=one selected ID, '
         'optional query (literal search), before (returned next_before), or '
         'older=true to read the next bounded archive page when next_history_available. '
@@ -1142,6 +1140,13 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
         'Access expires when this request ends; reselect with @ for another request.'];
   }
 
+  /// Sends [message]; [now], taken up at once, the turn running stopped
+  /// for it (rather than queued behind it). With a plan awaiting (see
+  /// [awaitingPlan]), it says what should change in it.
+  ///
+  /// [editor] gives the file open in the editor beside the chat, where
+  /// there is one; the agent is told of it as it changes. [notes] go to the
+  /// agent with it, not shown (each a `<system-reminder>`).
   void send(
     ComposerMessage message, {
     bool now = false,
@@ -1255,7 +1260,7 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   }
 
   void stop() {
-    _revokeSessionQueries();
+    _revokeActiveSessionQueries(_transcript.activeTurn);
     _kernel.cancel();
   }
 

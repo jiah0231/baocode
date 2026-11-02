@@ -56,6 +56,7 @@ class _Server implements CodexTransport {
   Map<String, Object?>? pendingResume;
   Map<String, Object?>? pendingTurn;
   int turns = 0;
+  bool get isClosed => _exited.isCompleted;
   @override
   Stream<Map<String, Object?>> get messages => _out.stream;
   @override
@@ -186,10 +187,28 @@ class _Harness {
         );
         configureServer?.call(server);
         servers.add(server);
+        allServers.add(server);
+        var firstLaunch = true;
         final kernel = CodexKernel(
           descriptor,
           context,
-          start: (_) async => server,
+          start: (_) async {
+            if (firstLaunch) {
+              firstLaunch = false;
+              return server;
+            }
+            // A fork helper is a separate app-server, never the source's
+            // transport. Preserve the configured protocol/failure behavior
+            // while giving it independent streams and process lifetime.
+            final helper = _Server(server.configPath);
+            configureServer?.call(helper);
+            helper
+              ..version = server.version
+              ..forkId = server.forkId
+              ..failFork = server.failFork;
+            allServers.add(helper);
+            return helper;
+          },
           providers: providers,
           providerProxy: () async => null,
         );
@@ -200,7 +219,15 @@ class _Harness {
   }
   final providers = ModelProviders.memory(providers: []);
   void Function(_Server)? configureServer;
+  // Reserved transports for user-facing kernels; helpers are additional
+  // launches made by those kernels and live only in allServers.
   final servers = <_Server>[];
+  final allServers = <_Server>[];
+  Iterable<Map<String, Object?>> requests(String method) =>
+      allServers.expand((server) => server.requests(method));
+  Iterable<_Server> get forkServers => allServers.where(
+    (server) => server.requests('thread/fork').isNotEmpty,
+  );
   final kernels = <CodexKernel>[];
   late final KernelDescriptor descriptor;
   // A Workspace can also create a default empty conversation. Resolve the
@@ -249,14 +276,21 @@ void main() {
       final server = h.servers.single;
       expect(server.requests('thread/resume'), isEmpty);
       expect(server.requests('turn/start'), isEmpty);
-      expect(server.requests('thread/fork').single['params'], {
+      expect(h.requests('thread/fork').single['params'], {
         'threadId': 'source',
         'deferGoalContinuation': true,
       });
-      expect(server.requests('thread/name/set').single['params'], {
+      expect(h.requests('thread/name/set').single['params'], {
         'threadId': 'forked',
         'name': 'copy',
       });
+      final helper = h.forkServers.single;
+      expect(helper, isNot(same(server)));
+      expect(helper.isClosed, isTrue);
+      expect(helper.requests('thread/resume'), isEmpty);
+      expect(helper.requests('turn/start'), isEmpty);
+      expect(server.isClosed, isFalse);
+      expect(server.requests('thread/fork'), isEmpty);
       expect(server.requests('thread/revert'), isEmpty);
       expect(server.requests('thread/rollback'), isEmpty);
     },
@@ -344,7 +378,7 @@ void main() {
         expect(await session.fork(title: 'copy'), isNull);
         expect(session.sessionId, 'source');
         expect(_items(session).whereType<NoticeItem>(), isNotEmpty);
-        expect(server.requests('thread/name/set'), isEmpty);
+        expect(h.requests('thread/name/set'), isEmpty);
         expect(server.requests('thread/resume'), isEmpty);
       },
     );
@@ -370,10 +404,10 @@ void main() {
       });
       await pumpEventQueue();
       expect(completed, isFalse);
-      expect(server.requests('thread/fork'), hasLength(1));
+      expect(h.requests('thread/fork'), hasLength(1));
       server.releaseResume();
       expect((await second)?.id, 'forked');
-      expect(server.requests('thread/fork'), hasLength(2));
+      expect(h.requests('thread/fork'), hasLength(2));
       expect(server.requests('thread/resume'), hasLength(1));
       expect(session.sessionId, 'source');
     },
@@ -447,7 +481,7 @@ void main() {
       });
       await pumpEventQueue();
       expect(completed, isFalse);
-      expect(server.requests('thread/fork'), isEmpty);
+      expect(h.requests('thread/fork'), isEmpty);
       server.releaseResume();
       expect((await fork)?.id, 'forked');
     },
@@ -470,7 +504,7 @@ void main() {
       expect(session.canFork, isTrue);
       final record = await session.fork(title: 'copy');
       expect(record?.id, 'forked');
-      expect(h.servers.single.requests('thread/fork').single['params'], {
+      expect(h.requests('thread/fork').single['params'], {
         'threadId': 'source',
         'beforeTurnId': 'server-turn-1',
         'deferGoalContinuation': true,
@@ -483,6 +517,9 @@ void main() {
       );
       expect(h.servers.single.requests('turn/interrupt'), isEmpty);
       expect(h.servers.single.requests('thread/revert'), isEmpty);
+      expect(h.forkServers.single.isClosed, isTrue);
+      expect(h.servers.single.isClosed, isFalse);
+      expect(h.servers.single.requests('thread/fork'), isEmpty);
     },
   );
 
@@ -505,7 +542,7 @@ void main() {
       await pumpEventQueue();
       expect(session.isStreaming, isTrue);
       expect((await session.fork(title: 'copy'))?.id, 'forked');
-      expect(server.requests('thread/fork').single['params'], {
+      expect(h.requests('thread/fork').single['params'], {
         'threadId': 'source',
         'beforeTurnId': 'native-goal-turn',
         'deferGoalContinuation': true,
@@ -536,7 +573,7 @@ void main() {
       });
       expect((await fork)?.id, 'forked');
       expect(
-        (server.requests('thread/fork').single['params']
+        (h.requests('thread/fork').single['params']
             as Map)['beforeTurnId'],
         'server-turn-1',
       );
@@ -558,7 +595,7 @@ void main() {
       await pumpEventQueue();
       expect(server.pendingTurn, isNotNull);
       expect(await session.fork(title: 'unsafe copy'), isNull);
-      expect(server.requests('thread/fork'), isEmpty);
+      expect(h.requests('thread/fork'), isEmpty);
       expect(_items(session).whereType<NoticeItem>(), isNotEmpty);
       expect(session.isStreaming, isTrue);
       server.releaseTurn();
@@ -578,7 +615,7 @@ void main() {
       session.send(const ComposerMessage(text: 'Working'));
       await pumpEventQueue();
       expect(await session.fork(title: 'unsafe copy'), isNull);
-      expect(server.requests('thread/fork'), isEmpty);
+      expect(h.requests('thread/fork'), isEmpty);
       expect(_items(session).whereType<NoticeItem>(), isNotEmpty);
       server.push({
         'method': 'turn/completed',
@@ -590,7 +627,7 @@ void main() {
       await pumpEventQueue();
       expect((await session.fork(title: 'safe copy'))?.id, 'forked');
       expect(
-        (server.requests('thread/fork').single['params'] as Map).containsKey(
+        (h.requests('thread/fork').single['params'] as Map).containsKey(
           'beforeTurnId',
         ),
         isFalse,
@@ -603,7 +640,7 @@ void main() {
       final h = _Harness();
       final session = h.session();
       addTearDown(session.dispose);
-      final server = h.servers.single..version = version;
+      h.servers.single.version = version;
       h.kernels.single.prepare();
       await pumpEventQueue();
       session.send(const ComposerMessage(text: 'Working'));
@@ -612,13 +649,13 @@ void main() {
       if (version == '0.167.0') {
         expect(fork?.id, 'forked');
         expect(
-          (server.requests('thread/fork').single['params']
+          (h.requests('thread/fork').single['params']
               as Map)['beforeTurnId'],
           'server-turn-1',
         );
       } else {
         expect(fork, isNull);
-        expect(server.requests('thread/fork'), isEmpty);
+        expect(h.requests('thread/fork'), isEmpty);
         expect(_items(session).whereType<NoticeItem>(), isNotEmpty);
       }
       expect(session.sessionId, 'source');
@@ -706,7 +743,7 @@ void main() {
         expect(aside.id, 'forked');
         expect(workspace.parentOf(aside), same(source));
         expect(workspace.asidesAt(source)[at], [same(aside)]);
-        expect(server.requests('thread/fork').single['params'], {
+        expect(h.requests('thread/fork').single['params'], {
           'threadId': 'source',
           if (running) 'beforeTurnId': 'server-turn-1',
           'deferGoalContinuation': true,
@@ -941,9 +978,7 @@ void main() {
       workspace.threads.where((thread) => thread.id == 'forked'),
       hasLength(1),
     );
-    final request = h.servers
-        .expand((server) => server.requests('thread/fork'))
-        .single;
+    final request = h.requests('thread/fork').single;
     expect((request['params'] as Map)['beforeTurnId'], 'server-turn-1');
     expect(source.session.isStreaming, isTrue);
     await tester.pumpWidget(const SizedBox());

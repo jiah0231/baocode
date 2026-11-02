@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:baocode/chat/session_query.dart';
+import 'package:baocode/kernel/codex/codex_session_mcp.dart';
 import 'package:baocode/kernel/codex/codex_install.dart';
 import 'package:baocode/kernel/codex/codex_app_tools.dart';
 import 'package:baocode/kernel/codex/codex_skills.dart';
@@ -22,6 +24,8 @@ void main() {
       final originalDirectory = DataDirectory.current;
       DataDirectory.current = DataDirectory(root.path);
       _Rpc? rpc;
+      CodexSessionMcp? sessionBridge;
+      SessionQueryService? sessionQueries;
       try {
         final installer = createCodexInstaller();
         expect(installer.supported, isTrue);
@@ -226,10 +230,76 @@ void main() {
           'threadId': threadId,
         });
         expect(cleared['goal'], isNull);
+        // This thread was created without any dynamic tools or MCP config.
+        // Stop its actual writer before resuming from disk in a new process.
+        await rpc.close();
+        rpc = null;
+        sessionQueries = SessionQueryService(read: (id) async => SessionQuerySnapshot(
+          targetId: id, title: 'Selected Claude task', kernel: 'Claude Code',
+          messages: const [SessionQueryMessage(
+            index: 0, role: 'assistant', text: 'Smoke context port 8123.',
+          )],
+        ))..register();
+        final capability = sessionQueries.grant(
+          ['claude-code:smoke-target'], callerSessionId: () => threadId,
+          callerCwd: project.path,
+        );
+        sessionBridge = await CodexSessionMcp.start(
+          cwd: project.path, sessionId: () => threadId,
+        );
+        rpc = _Rpc(await Process.start(
+          executable, const ['app-server'], workingDirectory: project.path,
+          environment: environment, includeParentEnvironment: false,
+        ));
+        await rpc.request('initialize', {
+          'clientInfo': {'name': 'baocode-smoke', 'version': '1.0.0'},
+          'capabilities': {'experimentalApi': true},
+        });
+        rpc.notify('initialized', const {});
+        final resumed = await rpc.request('thread/resume', {
+          'threadId': threadId, 'cwd': project.path,
+          'approvalPolicy': 'never', 'sandbox': 'read-only',
+          'config': sessionBridge.configuration(),
+        });
+        expect((resumed['thread'] as Map)['id'], threadId);
+        final discoveryDeadline = DateTime.now().add(const Duration(seconds: 15));
+        Map? sessionServer;
+        bool discovered(Map server) => (server['tools'] as Map? ?? {}).entries.any(
+          (entry) => entry.key == 'session_query' ||
+              (entry.value is Map && (entry.value as Map)['name'] == 'session_query'),
+        );
+        while (true) {
+          final inventory = await rpc.request('mcpServerStatus/list', {
+            'threadId': threadId, 'serverName': 'baocode_session',
+          });
+          sessionServer = (inventory['data'] as List).cast<Map>()
+              .where((entry) => entry['name'] == 'baocode_session').firstOrNull;
+          if (sessionServer != null && discovered(sessionServer)) break;
+          if (sessionServer?['runtimeStatus'] == 'failed' ||
+              DateTime.now().isAfter(discoveryDeadline)) {
+            fail('Legacy session MCP discovery failed: '
+                '${sessionServer?['runtimeStatus']}; ${sessionServer?['toolsError']}');
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+        final retrieved = await rpc.request('mcpServer/tool/call', {
+          'threadId': threadId, 'server': 'baocode_session', 'tool': 'session_query',
+          'arguments': {'capability': capability, 'session_id': 'claude-code:smoke-target'},
+        });
+        expect(retrieved['isError'], isNot(true));
+        expect(jsonEncode(retrieved), contains('Smoke context port 8123.'));
+        final denied = await rpc.request('mcpServer/tool/call', {
+          'threadId': threadId, 'server': 'baocode_session', 'tool': 'session_query',
+          'arguments': {'capability': capability, 'session_id': 'claude-code:unselected'},
+        });
+        expect(jsonEncode(denied), isNot(contains('Smoke context port 8123.')));
+        expect(denied['isError'], true);
         expect(rpc.sentMethods, isNot(contains('turn/start')));
       } finally {
         try {
           await rpc?.close();
+          await sessionBridge?.close();
+          sessionQueries?.dispose();
         } finally {
           DataDirectory.current = originalDirectory;
           await _deleteTemp(root);

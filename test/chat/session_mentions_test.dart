@@ -36,6 +36,20 @@ String content(WidgetTester tester) => [
 ].join();
 
 void main() {
+  testWidgets('long session titles leave the kernel label visible', (tester) async {
+    final workspace = await pumpKept(tester, KeptCatalog([
+      kept('a1', '/tmp/a', 1), kept('a2', '/tmp/a', 2),
+    ]));
+    workspace.select(keptThread(workspace, 'a1'));
+    workspace.rename(keptThread(workspace, 'a2'),
+        'Chat ${List.filled(80, 'long title').join(' ')}');
+    await tester.pump();
+    await typeText(tester, 'see @cht');
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(inMenu(find.text('Claude Code')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('@ offers the other conversations under their projects\' '
       'folders, the arrows going over the headings', (tester) async {
     // Typed as `@cht`: no file of the kernel's matches it, only the

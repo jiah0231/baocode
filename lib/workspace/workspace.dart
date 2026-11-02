@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:bao_remote/client.dart' show SshServer;
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show TextSelection;
 import 'package:path/path.dart' as p;
@@ -310,7 +311,9 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     if (thread == null) return null;
     final catalog = thread.kernel.catalog;
     if (catalog is SessionHistoryCatalog) {
-      var record = thread.record;
+      // Provider switches can fork the live session while its sidebar record
+      // still names the original. Never label old history with the new ID.
+      var record = thread.record?.id == thread.id ? thread.record : null;
       // A newly running conversation may not yet have its storage path in the
       // sidebar. Resolve only its catalog identity; never guess a storage path.
       if (record == null) {
@@ -328,22 +331,58 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       if (!identical(_queryTarget(targetId), thread)) return null;
       final end = position?['end'] as int? ?? page.messages.length;
       final start = end - page.messages.length;
+      final fingerprint = sha256.convert(utf8.encode([
+        for (final message in page.messages)
+          '${message.id}:${message.role}:${sha256.convert(utf8.encode(message.text))}',
+      ].join('|'))).toString();
+      if (position?['fingerprint'] case final String expected
+          when expected != fingerprint) {
+        throw StateError('The selected history page changed while being read. '
+            'Select the conversation with @ again for a fresh snapshot.');
+      }
+      var skipped = position?['skipped'] as int? ?? 0;
+      var characters = position?['characters'] as int? ?? 0;
+      var budget = 200000;
+      final messages = <SessionQueryMessage>[];
+      // Page from newer text toward older text, including slices of a single
+      // huge answer. The private continuation re-reads this same storage page
+      // before advancing its archive cursor, so budget caps never skip text.
+      while (skipped < page.messages.length && budget > 0 && messages.length < 500) {
+        final i = page.messages.length - 1 - skipped;
+        final message = page.messages[i];
+        final remaining = message.text.length - characters;
+        final length = remaining < budget ? remaining : budget;
+        final offset = remaining - length;
+        if (length > 0) {
+          messages.add(SessionQueryMessage(index: start + i,
+            role: message.role, text: message.text.substring(offset, remaining),
+            startCharacter: offset));
+          budget -= length;
+        }
+        characters += length;
+        if (characters == message.text.length) {
+          skipped++;
+          characters = 0;
+        } else {
+          // Queries are at most 200 characters. Repeat the boundary so a
+          // literal match spanning two bounded windows remains discoverable.
+          characters -= length < 199 ? length : 199;
+        }
+      }
+      final next = skipped < page.messages.length
+          ? jsonEncode({'cursor': position?['cursor'], 'end': end,
+              'skipped': skipped, 'characters': characters,
+              'fingerprint': fingerprint})
+          : page.nextCursor == null ? null
+              : jsonEncode({'cursor': page.nextCursor, 'end': start});
       return SessionQuerySnapshot(
-        targetId: targetId,
-        title: thread.title,
-        kernel: thread.kernel.label,
+        targetId: targetId, title: thread.title, kernel: thread.kernel.label,
         busy: thread.isOpen && thread.session.isStreaming,
-        messages: [
-          for (var i = 0; i < page.messages.length; i++)
-            SessionQueryMessage(index: start + i,
-                role: page.messages[i].role, text: page.messages[i].text),
-        ],
-        hasEarlierHistory: page.nextCursor != null,
-        olderCursor: page.nextCursor == null ? null : jsonEncode({
-          'cursor': page.nextCursor, 'end': start,
-        }),
+        messages: List.unmodifiable(messages.reversed),
+        hasEarlierHistory: next != null, olderCursor: next,
       );
     }
+
     // Test/custom kernels without a read-only catalog can expose only their
     // already-loaded history. Never open/resume a target to query it: Codex
     // thread/resume can wake a native goal, even without turn/start.
@@ -374,6 +413,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       targetId: targetId, title: thread.title, kernel: thread.kernel.label,
       messages: List.unmodifiable(messages.reversed),
       busy: session.isStreaming, hasEarlierHistory: truncated,
+      truncatedWindow: truncated,
     );
   }
 

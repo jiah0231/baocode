@@ -6597,7 +6597,9 @@ exec /usr/bin/env "\$@"
       kernel.model.select('default');
       kernel.send(const KernelTurn(id: 't2', text: 'again'));
       await pumpEventQueue();
-      expect(servers, hasLength(1));
+      expect(servers, hasLength(2));
+      expect(servers.first._exited.isCompleted, isTrue);
+      expect(servers.first._out.isClosed, isTrue);
       final forkMessage = servers.first.written.firstWhere(
         (message) => message['method'] == 'thread/fork',
       );
@@ -6608,10 +6610,20 @@ exec /usr/bin/env "\$@"
       expect(forked.containsKey('modelProvider'), isFalse);
       expect(forked.containsKey('config'), isFalse);
       expect(kernel.sessionId, 'th-fork');
-      final turns = servers.first.written
+      final resumed = servers.last.written.singleWhere(
+        (message) => message['method'] == 'thread/resume',
+      );
+      expect((resumed['params'] as Map)['threadId'], 'th-fork');
+      expect(
+        servers.first.written.where(
+          (message) => message['method'] == 'turn/start',
+        ),
+        hasLength(1),
+      );
+      final turns = servers.last.written
           .where((message) => message['method'] == 'turn/start')
           .toList();
-      expect((turns.last['params'] as Map)['threadId'], 'th-fork');
+      expect((turns.single['params'] as Map)['threadId'], 'th-fork');
     });
   });
 }
@@ -6662,6 +6674,12 @@ class _FakeServer implements CodexTransport {
       },
       'thread/fork' => {
         'thread': {'id': 'th-fork', 'modelProvider': 'openai'},
+      },
+      'thread/resume' => {
+        'thread': {
+          'id': (message['params'] as Map)['threadId'],
+          'modelProvider': 'openai',
+        },
       },
       'turn/start' => {
         'turn': {'id': 'st1'},
