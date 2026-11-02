@@ -49,14 +49,13 @@ class TextMateWorkerTokenizer implements ITokenizedLines {
     this._encodedLanguageId,
     this._maxTokenizationLineLength, {
     // Instance-local clock injection lets tests exercise the yield deterministically.
-    Stopwatch Function() createStopwatch = Stopwatch.new,
-  }) : _lines = lines,
-       _createStopwatch = createStopwatch {
+    this.createStopwatch = Stopwatch.new,
+  }) : _lines = lines {
     unawaited(_resetTokenization());
   }
 
   final TextMateModelTokenizerHost _host;
-  final Stopwatch Function() _createStopwatch;
+  final Stopwatch Function() createStopwatch;
   List<String> _lines;
   int _versionId;
   String _languageId;
@@ -191,7 +190,7 @@ class TextMateWorkerTokenizer implements ITokenizedLines {
     final tokenizer = _tokenizerWithStateStore;
     if (_isDisposed || tokenizer == null) return;
 
-    final watch = _createStopwatch()..start();
+    final watch = createStopwatch()..start();
 
     while (true) {
       var tokenizedLines = 0;
