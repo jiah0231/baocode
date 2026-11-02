@@ -78,9 +78,9 @@ void main() {
       bots: bots,
     );
     await host.load();
-    // A relay of one's own (a baocode-relay --dev, say) besides BaoCode's.
+    // Pin a development relay instead of the production relay list.
     const relay = String.fromEnvironment('BAOCODE_LIVE_RELAY');
-    if (relay.isNotEmpty) await host.setCustomRelays([relay]);
+    if (relay.isNotEmpty) await host.pinRelay(relay);
     final offer = (await host.beginPairing())!;
     File('${dir.path}/offer.txt').writeAsStringSync(offer.uri);
     say('offer ${offer.id} relays ${offer.relays} addrs ${offer.addrs}');
