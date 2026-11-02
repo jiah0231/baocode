@@ -224,8 +224,15 @@ void main() {
     expect(stale.closeRequested, isTrue);
     expect(stale.requests('thread/resume'), isEmpty);
     expect(h.servers, hasLength(1));
+    // Join the already-pending restart before releasing its exit barrier.
+    // A fixed number of event-loop pumps does not await initialization's
+    // filesystem reads on a busy runner, and may still observe `starting`.
+    final replacementReady = kernel.prepareConversation();
     stale.finishExit();
-    await pumpEventQueue();
+    expect(
+      await replacementReady.timeout(const Duration(seconds: 5)),
+      isTrue,
+    );
     expect(h.servers, hasLength(2));
     expect(kernel.health.status, KernelHealthStatus.ready);
     expect(h.conflicts, 0);

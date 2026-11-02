@@ -193,6 +193,13 @@ class CodexSessionMcp {
     try {
       // Total deadline, not an idle timeout that slow chunks can renew.
       return await collect().timeout(const Duration(seconds: 10));
+    } on _McpBodyTooLarge {
+      // Cancelling an unread HttpRequest can close its socket. Flush the
+      // rejection first so chunked clients receive 413 rather than a reset.
+      request.response.statusCode = HttpStatus.requestEntityTooLarge;
+      request.response.persistentConnection = false;
+      await request.response.close().timeout(const Duration(seconds: 2));
+      rethrow;
     } finally {
       await chunks.cancel();
     }
