@@ -13,6 +13,23 @@ void main() {
     expect(ClaudeSdkTools.servers, isEmpty);
   });
 
+  test('dispatch preserves host source turn and ignores identity in arguments', () async {
+    ClaudeSdkCall? observed;
+    ClaudeSdkTools.register(ClaudeSdkTool(
+      name: 'echo', description: '', inputSchema: const {},
+      run: (_, context) async { observed = context; return 'ok'; },
+    ));
+    await ClaudeSdkTools.handle({
+      'id': 1, 'method': 'tools/call', 'params': {
+        'name': 'echo',
+        'arguments': {'turn_id': 'forged', 'session_id': 'forged'},
+      },
+    }, const ClaudeSdkCall(cwd: '/p', sessionId: 'source', turnId: 'host-turn'));
+    expect(observed?.sessionId, 'source');
+    expect(observed?.turnId, 'host-turn');
+    expect(observed?.cwd, '/p');
+  });
+
   test('a tool always loaded says so, not to be deferred', () async {
     ClaudeSdkTools.register(
       ClaudeSdkTool(

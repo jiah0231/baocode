@@ -68,6 +68,7 @@ void main() {
         run: (_, call) async {
           calls++;
           expect(call.toolUseId, 'call');
+          expect(call.turnId, 'host-local-turn');
           return 'ok';
         },
       ),
@@ -83,7 +84,7 @@ void main() {
         }),
       ),
     );
-    expect((await bridge.call(call(), threadId: 'thread'))['success'], isTrue);
+    expect((await bridge.call(call(), threadId: 'thread', turnId: 'host-local-turn'))['success'], isTrue);
     gate.allowed = false;
     expect((await bridge.call(call(), threadId: 'thread'))['success'], isFalse);
     expect(calls, 1);

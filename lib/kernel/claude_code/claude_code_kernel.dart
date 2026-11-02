@@ -1983,6 +1983,7 @@ class ClaudeCodeKernel
       ClaudeSdkCall(
         cwd: _cwd,
         sessionId: _sessionId,
+        turnId: _turn,
         cancelled: _sdkCallsCancelled.future,
       ),
     );

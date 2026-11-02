@@ -45,7 +45,8 @@ class SessionQuerySnapshot {
 }
 
 /// On-demand history retrieval, never a message to or a turn in the target.
-/// A capability is issued by the composer, not by model-provided session IDs.
+/// Selection grants are bound to the authenticated source session and turn.
+/// Their private cache/revocation keys are never part of the model tool API.
 /// The same registry serves Claude SDK MCP and Codex dynamic tools.
 class SessionQueryService {
   SessionQueryService({required this.read, this.readOlder, this.isAvailable, DateTime Function()? now})
@@ -65,7 +66,9 @@ class SessionQueryService {
     Set<String> targets,
     DateTime expires,
     String? Function() callerSessionId,
-    String? callerCwd,
+    String callerTurnId,
+    String callerCwd,
+    bool Function() isActive,
   })>{};
   final _snapshots = <(String, String), Future<SessionQuerySnapshot?>>{};
   final _olderReads = <(String, String), Future<SessionQuerySnapshot?>>{};
@@ -78,8 +81,8 @@ class SessionQueryService {
       ClaudeSdkTool(
         name: toolName,
         description: 'Read relevant text from a conversation explicitly selected '
-            'with @session in this request. Requires the supplied capability and '
-            'session_id. Optional query is a literal case-insensitive search; '
+            'with @session in the current source turn. Supply its session_id; '
+            'authorization comes from the running turn, never tool arguments. Optional query is a literal case-insensitive search; '
             'before pages this snapshot. Set older=true without before to load an older '
             'history window (including earlier text in a large page) after exhausting next_before. Returns attributed history, not a live '
             'reply. Never starts a target turn, sends messages, or interrupts its work. '
@@ -87,22 +90,15 @@ class SessionQueryService {
         inputSchema: const {
           'type': 'object',
           'properties': {
-            'capability': {'type': 'string'},
             'session_id': {'type': 'string'},
             'query': {'type': 'string', 'maxLength': 200},
             'before': {'type': 'integer'},
             'older': {'type': 'boolean'},
           },
-          'required': ['capability', 'session_id'],
+          'required': ['session_id'],
           'additionalProperties': false,
         },
-        run: (input, call) async {
-          final token = input['capability'];
-          for (final owner in _owners) {
-            if (owner._grants.containsKey(token)) return owner._run(input, call);
-          }
-          throw StateError('Session access is not selected or has expired.');
-        },
+        run: _route,
         alwaysLoad: true,
       ),
     );
@@ -112,9 +108,12 @@ class SessionQueryService {
   /// expands to other sessions, projects, tools, or the target's permissions.
   String grant(Iterable<String> targetIds, {
     required String? Function() callerSessionId,
-    String? callerCwd,
+    required String callerTurnId,
+    required String callerCwd,
+    required bool Function() isActive,
   }) {
     if (_disposed) throw StateError('Session query service is disposed.');
+    if (callerTurnId.isEmpty) throw ArgumentError('Source turn must not be empty.');
     for (final token in _grants.keys.toList()) {
       if (!_grants[token]!.expires.isAfter(_now())) revoke(token);
     }
@@ -134,7 +133,9 @@ class SessionQueryService {
       targets: Set.unmodifiable(targets),
       expires: _now().add(lifetime),
       callerSessionId: callerSessionId,
+      callerTurnId: callerTurnId,
       callerCwd: callerCwd,
+      isActive: isActive,
     );
     return token;
   }
@@ -154,25 +155,103 @@ class SessionQueryService {
     if (_owners.isEmpty) ClaudeSdkTools.unregister(toolName);
   }
 
+  /// Route using only adapter-supplied context. A target ID selects data, not
+  /// authority; model-supplied identity fields are rejected. Legacy capability
+  /// arguments are ignored, never used to look up or authorize a grant.
+  static Future<Object> _route(
+    Map<String, Object?> input, ClaudeSdkCall call,
+  ) async {
+    // BaoCode +25 Codex threads persisted a schema requiring capability.
+    // Accept that obsolete field without ever reading its value; authorization
+    // still requires the same strict live host session/cwd/turn context.
+    const allowed = {'session_id', 'query', 'before', 'older', 'capability'};
+    if (input.keys.any((key) => !allowed.contains(key))) {
+      throw ArgumentError('Unsupported session query argument. Supply only '
+          'session_id, query, before or older; authorization is automatic.');
+    }
+    if (call.turnId == null || call.turnId!.isEmpty) {
+      throw StateError('Session query unavailable: no authenticated active source turn.');
+    }
+    if (call.sessionId == null || call.sessionId!.isEmpty) {
+      throw StateError('Session query unavailable: no authenticated source session.');
+    }
+    var hasTurn = false;
+    var hasSession = false;
+    var hasLocation = false;
+    var hasActive = false;
+    final matches = <(SessionQueryService, String)>[];
+    for (final owner in _owners) {
+      if (owner._disposed) continue;
+      for (final entry in owner._grants.entries) {
+        final grant = entry.value;
+        if (grant.callerTurnId != call.turnId) continue;
+        hasTurn = true;
+        if (grant.callerSessionId() != call.sessionId) continue;
+        hasSession = true;
+        if (grant.callerCwd != call.cwd) continue;
+        hasLocation = true;
+        if (!grant.isActive()) continue;
+        hasActive = true;
+        if (!grant.expires.isAfter(owner._now())) continue;
+        matches.add((owner, entry.key));
+      }
+    }
+    if (matches.isEmpty) {
+      final reason = !hasTurn
+          ? 'No @session selection is authorized for this source turn; select it again.'
+          : !hasSession
+          ? 'Session query denied: the source session does not match its turn grant.'
+          : !hasLocation
+          ? 'Session query denied: the source location does not match its turn grant.'
+          : !hasActive
+          ? 'Session query denied: the source turn is no longer active.'
+          : 'Session selection expired; select the conversation with @ again.';
+      throw StateError(reason);
+    }
+    if (matches.length != 1) {
+      throw StateError('Session query denied: ambiguous source-turn selection. '
+          'Send a new message with the selected conversation.');
+    }
+    final (owner, token) = matches.single;
+    return owner._run(token, input, call);
+  }
+
   void _authorize(String token, String target, ClaudeSdkCall call) {
     final grant = _grants[token];
-    if (_disposed || grant == null || !grant.expires.isAfter(_now()) ||
-        !grant.targets.contains(target) ||
-        call.sessionId == null || grant.callerSessionId() != call.sessionId ||
-        (grant.callerCwd != null && grant.callerCwd != call.cwd) ||
-        !(isAvailable?.call(target) ?? true)) {
-      throw StateError('Session access is not selected or has expired. '
-          'Select the conversation with @ again.');
+    if (_disposed || grant == null) {
+      throw StateError('Session selection was revoked; select the conversation again.');
+    }
+    if (!grant.isActive()) {
+      throw StateError('Session query denied: the source turn is no longer active.');
+    }
+    if (call.turnId == null || grant.callerTurnId != call.turnId) {
+      throw StateError('Session query denied: the active source turn does not match.');
+    }
+    if (call.sessionId == null || grant.callerSessionId() != call.sessionId) {
+      throw StateError('Session query denied: the source session does not match.');
+    }
+    if (grant.callerCwd != call.cwd) {
+      throw StateError('Session query denied: the source location does not match.');
+    }
+    if (!grant.expires.isAfter(_now())) {
+      throw StateError('Session selection expired; select the conversation again.');
+    }
+    if (!grant.targets.contains(target)) {
+      throw StateError('This target was not selected with @ in the current source turn.');
+    }
+    if (!(isAvailable?.call(target) ?? true)) {
+      throw StateError('Selected conversation is unavailable.');
     }
   }
 
-  Future<Object> _run(Map<String, Object?> input, ClaudeSdkCall call) async {
-    final token = input['capability'];
+  Future<Object> _run(
+    String token, Map<String, Object?> input, ClaudeSdkCall call,
+  ) async {
     final target = input['session_id'];
     final query = input['query'] ?? '';
     final before = input['before'];
     final older = input['older'] ?? false;
-    if (token is! String || target is! String || query is! String ||
+    if (target is! String || target.isEmpty || query is! String ||
         query.length > 200 || (before != null && before is! int) ||
         older is! bool || (older && before != null)) {
       throw ArgumentError('Invalid session query arguments.');
@@ -324,7 +403,8 @@ class SessionQueryService {
   static String _bound(String value, int limit) =>
       value.length <= limit ? value : '${value.substring(0, limit)}…';
 
-  // Never propagate a capability found in another conversation's quoted text.
+  // Redact historical capabilities from older BaoCode transcripts as data hygiene.
+  // They are never accepted as authorization by this tool.
   static String _redactCapabilities(String text) => text.replaceAll(
     RegExp(r'sq_[0-9a-f]{64}'),
     '[session capability redacted]',

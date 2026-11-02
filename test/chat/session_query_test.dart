@@ -12,6 +12,7 @@ void main() {
   late DateTime now;
   late String token;
   late String? caller;
+  late String? activeTurn;
   late Future<SessionQuerySnapshot?> Function(String) reader;
 
   SessionQuerySnapshot snapshot(String id, {int count = 12}) => SessionQuerySnapshot(
@@ -30,8 +31,10 @@ void main() {
 
   Future<Map<String, Object?>> invoke({
     String? target,
-    String? capability,
     String? session = 'source',
+    String? turn = 'turn',
+    String cwd = '/source',
+    Map<String, Object?> extra = const {},
     String? query,
     int? before,
     bool? older,
@@ -43,14 +46,14 @@ void main() {
       'params': {
         'name': SessionQueryService.toolName,
         'arguments': {
-          'capability': capability ?? token,
           'session_id': target ?? 'codex:target',
           'query': ?query,
           'before': ?before,
           'older': ?older,
+          ...extra,
         },
       },
-    }, ClaudeSdkCall(cwd: '/source', sessionId: session, cancelled: cancelled));
+    }, ClaudeSdkCall(cwd: cwd, sessionId: session, turnId: turn, cancelled: cancelled));
     return (answer['result'] as Map).cast<String, Object?>();
   }
 
@@ -62,13 +65,14 @@ void main() {
     reads = [];
     now = DateTime.utc(2026);
     caller = 'source';
+    activeTurn = 'turn';
     reader = (id) async => snapshot(id);
     service = SessionQueryService(now: () => now, read: (id) {
       reads.add(id);
       return reader(id);
     })..register();
     token = service.grant(['codex:target', 'claude-code:target'],
-      callerSessionId: () => caller);
+      callerTurnId: 'turn', isActive: () => activeTurn == 'turn', callerCwd: '/source', callerSessionId: () => caller);
   });
   tearDown(() => service.dispose());
 
@@ -79,10 +83,10 @@ void main() {
       messages: [SessionQueryMessage(index: 0, role: 'assistant',
           text: List.filled(200001, 'x').join())],
     ))..register();
-    final token = service.grant(['codex:target'], callerSessionId: () => 'source');
+    service.grant(['codex:target'], callerTurnId: 'turn', isActive: () => activeTurn == 'turn', callerCwd: '/source', callerSessionId: () => 'source');
     final output = await ClaudeSdkTools.called('mcp__baocode__session_query')!.run({
-      'capability': token, 'session_id': 'codex:target',
-    }, const ClaudeSdkCall(cwd: '/project', sessionId: 'source'));
+      'session_id': 'codex:target',
+    }, const ClaudeSdkCall(cwd: '/source', sessionId: 'source', turnId: 'turn'));
     final result = jsonDecode(output as String) as Map;
     expect(result['truncated_window'], true);
     expect(result['coverage_warning'], contains('cannot be recovered'));
@@ -118,18 +122,92 @@ void main() {
       'callId': 'query',
       'namespace': null,
       'tool': 'session_query',
-      'arguments': {'capability': token, 'session_id': 'claude-code:target'},
-    }, threadId: 'source');
+      'arguments': {'session_id': 'claude-code:target'},
+    }, threadId: 'source', turnId: 'turn');
     expect(answer['success'], true);
     expect(answer['contentItems'].toString(), contains('Claude Code'));
   });
 
-  test('unselected, guessed, foreign and null caller denied before read', () async {
+  test('unselected, foreign and null caller denied before read', () async {
     expect((await invoke(target: 'codex:secret'))['isError'], true);
-    expect((await invoke(capability: 'guessed'))['isError'], true);
+    expect((await invoke(target: 'codex:secret', extra: {'capability': token}))['isError'], true);
     expect((await invoke(session: 'other'))['isError'], true);
     expect((await invoke(session: null))['isError'], true);
     expect(reads, isEmpty);
+  });
+
+  test('schema and result need no model-visible authorization credential', () async {
+    final tool = ClaudeSdkTools.called('mcp__baocode__session_query')!;
+    expect((tool.inputSchema['properties'] as Map).keys,
+      unorderedEquals(['session_id', 'query', 'before', 'older']));
+    expect(tool.inputSchema['required'], ['session_id']);
+    final result = await invoke();
+    expect(result['isError'], isNull);
+    expect(result.toString(), isNot(contains(token)));
+  });
+
+  test('persisted legacy capability is ignored and cannot replace host authorization', () async {
+    for (final legacy in [token, 'invented', '', null, 123, {'turnId': 'turn'}]) {
+      expect((await invoke(extra: {'capability': legacy}))['isError'], isNull);
+      expect((await invoke(turn: null, extra: {'capability': legacy}))['isError'], true);
+      expect((await invoke(session: 'other', extra: {'capability': legacy}))['isError'], true);
+      expect((await invoke(cwd: '/other', extra: {'capability': legacy}))['isError'], true);
+      expect((await invoke(target: 'codex:secret', extra: {'capability': legacy}))['isError'], true);
+    }
+    expect(reads, ['codex:target']);
+    activeTurn = null;
+    expect((await invoke(extra: {'capability': token}))['isError'], true);
+  });
+
+  test('missing, empty, stale and model-spoofed turn identity fail closed', () async {
+    final missing = await invoke(turn: null);
+    expect(missing['isError'], true);
+    expect(missing.toString(), contains('no authenticated active source turn'));
+    expect((await invoke(turn: ''))['isError'], true);
+    expect((await invoke(turn: 'previous-turn'))['isError'], true);
+    expect((await invoke(turn: 'next-unmentioned-turn'))['isError'], true);
+    expect((await invoke(turn: null, extra: {'turnId': 'turn'}))['isError'], true);
+    expect((await invoke(extra: {'sessionId': 'source'}))['isError'], true);
+    expect(reads, isEmpty);
+  });
+
+  test('queued selection cannot enlarge the currently running turn grant', () async {
+    final queuedToken = service.grant(['codex:queued'],
+      callerTurnId: 'queued-turn', isActive: () => activeTurn == 'queued-turn',
+      callerCwd: '/source', callerSessionId: () => caller);
+    expect((await invoke(target: 'codex:queued'))['isError'], true);
+    expect((await invoke(turn: 'queued-turn', target: 'codex:target'))['isError'], true);
+    expect((await invoke())['isError'], isNull);
+    expect((await invoke(turn: 'queued-turn', target: 'codex:queued'))['isError'], true);
+    activeTurn = 'queued-turn';
+    expect((await invoke(turn: 'queued-turn', target: 'codex:queued'))['isError'], isNull);
+    service.revoke(token);
+    expect((await invoke())['isError'], true);
+    expect((await invoke(turn: 'queued-turn', target: 'codex:queued'))['isError'], isNull);
+    service.revoke(queuedToken);
+    expect((await invoke(turn: 'queued-turn', target: 'codex:queued'))['isError'], true);
+    expect(reads, ['codex:target', 'codex:queued']);
+  });
+
+  test('ambiguous authenticated grants deny rather than union targets', () async {
+    service.grant(['codex:other'],
+      callerTurnId: 'turn', isActive: () => activeTurn == 'turn', callerCwd: '/source', callerSessionId: () => caller);
+    final result = await invoke();
+    expect(result['isError'], true);
+    expect(result.toString(), contains('ambiguous source-turn selection'));
+    expect(result.toString(), isNot(contains(token)));
+    expect(reads, isEmpty);
+  });
+
+  test('owner dispatch matches trusted source context not a supplied secret', () async {
+    final other = SessionQueryService(read: (id) async => snapshot(id))..register();
+    addTearDown(other.dispose);
+    other.grant(['codex:other'],
+      callerTurnId: 'turn', isActive: () => activeTurn == 'turn', callerCwd: '/source', callerSessionId: () => 'other-source');
+    expect((await invoke(target: 'codex:other'))['isError'], true);
+    expect((await invoke(session: 'other-source', target: 'codex:other'))['isError'], isNull);
+    expect((await invoke())['isError'], isNull);
+    expect(reads, ['codex:target']);
   });
 
   test('new caller ID resolves dynamically but permission never follows another ID', () async {
@@ -144,7 +222,7 @@ void main() {
   test('revoke and expiry fail closed', () async {
     service.revoke(token);
     expect((await invoke())['isError'], true);
-    token = service.grant(['codex:target'], callerSessionId: () => caller);
+    token = service.grant(['codex:target'], callerTurnId: 'turn', isActive: () => activeTurn == 'turn', callerCwd: '/source', callerSessionId: () => caller);
     now = now.add(SessionQueryService.lifetime);
     expect((await invoke())['isError'], true);
     expect(reads, isEmpty);
@@ -158,6 +236,30 @@ void main() {
     service.revoke(token);
     pending.complete(snapshot('codex:target'));
     expect((await answer)['isError'], true);
+  });
+
+  test('inactive source turn is denied before reading with precise diagnostics', () async {
+    activeTurn = null;
+    now = now.add(SessionQueryService.lifetime);
+    final result = await invoke();
+    expect(result['isError'], true);
+    expect(result.toString(), contains('source turn is no longer active'));
+    expect(result.toString(), isNot(contains('expired')));
+    expect(result.toString(), isNot(contains(token)));
+    expect(reads, isEmpty);
+  });
+
+  test('turn switch during read rejects captured old caller without revoke', () async {
+    final pending = Completer<SessionQuerySnapshot?>();
+    reader = (_) => pending.future;
+    final answer = invoke();
+    await Future<void>.delayed(Duration.zero);
+    activeTurn = 'replacement-turn';
+    pending.complete(snapshot('codex:target'));
+    final result = await answer;
+    expect(result['isError'], true);
+    expect(result.toString(), contains('source turn is no longer active'));
+    expect(result.toString(), isNot(contains('Target conversation')));
   });
 
   test('cancel does not wait for a busy target', () async {
@@ -203,10 +305,10 @@ void main() {
       isAvailable: (_) => available,
     )..register();
     token = service.grant(['codex:target'],
-      callerSessionId: () => 'source', callerCwd: '/wrong');
+      callerTurnId: 'turn', isActive: () => activeTurn == 'turn', callerCwd: '/wrong', callerSessionId: () => 'source');
     expect((await invoke())['isError'], true);
     token = service.grant(['codex:target'],
-      callerSessionId: () => 'source', callerCwd: '/source');
+      callerTurnId: 'turn', isActive: () => activeTurn == 'turn', callerCwd: '/source', callerSessionId: () => 'source');
     expect((await invoke())['isError'], isNull);
     available = false;
     expect((await invoke())['isError'], true);
@@ -238,7 +340,7 @@ void main() {
           ]);
       },
     )..register();
-    token = service.grant(['codex:target'], callerSessionId: () => caller);
+    token = service.grant(['codex:target'], callerTurnId: 'turn', isActive: () => activeTurn == 'turn', callerCwd: '/source', callerSessionId: () => caller);
     expect((await invoke(target: 'codex:secret', older: true))['isError'], true);
     expect(olderReads, 0);
     final result = payload(await invoke(older: true, query: 'deep'));
@@ -266,7 +368,7 @@ void main() {
       read: (id) async => snapshot(id),
       readOlder: (_, _) { olderCalls++; return pending.future; },
     )..register();
-    token = service.grant(['codex:target'], callerSessionId: () => caller);
+    token = service.grant(['codex:target'], callerTurnId: 'turn', isActive: () => activeTurn == 'turn', callerCwd: '/source', callerSessionId: () => caller);
     await invoke();
     final first = invoke(older: true);
     final second = invoke(older: true);
@@ -292,7 +394,7 @@ void main() {
           messages: const [SessionQueryMessage(index: -1, role: 'user', text: 'deep')]);
       },
     )..register();
-    token = service.grant(['codex:target'], callerSessionId: () => caller);
+    token = service.grant(['codex:target'], callerTurnId: 'turn', isActive: () => activeTurn == 'turn', callerCwd: '/source', callerSessionId: () => caller);
     final first = payload(await invoke());
     expect(first['next_history_available'], true);
     expect(first.toString(), isNot(contains('opaque storage cursor')));
@@ -302,7 +404,7 @@ void main() {
 
   test('grant target count is bounded', () {
     expect(() => service.grant(List.generate(9, (i) => '$i'),
-      callerSessionId: () => caller), throwsArgumentError);
+      callerTurnId: 'turn', isActive: () => activeTurn == 'turn', callerCwd: '/source', callerSessionId: () => caller), throwsArgumentError);
   });
 
   test('disposing one workspace keeps another workspace tool registered', () async {

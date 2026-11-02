@@ -15,12 +15,16 @@ class ClaudeSdkCall {
   const ClaudeSdkCall({
     required this.cwd,
     this.sessionId,
+    this.turnId,
     this.cancelled,
     this.toolUseId,
   });
 
   final String cwd;
   final String? sessionId;
+
+  /// Trusted local active turn, supplied by the host, never tool arguments.
+  final String? turnId;
 
   /// The tool use it answers, as Claude Code says (`_meta`'s
   /// `claudecode/toolUseId`): its step's in the conversation
@@ -227,6 +231,7 @@ abstract final class ClaudeSdkTools {
             ClaudeSdkCall(
               cwd: call.cwd,
               sessionId: call.sessionId,
+              turnId: call.turnId,
               cancelled: cancel.future,
               toolUseId: switch (params['_meta']) {
                 {'claudecode/toolUseId': final String id} => id,

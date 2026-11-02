@@ -1,6 +1,7 @@
 import 'package:bao_markdown/bao_markdown.dart';
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/composer/composer_embeds.dart';
+import 'package:baocode/chat/composer/composer_mock_data.dart';
 import 'package:baocode/chat/composer/suggestion_menu.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -210,6 +211,18 @@ void main() {
         parseSessionReference('[Session codex:4f1c-9a: Fix login]', 0)?.id,
         'codex:4f1c-9a',
       );
+    });
+
+    test('copied selected chip remains display-only when pasted as text', () {
+      final selected = ComposerTokenEmbed.fromSuggestion(const Suggestion.session(
+        title: 'Target task', id: 'codex:target', project: 'project', kernel: 'Codex',
+      ));
+      expect(ComposerTokenEmbed.selectedSession(selected.data), 'codex:target');
+      final restored = composerPieces(composerContentFromPaste(
+        selected.plainText, ComposerVocabulary.fallback, atStart: true,
+      )).whereType<ComposerEmbed>().single;
+      expect(restored.plainText, selected.plainText);
+      expect(ComposerTokenEmbed.selectedSession(restored.data), isNull);
     });
 
     test('pasted or shown again, is the conversation\'s tag', () {

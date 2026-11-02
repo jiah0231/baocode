@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -37,7 +38,8 @@ void main() {
   late CodexSessionMcp bridge;
   late SessionQueryService service;
   late HttpClient client;
-  late String token;
+  String? activeTurn;
+  var reads = 0;
 
   Future<({int status, String body})> request(Map<String, Object?> body, {
     bool authorized = true, bool origin = false, String method = 'POST',
@@ -56,7 +58,7 @@ void main() {
   Map<String, Object?> call() => {
     'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call',
     'params': {'name': 'session_query', 'arguments': {
-      'capability': token, 'session_id': 'claude:target',
+      'session_id': 'claude:target',
     }},
   };
 
@@ -64,14 +66,19 @@ void main() {
     previousHttpOverrides = HttpOverrides.current;
     HttpOverrides.global = _LoopbackHttpOverrides();
     client = HttpClient();
-    service = SessionQueryService(read: (id) async => SessionQuerySnapshot(
+    reads = 0;
+    service = SessionQueryService(read: (id) async {
+      reads++;
+      return SessionQuerySnapshot(
       targetId: id, title: 'Claude target', kernel: 'Claude Code', messages: const [
         SessionQueryMessage(index: 0, role: 'assistant', text: 'requested history'),
       ],
-    ))..register();
-    token = service.grant(['claude:target'],
+      );
+    })..register();
+    activeTurn = 'turn';
+    service.grant(['claude:target'], callerTurnId: 'turn', isActive: () => activeTurn == 'turn',
       callerSessionId: () => 'source', callerCwd: '/project');
-    bridge = await CodexSessionMcp.start(cwd: '/project', sessionId: () => 'source');
+    bridge = await CodexSessionMcp.start(cwd: '/project', sessionId: () => 'source', turnId: () => activeTurn);
   });
   tearDown(() async {
     client.close(force: true);
@@ -123,11 +130,65 @@ void main() {
   });
 
   test('endpoint identity cannot borrow another source capability', () async {
-    final other = await CodexSessionMcp.start(cwd: '/project', sessionId: () => 'other');
+    final other = await CodexSessionMcp.start(cwd: '/project', sessionId: () => 'other', turnId: () => activeTurn);
     addTearDown(other.close);
     final result = await request(call(), server: other);
     expect(jsonDecode(result.body)['result']['isError'], true);
     expect(result.body, isNot(contains('requested history')));
+  });
+
+  test('missing and replaced host turns deny selected targets', () async {
+    for (final turn in [null, 'other-turn']) {
+      activeTurn = turn;
+      final result = await request(call());
+      expect(jsonDecode(result.body)['result']['isError'], true);
+      expect(result.body, isNot(contains('requested history')));
+    }
+  });
+
+  test('slow HTTP body retains its original host turn instead of acquiring the next', () async {
+    final endpoint = bridge.endpoint;
+    final uri = Uri.parse(endpoint.baseUrl);
+    final socket = await Socket.connect(uri.host, uri.port);
+    addTearDown(socket.destroy);
+    final response = StringBuffer();
+    final continued = Completer<void>();
+    final done = Completer<void>();
+    socket.transform(utf8.decoder).listen((part) {
+      response.write(part);
+      if (!continued.isCompleted && response.toString().contains('100 Continue\r\n\r\n')) {
+        continued.complete();
+      }
+    }, onDone: () => done.complete(), onError: (Object error, StackTrace stack) {
+      if (!continued.isCompleted) continued.completeError(error, stack);
+      if (!done.isCompleted) done.completeError(error, stack);
+    });
+    final body = jsonEncode(call());
+    socket.write('POST /mcp HTTP/1.1\r\nHost: ${uri.host}:${uri.port}\r\n'
+        'Authorization: Bearer ${endpoint.token}\r\n'
+        'Content-Type: application/json\r\nContent-Length: ${utf8.encode(body).length}\r\n'
+        'Expect: 100-continue\r\nConnection: close\r\n\r\n');
+    await socket.flush();
+    // HttpServer sends Continue when the handler listens to the body, after
+    // capturing source context. This is an ingress barrier, not a timing sleep.
+    await continued.future.timeout(const Duration(seconds: 5));
+    final half = body.length ~/ 2;
+    socket.write(body.substring(0, half));
+    await socket.flush();
+    activeTurn = 'next-turn';
+    service.grant(['claude:target'], callerSessionId: () => 'source',
+      callerCwd: '/project', callerTurnId: 'next-turn',
+      isActive: () => activeTurn == 'next-turn');
+    socket.write(body.substring(half));
+    await socket.flush();
+    await done.future.timeout(const Duration(seconds: 5));
+    expect(response.toString(), contains('"isError":true'));
+    expect(response.toString(), isNot(contains('requested history')));
+    expect(reads, 0);
+    final fresh = await request(call());
+    expect(fresh.body, contains('requested history'));
+    expect(jsonDecode(fresh.body)['result']['isError'], isNot(true));
+    expect(reads, 1);
   });
 
   test('HTTP fallback does not bypass the existing SDK ability gate', () async {

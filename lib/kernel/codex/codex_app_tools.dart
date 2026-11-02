@@ -162,6 +162,7 @@ class CodexAppTools {
   Future<Map<String, Object?>> call(
     Map<String, Object?> params, {
     required String threadId,
+    String? turnId,
   }) async {
     if (params['threadId'] != threadId ||
         (params['namespace'] != null && params['namespace'] != '') ||
@@ -197,7 +198,7 @@ class CodexAppTools {
         ...params,
         'tool': input['name'],
         'arguments': input['arguments'],
-      }, threadId: threadId);
+      }, threadId: threadId, turnId: turnId);
     }
     final cancel = Completer<void>();
     _cancelled.add(cancel);
@@ -212,7 +213,7 @@ class CodexAppTools {
             '_meta': {'claudecode/toolUseId': params['callId']},
           },
         },
-        ClaudeSdkCall(cwd: cwd, sessionId: threadId, cancelled: cancel.future),
+        ClaudeSdkCall(cwd: cwd, sessionId: threadId, turnId: turnId, cancelled: cancel.future),
       );
       final result = answer['result'] as Map?;
       if (result == null) return _failure('BaoCode tool returned no result.');

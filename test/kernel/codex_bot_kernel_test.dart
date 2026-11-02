@@ -148,7 +148,7 @@ void main() {
     });
   }
 
-  test('ordinary transport retrieves only selected Claude conversation', () async {
+  test('legacy native capability field grants nothing beyond current host selection', () async {
     kernel.dispose();
     server = _Server();
     kernel = CodexKernel.withTransport(
@@ -167,8 +167,8 @@ void main() {
       );
     })..register();
     addTearDown(queries.dispose);
-    final capability = queries.grant(
-      ['claude-code:target'], callerSessionId: () => kernel.sessionId,
+    final grant = queries.grant(
+      ['claude-code:target'], callerSessionId: () => kernel.sessionId, callerTurnId: 'ours', callerCwd: '/ordinary', isActive: () => true,
     );
     await begin();
     final start = server.written.firstWhere(
@@ -180,7 +180,7 @@ void main() {
       server.request(rpc, 'item/tool/call', {
         'threadId': 'thread', 'turnId': 'turn', 'callId': 'query-$rpc',
         'tool': 'session_query',
-        'arguments': {'capability': capability, 'session_id': target},
+        'arguments': {'session_id': target, 'capability': 'arbitrary-old-schema-value'},
       });
     }
     await pumpEventQueue();
@@ -189,6 +189,15 @@ void main() {
     expect(answer['success'], true);
     expect(answer['contentItems'].toString(), contains('8123'));
     expect((server.written.firstWhere((m) => m['id'] == 914)['result'] as Map)['success'], false);
+    queries.revoke(grant);
+    server.request(915, 'item/tool/call', {
+      'threadId': 'thread', 'turnId': 'turn', 'callId': 'revoked-query',
+      'tool': 'session_query',
+      'arguments': {'session_id': 'claude-code:target', 'capability': 'arbitrary-old-schema-value'},
+    });
+    await pumpEventQueue();
+    expect((server.written.firstWhere((m) => m['id'] == 915)['result'] as Map)['success'], false);
+    expect(reads, ['claude-code:target']);
   });
 
   test('legacy ordinary resume adds authenticated MCP and preserves configured servers', () async {
@@ -234,7 +243,7 @@ void main() {
     kernel.events.listen(events.add);
     expect(await kernel.prepareConversation(), true);
     kernel.send(const KernelTurn(id: 'ours', text: 'Read selected session', notes: [
-      'Use session_query capability=secret-placeholder for selected target',
+      '<system-reminder>Selected conversation access for this request: session_query secret-placeholder</system-reminder>',
     ]));
     await pumpEventQueue(times: 50);
     expect(server.written.any((m) => m['method'] == 'thread/resume'), true);

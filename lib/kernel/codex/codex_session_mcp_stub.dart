@@ -4,6 +4,7 @@ class CodexSessionMcp {
   static Future<CodexSessionMcp> start({
     required String cwd,
     required String? Function() sessionId,
+    required String? Function() turnId,
   }) => Future.error(UnsupportedError('Session MCP requires a desktop host.'));
 
   ProxyEndpoint get endpoint => throw UnsupportedError('No desktop host.');

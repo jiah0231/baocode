@@ -615,7 +615,7 @@ class CodexKernel
   bool get _restrictedWorkspace => _context.workspace?.call()?.tools != null;
 
   late final _appTools = CodexAppTools(
-    _context.cwd ?? _context.resume?.cwd ?? '',
+    _context.cwd ?? _context.resume?.cwd ?? '.',
   );
 
   Future<Map<String, Object?>> _workspaceOptions({required bool start}) async {
@@ -648,9 +648,9 @@ class CodexKernel
 
   Future<Map<String, Object?>> _openSessionMcp() async {
     final generation = _sessionMcpGeneration;
-    final cwd = _context.cwd ?? _context.resume?.cwd ?? '';
+    final cwd = _context.cwd ?? _context.resume?.cwd ?? '.';
     final bridge = await CodexSessionMcp.start(
-      cwd: cwd, sessionId: () => _sessionId,
+      cwd: cwd, sessionId: () => _sessionId, turnId: () => _turn,
     );
     try {
       final endpoint = await remoteCodexProxy(bridge.endpoint, cwd);
@@ -1775,7 +1775,7 @@ class CodexKernel
     for (final note in turn.notes) {
       'type': 'text',
       'text': _sessionMcpUnavailable &&
-              note.contains('session_query') && note.contains('capability=')
+              note.startsWith('<system-reminder>Selected conversation access for this request:')
           ? '<system-reminder>The user selected @session targets, but cross-conversation retrieval '
               'is unavailable for this request because its compatibility bridge '
               'could not start. Tell the user to retry; do not claim to have read '
@@ -2934,7 +2934,7 @@ class CodexKernel
         return;
       }
       unawaited(
-        _appTools.call(params, threadId: thread).then((result) {
+        _appTools.call(params, threadId: thread, turnId: _turn).then((result) {
           if (identical(transport, _transport)) {
             transport?.write({'id': rpcId, 'result': result});
           }

@@ -55,7 +55,7 @@ jobs:
       - run: flutter gen-l10n
       - run: flutter analyze --no-pub
       - name: Test selected cross-kernel session retrieval
-        run: flutter test test/chat/session_query_test.dart test/chat/session_query_queue_test.dart test/chat/session_mentions_test.dart test/chat/composer_intercept_test.dart test/chat/composer_draft_sync_test.dart test/workspace/session_query_workspace_test.dart
+        run: flutter test test/chat/session_query_test.dart test/chat/session_query_queue_test.dart test/chat/session_query_claude_lifecycle_test.dart test/chat/session_mentions_test.dart test/chat/composer_intercept_test.dart test/chat/composer_draft_sync_test.dart test/workspace/session_query_workspace_test.dart
       - name: Test updater and quit protections
         run: flutter test test/update test/workspace/quit_confirmation_test.dart test/workspace/usage_shutdown_test.dart
       - name: Test custom build configuration
@@ -120,8 +120,8 @@ jobs:
           $baseline = Join-Path $env:RUNNER_TEMP 'baseline-installer'
           New-Item -ItemType Directory -Force $baseline | Out-Null
           $setup = Join-Path $baseline 'BaoCode-1.7.3-setup.exe'
-          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.7.3%2B24/BaoCode-1.7.3-setup.exe' -OutFile $setup
-          if ((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() -ne '853a407a383d8629dc51170f65817df0dbc200aeb54b54b1c59e393e910a79f2') { throw 'Pinned release Setup checksum mismatch' }
+          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.7.3%2B25/BaoCode-1.7.3-setup.exe' -OutFile $setup
+          if ((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() -ne '9318bf11ef4240109c5d6a7693e14986f42df9b93cb0bedbd6f4e4c219eed584') { throw 'Pinned release Setup checksum mismatch' }
       - name: Install pinned release then replace in isolated per-user directory
         shell: pwsh
         run: |
@@ -129,7 +129,7 @@ jobs:
           $new = @(Get-ChildItem build/installers -Filter '*-setup.exe')
           if ($new.Count -ne 1) { throw 'Expected one new Setup' }
           $version = (Select-String -Path pubspec.yaml -Pattern '^version: (.+)$').Matches[0].Groups[1].Value
-          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.7.3+24
+          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.7.3+25
       - uses: actions/upload-artifact@v6
         with:
           name: custom-installer

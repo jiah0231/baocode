@@ -203,10 +203,25 @@ void main() {
           registeredAgent['description'],
           'Updated isolated protocol smoke fixture',
         );
+        // Reproduce a +25-created conversation's persisted model-visible
+        // schema. Resume cannot replace this native dynamic tool catalogue.
         final started = await rpc.request('thread/start', {
           'cwd': project.path,
           'approvalPolicy': 'never',
           'sandbox': 'read-only',
+          'dynamicTools': [{
+            'type': 'function', 'name': 'session_query',
+            'description': 'Legacy +25 selected conversation retrieval.',
+            'inputSchema': {
+              'type': 'object',
+              'properties': {
+                'capability': {'type': 'string'},
+                'session_id': {'type': 'string'},
+              },
+              'required': ['capability', 'session_id'],
+              'additionalProperties': false,
+            },
+          }],
         });
         final thread = started['thread'] as Map;
         final threadId = thread['id'] as String;
@@ -231,7 +246,8 @@ void main() {
           'threadId': threadId,
         });
         expect(cleared['goal'], isNull);
-        // This thread was created without any dynamic tools or MCP config.
+        // This thread was created with the old required-capability dynamic schema
+        // and without MCP config; keep its identity rather than silently fork.
         // Stop its actual writer before resuming from disk in a new process.
         await rpc.close();
         rpc = null;
@@ -241,12 +257,13 @@ void main() {
             index: 0, role: 'assistant', text: 'Smoke context port 8123.',
           )],
         ))..register();
-        final capability = sessionQueries.grant(
+        var smokeTurnActive = true;
+        sessionQueries.grant(
           ['claude-code:smoke-target'], callerSessionId: () => threadId,
-          callerCwd: project.path,
+          callerCwd: project.path, callerTurnId: 'smoke-host-turn', isActive: () => smokeTurnActive,
         );
         sessionBridge = await CodexSessionMcp.start(
-          cwd: project.path, sessionId: () => threadId,
+          cwd: project.path, sessionId: () => threadId, turnId: () => 'smoke-host-turn',
         );
         rpc = _Rpc(await Process.start(
           executable, const ['app-server'], workingDirectory: project.path,
@@ -283,18 +300,32 @@ void main() {
           }
           await Future<void>.delayed(const Duration(milliseconds: 100));
         }
+        final tool = (sessionServer!['tools'] as Map).entries.singleWhere(
+          (entry) => entry.key == 'session_query' ||
+              (entry.value as Map)['name'] == 'session_query',
+        ).value as Map;
+        final newSchema = tool['inputSchema'] as Map;
+        expect(newSchema['required'], ['session_id']);
+        expect((newSchema['properties'] as Map).containsKey('capability'), false);
         final retrieved = await rpc.request('mcpServer/tool/call', {
           'threadId': threadId, 'server': 'baocode_session', 'tool': 'session_query',
-          'arguments': {'capability': capability, 'session_id': 'claude-code:smoke-target'},
+          'arguments': {'session_id': 'claude-code:smoke-target'},
         });
         expect(retrieved['isError'], isNot(true));
         expect(jsonEncode(retrieved), contains('Smoke context port 8123.'));
         final denied = await rpc.request('mcpServer/tool/call', {
           'threadId': threadId, 'server': 'baocode_session', 'tool': 'session_query',
-          'arguments': {'capability': capability, 'session_id': 'claude-code:unselected'},
+          'arguments': {'session_id': 'claude-code:unselected'},
         });
         expect(jsonEncode(denied), isNot(contains('Smoke context port 8123.')));
         expect(denied['isError'], true);
+        smokeTurnActive = false;
+        final inactive = await rpc.request('mcpServer/tool/call', {
+          'threadId': threadId, 'server': 'baocode_session', 'tool': 'session_query',
+          'arguments': {'session_id': 'claude-code:smoke-target'},
+        });
+        expect(inactive['isError'], true);
+        expect(jsonEncode(inactive), isNot(contains('Smoke context port 8123.')));
         expect(rpc.sentMethods, isNot(contains('turn/start')));
         // Distinguish protocol success from later OS resource cleanup failures.
         // ignore: avoid_print

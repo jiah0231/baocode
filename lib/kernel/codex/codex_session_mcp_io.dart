@@ -11,11 +11,12 @@ import '../claude_code/claude_sdk_tools.dart';
 /// threads whose dynamic tool catalogue predates @session. It exposes only
 /// session_query; the ordinary SDK gate and per-turn grants still apply.
 class CodexSessionMcp {
-  CodexSessionMcp._(this._server, this._cwd, this._sessionId, this._token);
+  CodexSessionMcp._(this._server, this._cwd, this._sessionId, this._turnId, this._token);
 
   final HttpServer _server;
   final String _cwd;
   final String? Function() _sessionId;
+  final String? Function() _turnId;
   final String _token;
   final _closed = Completer<void>();
   int _active = 0;
@@ -23,12 +24,13 @@ class CodexSessionMcp {
   static Future<CodexSessionMcp> start({
     required String cwd,
     required String? Function() sessionId,
+    required String? Function() turnId,
   }) async {
     final random = Random.secure();
     final token = List.generate(32,
       (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    final bridge = CodexSessionMcp._(server, cwd, sessionId, token);
+    final bridge = CodexSessionMcp._(server, cwd, sessionId, turnId, token);
     server.listen(
       (request) => unawaited(bridge._handle(request)),
       onError: (Object _) {
@@ -104,6 +106,9 @@ class CodexSessionMcp {
         response.statusCode = HttpStatus.requestEntityTooLarge;
         return;
       }
+      // Authenticated ingress binds identity before any await: a slow old body
+      // cannot acquire a later turn's selected targets.
+      final call = _call();
       final bytes = await _readBody(request);
       final decoded = jsonDecode(utf8.decode(bytes));
       if (decoded is! Map<String, dynamic> || decoded['jsonrpc'] != '2.0') {
@@ -123,7 +128,7 @@ class CodexSessionMcp {
           if (method == 'notifications/cancelled') {
             await ClaudeSdkTools.handle({...message, 'params': {
               ...params, 'requestId': 'session-mcp:${_server.port}:${params['requestId']}',
-            }}, _call());
+            }}, call);
           }
           response.statusCode = HttpStatus.accepted;
         } else {
@@ -144,7 +149,7 @@ class CodexSessionMcp {
         case 'ping':
           result = {'jsonrpc': '2.0', 'id': id, 'result': <String, Object?>{}};
         case 'tools/list':
-          result = await ClaudeSdkTools.handle(message, _call());
+          result = await ClaudeSdkTools.handle(message, call);
           final body = result['result'] as Map;
           body['tools'] = [
             for (final tool in body['tools'] as List)
@@ -156,7 +161,7 @@ class CodexSessionMcp {
         case 'tools/call' when params['name'] == SessionQueryService.toolName:
           result = await ClaudeSdkTools.handle({
             ...message, 'id': 'session-mcp:${_server.port}:$id',
-          }, _call()).timeout(const Duration(seconds: 35));
+          }, call).timeout(const Duration(seconds: 35));
           result['id'] = id;
         default:
           result = {'jsonrpc': '2.0', 'id': id, 'error': {
@@ -206,7 +211,7 @@ class CodexSessionMcp {
   }
 
   ClaudeSdkCall _call() => ClaudeSdkCall(
-    cwd: _cwd, sessionId: _sessionId(), cancelled: _closed.future,
+    cwd: _cwd, sessionId: _sessionId(), turnId: _turnId(), cancelled: _closed.future,
   );
 }
 
