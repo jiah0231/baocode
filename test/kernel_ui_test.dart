@@ -62,9 +62,11 @@ Future<ChatSession> pumpSession(
   WidgetTester tester,
   KernelDescriptor kernel, {
   List<KernelDescriptor>? kernels,
+  void Function(ChatSession)? beforeMount,
 }) async {
   final session = ChatSession(kernel: kernel, kernels: kernels, historyCount: 0);
   addTearDown(session.dispose);
+  beforeMount?.call(session);
   await tester.pumpWidget(
     MaterialApp(
       theme: buildAppTheme(),
@@ -479,8 +481,13 @@ void main() {
       tester,
       descriptor,
       kernels: [MockKernels.claudeCode, descriptor],
+      beforeMount: (session) {
+        expect(session.kernelChoice?.selected.id, 'codex');
+      },
     );
-    expect(session.kernelChoice?.selected.id, 'codex');
+    // Preparing the mounted kernel may add a notice and lock the picker.
+    expect(session.kernel, same(descriptor));
+    expect(session.kernels, contains(same(descriptor)));
     session.send(const ComposerMessage(text: '把输入框改成随内容增高'));
     await runWhile(tester, () => session.pendingInteraction == null);
     expect(transport.methods, containsAllInOrder([

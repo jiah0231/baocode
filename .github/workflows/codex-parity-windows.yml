@@ -31,6 +31,8 @@ jobs:
       - name: Analyze
         id: analyze
         run: flutter analyze --no-pub
+      - name: Test Codex approval and edit-review UI early
+        run: flutter test test/kernel_ui_test.dart --plain-name "a Codex agent asks leave, and its work can be undone"
       - name: Test selected cross-kernel session retrieval
         run: flutter test test/chat/session_query_test.dart test/chat/session_query_queue_test.dart test/chat/session_query_claude_lifecycle_test.dart test/chat/session_mentions_test.dart test/chat/composer_intercept_test.dart test/chat/composer_draft_sync_test.dart test/workspace/session_query_workspace_test.dart
       - name: Repeat writer lifecycle regression with randomized order
