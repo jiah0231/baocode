@@ -45,6 +45,7 @@ class _ReadOnlyServer implements CodexTransport {
             'id': older ? 'old-turn' : 'new-turn',
             'items': [
               {'id': 'u', 'type': 'userMessage', 'content': [
+                {'type': 'text', 'text': '<system-reminder>private host note</system-reminder>'},
                 {'type': 'text', 'text': older ? 'old question' : 'question'},
                 {'type': 'image', 'url': 'not included'},
               ]},
@@ -112,7 +113,11 @@ void main() {
       cursors.add(before);
       return ClaudeHistoryPage([
         {'type': 'system', 'message': {'content': 'not source prose'}},
-        {'type': 'user', 'uuid': 'u', 'message': {'content': 'question'}},
+        {'type': 'user', 'message': {'content': '<system-reminder>private note</system-reminder>'}},
+        {'type': 'user', 'uuid': 'u', 'message': {'content': [
+          {'type': 'text', 'text': '<system-reminder>private host note</system-reminder>'},
+          {'type': 'text', 'text': 'question'},
+        ]}},
         {'type': 'assistant', 'uuid': 'a', 'message': {'content': [
           {'type': 'thinking', 'thinking': 'private'},
           {'type': 'tool_use', 'name': 'Bash'},

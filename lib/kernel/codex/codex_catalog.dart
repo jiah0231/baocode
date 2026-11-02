@@ -120,7 +120,8 @@ class CodexCatalog implements SessionCatalog, MovesSessions, SessionHistoryCatal
               ? item['text'] as String? ?? ''
               : [
                   for (final part in item['content'] as List? ?? const [])
-                    if (part is Map && part['type'] == 'text' && part['text'] is String)
+                    if (part is Map && part['type'] == 'text' && part['text'] is String &&
+                        !(part['text'] as String).trimLeft().startsWith('<system-reminder>'))
                       part['text'] as String,
                 ].join('\n');
           if (text.isNotEmpty) {

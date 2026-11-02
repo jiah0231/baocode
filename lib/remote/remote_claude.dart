@@ -193,10 +193,11 @@ class ClaudeCatalog implements SessionCatalog, MovesSessions, SessionHistoryCata
       final content = message['content'];
       final text = content is String ? content : [
         for (final part in content is List ? content : const [])
-          if (part is Map && part['type'] == 'text' && part['text'] is String)
+          if (part is Map && part['type'] == 'text' && part['text'] is String &&
+              !(part['text'] as String).trimLeft().startsWith('<system-reminder>'))
             part['text'] as String,
       ].join('\n');
-      if (text.isEmpty) continue;
+      if (text.isEmpty || text.trimLeft().startsWith('<system-reminder>')) continue;
       messages.add(SessionTextMessage(
         role: role as String,
         text: text,

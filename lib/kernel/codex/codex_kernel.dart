@@ -1776,11 +1776,11 @@ class CodexKernel
       'type': 'text',
       'text': _sessionMcpUnavailable &&
               note.contains('session_query') && note.contains('capability=')
-          ? 'The user selected @session targets, but cross-conversation retrieval '
+          ? '<system-reminder>The user selected @session targets, but cross-conversation retrieval '
               'is unavailable for this request because its compatibility bridge '
               'could not start. Tell the user to retry; do not claim to have read '
               'the targets, infer their contents from IDs, read raw session files, '
-              'or fork/restart another conversation as a fallback.'
+              'or fork/restart another conversation as a fallback.</system-reminder>'
           : note,
     },
     if (CodexSkill.invoked(turn.text, _skills) case final skill?) skill.input,
@@ -3310,7 +3310,8 @@ class CodexKernel
     for (final raw in content) {
       if (raw is! Map) continue;
       if (raw['type'] == 'text' && raw['text'] is String) {
-        parts.add(raw['text'] as String);
+        final text = raw['text'] as String;
+        if (!text.trimLeft().startsWith('<system-reminder>')) parts.add(text);
       } else if (raw['type'] == 'image') {
         final image = _historyImage(raw['url'] ?? raw['image_url']);
         if (image != null) images.add(image);
