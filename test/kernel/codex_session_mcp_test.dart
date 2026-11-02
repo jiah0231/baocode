@@ -39,6 +39,7 @@ void main() {
   late SessionQueryService service;
   late HttpClient client;
   String? activeTurn;
+  void Function()? onCaptured;
   var reads = 0;
 
   Future<({int status, String body})> request(Map<String, Object?> body, {
@@ -76,9 +77,17 @@ void main() {
       );
     })..register();
     activeTurn = 'turn';
+    onCaptured = null;
     service.grant(['claude:target'], callerTurnId: 'turn', isActive: () => activeTurn == 'turn',
       callerSessionId: () => 'source', callerCwd: '/project');
-    bridge = await CodexSessionMcp.start(cwd: '/project', sessionId: () => 'source', turnId: () => activeTurn);
+    bridge = await CodexSessionMcp.start(
+      cwd: '/project', sessionId: () => 'source',
+      turnId: () {
+        final captured = activeTurn;
+        onCaptured?.call();
+        return captured;
+      },
+    );
   });
   tearDown(() async {
     client.close(force: true);
@@ -152,36 +161,40 @@ void main() {
     final socket = await Socket.connect(uri.host, uri.port);
     addTearDown(socket.destroy);
     final response = StringBuffer();
-    final continued = Completer<void>();
+    final captured = Completer<void>();
+    onCaptured = () {
+      if (!captured.isCompleted) captured.complete();
+    };
     final done = Completer<void>();
     socket.cast<List<int>>().transform(utf8.decoder).listen((part) {
       response.write(part);
-      if (!continued.isCompleted && response.toString().contains('100 Continue\r\n\r\n')) {
-        continued.complete();
-      }
     }, onDone: () => done.complete(), onError: (Object error, StackTrace stack) {
-      if (!continued.isCompleted) continued.completeError(error, stack);
+      if (!captured.isCompleted) captured.completeError(error, stack);
       if (!done.isCompleted) done.completeError(error, stack);
     });
     final body = jsonEncode(call());
     socket.write('POST /mcp HTTP/1.1\r\nHost: ${uri.host}:${uri.port}\r\n'
         'Authorization: Bearer ${endpoint.token}\r\n'
         'Content-Type: application/json\r\nContent-Length: ${utf8.encode(body).length}\r\n'
-        'Expect: 100-continue\r\nConnection: close\r\n\r\n');
-    await socket.flush();
-    // HttpServer sends Continue when the handler listens to the body, after
-    // capturing source context. This is an ingress barrier, not a timing sleep.
-    await continued.future.timeout(const Duration(seconds: 5));
+        'Connection: close\r\n\r\n');
     final half = body.length ~/ 2;
     socket.write(body.substring(0, half));
     await socket.flush();
+    // Observe the real trusted turnId callback at authenticated ingress; no
+    // assumption about optional HTTP 100-continue behavior or timing sleeps.
+    await captured.future.timeout(const Duration(seconds: 5), onTimeout: () {
+      throw StateError('MCP handler did not capture host identity for the partial HTTP body');
+    });
+    onCaptured = null;
     activeTurn = 'next-turn';
     service.grant(['claude:target'], callerSessionId: () => 'source',
       callerCwd: '/project', callerTurnId: 'next-turn',
       isActive: () => activeTurn == 'next-turn');
     socket.write(body.substring(half));
     await socket.flush();
-    await done.future.timeout(const Duration(seconds: 5));
+    await done.future.timeout(const Duration(seconds: 5), onTimeout: () {
+      throw StateError('MCP response connection did not close after completing the old-turn body');
+    });
     expect(response.toString(), contains('"isError":true'));
     expect(response.toString(), isNot(contains('requested history')));
     expect(reads, 0);
