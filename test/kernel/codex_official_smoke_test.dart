@@ -26,6 +26,7 @@ void main() {
       _Rpc? rpc;
       CodexSessionMcp? sessionBridge;
       SessionQueryService? sessionQueries;
+      Object? protocolFailure;
       try {
         final installer = createCodexInstaller();
         expect(installer.supported, isTrue);
@@ -295,14 +296,33 @@ void main() {
         expect(jsonEncode(denied), isNot(contains('Smoke context port 8123.')));
         expect(denied['isError'], true);
         expect(rpc.sentMethods, isNot(contains('turn/start')));
+        // Distinguish protocol success from later OS resource cleanup failures.
+        // ignore: avoid_print
+        print('Official protocol assertions complete: legacy MCP retrieval and denial passed; no model turn.');
+      } on Object catch (error) {
+        protocolFailure = error;
+        rethrow;
       } finally {
-        try {
-          await rpc?.close();
-          await sessionBridge?.close();
-          sessionQueries?.dispose();
-        } finally {
-          DataDirectory.current = originalDirectory;
-          await _deleteTemp(root);
+        Object? cleanupFailure;
+        StackTrace? cleanupStack;
+        Future<void> clean(FutureOr<void> Function() action) async {
+          try {
+            await action();
+          } on Object catch (error, stack) {
+            cleanupFailure ??= error;
+            cleanupStack ??= stack;
+            // Keep the original protocol failure primary, without hiding cleanup.
+            // ignore: avoid_print
+            print('Official smoke cleanup failed: $error');
+          }
+        }
+        await clean(() async { await rpc?.close(); });
+        await clean(() async { await sessionBridge?.close(); });
+        await clean(() { sessionQueries?.dispose(); });
+        DataDirectory.current = originalDirectory;
+        await clean(() => _deleteTemp(root));
+        if (protocolFailure == null && cleanupFailure != null) {
+          Error.throwWithStackTrace(cleanupFailure!, cleanupStack!);
         }
       }
     }, _RealHttpOverrides()),
@@ -360,22 +380,24 @@ Future<void> _expectSameFile(String actual, String expected) async {
 }
 
 Future<void> _deleteTemp(Directory root) async {
-  for (var attempt = 0; ; attempt++) {
+  // The owned native process and its pipes have already been awaited. Windows
+  // scanners/filesystem filters can retain transient handles after that point.
+  final deadline = DateTime.now().add(const Duration(seconds: 30));
+  while (true) {
     try {
-      await root.delete(recursive: true);
+      if (await root.exists()) await root.delete(recursive: true);
       return;
     } on FileSystemException {
-      // Windows may briefly retain file handles after app-server exits. A
-      // persistent failure must still fail CI, not leave credentials or files.
-      if (!Platform.isWindows || attempt >= 9) rethrow;
-      await Future<void>.delayed(const Duration(milliseconds: 200));
+      // A persistent lock remains a failure; never silently abandon the tree.
+      if (!Platform.isWindows || DateTime.now().isAfter(deadline)) rethrow;
+      await Future<void>.delayed(const Duration(milliseconds: 500));
     }
   }
 }
 
 class _Rpc {
   _Rpc(this.process) {
-    process.stdout
+    _stdout = process.stdout
         .transform(const Utf8Decoder(allowMalformed: true))
         .transform(const LineSplitter())
         .listen((line) {
@@ -401,13 +423,17 @@ class _Rpc {
             }
             _pending.clear();
           }
+        }, onDone: () => _stdoutDone.complete(), onError: (Object error) {
+          _errors.add('stdout: $error');
         });
-    process.stderr
+    _stderr = process.stderr
         .transform(const Utf8Decoder(allowMalformed: true))
         .transform(const LineSplitter())
         .listen((line) {
           _errors.add(line);
           if (_errors.length > 20) _errors.removeAt(0);
+        }, onDone: () => _stderrDone.complete(), onError: (Object error) {
+          _errors.add('stderr: $error');
         });
     process.exitCode.then((code) {
       for (final pending in _pending.values) {
@@ -419,6 +445,11 @@ class _Rpc {
     });
   }
   final Process process;
+  late final StreamSubscription<String> _stdout;
+  late final StreamSubscription<String> _stderr;
+  final _stdoutDone = Completer<void>();
+  final _stderrDone = Completer<void>();
+  Future<void>? _closing;
   final _pending = <int, Completer<Map<String, dynamic>>>{};
   final _errors = <String>[];
   final sentMethods = <String>[];
@@ -446,13 +477,25 @@ class _Rpc {
     }
   }
 
-  Future<void> close() async {
-    await process.stdin.close();
+  Future<void> close() => _closing ??= _close();
+
+  Future<void> _close() async {
     try {
-      await process.exitCode.timeout(const Duration(seconds: 10));
-    } on TimeoutException {
-      process.kill(ProcessSignal.sigkill);
-      await process.exitCode;
+      try {
+        await process.stdin.close().timeout(const Duration(seconds: 10));
+        await process.exitCode.timeout(const Duration(seconds: 10));
+      } on Object {
+        // This handle is the managed native executable, not a shell/npm shim.
+        // Only terminate the exact process this fixture created.
+        process.kill(ProcessSignal.sigkill);
+        await process.exitCode.timeout(const Duration(seconds: 10));
+      }
+      // exitCode alone does not guarantee the OS pipe handles were released.
+      await Future.wait([_stdoutDone.future, _stderrDone.future])
+          .timeout(const Duration(seconds: 10));
+    } finally {
+      await _stdout.cancel();
+      await _stderr.cancel();
     }
   }
 }
