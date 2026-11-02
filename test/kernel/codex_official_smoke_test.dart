@@ -300,7 +300,7 @@ void main() {
           }
           await Future<void>.delayed(const Duration(milliseconds: 100));
         }
-        final tool = (sessionServer!['tools'] as Map).entries.singleWhere(
+        final tool = (sessionServer['tools'] as Map).entries.singleWhere(
           (entry) => entry.key == 'session_query' ||
               (entry.value as Map)['name'] == 'session_query',
         ).value as Map;

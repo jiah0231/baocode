@@ -154,7 +154,7 @@ void main() {
     final response = StringBuffer();
     final continued = Completer<void>();
     final done = Completer<void>();
-    socket.transform(utf8.decoder).listen((part) {
+    socket.cast<List<int>>().transform(utf8.decoder).listen((part) {
       response.write(part);
       if (!continued.isCompleted && response.toString().contains('100 Continue\r\n\r\n')) {
         continued.complete();

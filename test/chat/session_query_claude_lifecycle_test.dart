@@ -57,7 +57,7 @@ void main() {
         icon: const IconData(0xe001), description: '',
         create: (context) => kernel = ClaudeCodeKernel(
           descriptor, context, providers: providers,
-          providerEnvironment: (_, __) async => {
+          providerEnvironment: (_, _) async => {
             'ANTHROPIC_BASE_URL': 'http://127.0.0.1:9/test-proxy',
           },
           start: (_) async {
