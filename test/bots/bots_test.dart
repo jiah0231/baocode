@@ -583,6 +583,16 @@ void main() {
         expect(await offered(app), ['session_query']);
         expect(ClaudeSdkTools.serversFor(app), ['baocode']);
         expect(its, isNot(contains('session_query')));
+        expect(bots.offersTool(assistant.folder, 'session_query'), isFalse);
+        final botDenied = await ClaudeSdkTools.handle({
+          'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call',
+          'params': {'name': 'session_query', 'arguments': {
+            'session_id': 'claude-code:target', 'query': 'Show history',
+          }},
+        }, ClaudeSdkCall(cwd: assistant.folder, sessionId: 'bot-source'));
+        expect((botDenied['result'] as Map)['isError'], isTrue);
+        expect((botDenied['result'] as Map)['content'].toString(),
+            contains('No tool session_query.'));
         final denied = await ClaudeSdkTools.handle({
           'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call',
           'params': {'name': 'session_query', 'arguments': {
@@ -1304,8 +1314,22 @@ void main() {
       );
       bots.reload();
       expect(bots.bots.first.can(BotAbility.agents), isFalse);
-      final restricted = bots.save(id: self.id, name: self.name,
-          identity: self.identity, abilities: self.abilities, chatOnly: true);
+      // The user's preceding profile edit wakes the bot. Tool access is
+      // deliberately only editable while idle, so stop that real turn first.
+      final current = bots.byId(self.id)!;
+      final currentSession = bots.threadFor(current).session;
+      currentSession.stop();
+      for (var i = 0; i < 300 && currentSession.isStreaming; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(currentSession.isStreaming, isFalse);
+      final restricted = bots.save(
+        id: current.id,
+        name: current.name,
+        identity: current.identity,
+        abilities: current.abilities,
+        chatOnly: true,
+      );
       write(cardPath, read(cardPath).replaceFirst('chat_only: true',
           'chat_only: false'));
       bots.reload(by: restricted);
@@ -1601,7 +1625,7 @@ void main() {
         ),
       ]);
       expect(
-        utf8.decode(folders.files['${bot.folder}/WATCH.md']!),
+        utf8.decode(folders.files[p.join(bot.folder, 'WATCH.md')]!),
         contains('- done project:app -> notify'),
       );
       var changed = 0;

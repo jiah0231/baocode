@@ -76,6 +76,14 @@ class MockCodexTransport implements CodexTransport {
             },
           ],
         });
+      case 'skills/list':
+        _respond(id, {'data': <Object?>[]});
+      case 'config/read':
+        // No real user config path: optional custom prompts stay unavailable
+        // without consulting the host filesystem or waiting for an RPC timeout.
+        _respond(id, {'config': <String, Object?>{}, 'layers': <Object?>[]});
+      case 'thread/goal/get':
+        _respond(id, {'goal': null});
       case 'thread/start':
         _respond(id, {
           'thread': {

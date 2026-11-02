@@ -83,6 +83,11 @@ void main() {
       ),
     );
     expect(button.project, other.project);
+    // Dispose the app before the test ends, then drain the tokenizer's
+    // already-queued zero-duration yield. It checks its disposed state before
+    // doing more work; do not leave that callback to the binding's teardown.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
   }, variant: _windows);
 
   testWidgets('the window hears where the header\'s controls are whenever '

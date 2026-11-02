@@ -10,6 +10,7 @@ import 'package:path/path.dart' as p;
 
 import '../chat/chat_models.dart';
 import '../chat/chat_session.dart';
+import '../chat/session_query.dart' show SessionQueryService;
 import '../images/image_tools.dart' show ImageTools;
 import '../kernel/agent_kernel.dart';
 import '../kernel/claude_code/claude_sdk_tools.dart';
@@ -510,6 +511,9 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
     final bot = botAt(cwd);
     final ability = BotTools.abilityOf(tool);
     if (bot == null) return ability == null;
+    // History selection grants belong to ordinary host-bound chat turns.
+    // Full agent tools do not make a bot a caller of that history bridge.
+    if (tool == SessionQueryService.toolName) return false;
     if (ability != null) return ability.allows(bot);
     // The app's other tools: pictures made; the browser's, if it may use
     // it; the rest, as an agent's, unless it only chats.

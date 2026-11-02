@@ -744,7 +744,7 @@ void main() {
     });
     expect(
       multi.threads.map((t) => t.title),
-      contains('look at @${p.absolute('/code/api/main.go')}'),
+      contains('look at @${p.normalize(p.absolute('/code/api/main.go'))}'),
     );
   });
 

@@ -31,6 +31,8 @@ import 'package:baocode/chat/composer/composer_images.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/kernel_types.dart';
 import 'package:baocode/kernel/mock/mock_kernels.dart';
+import 'package:baocode/kernel/codex/codex_kernel.dart';
+import 'package:baocode/kernel/codex/mock_codex_transport.dart';
 import 'package:baocode/l10n/l10n.dart';
 import 'package:baocode/main.dart';
 import 'package:baocode/sidebar/sidebar.dart';
@@ -44,6 +46,17 @@ import 'package:baocode/kernel/claude_code/claude_code_kernel.dart';
 import 'package:baocode/kernel/claude_code/claude_code_translator.dart';
 
 import 'kernel_test.dart' show FakeCli;
+
+/// Observe the real demo script without supplying alternate protocol replies.
+class _UiCodexTransport extends MockCodexTransport {
+  final methods = <String>[];
+
+  @override
+  void write(Map<String, Object?> message) {
+    if (message['method'] case final String method) methods.add(method);
+    super.write(message);
+  }
+}
 
 Future<ChatSession> pumpSession(
   WidgetTester tester,
@@ -452,9 +465,21 @@ void main() {
   testWidgets('a Codex agent asks leave, and its work can be undone', (
     tester,
   ) async {
-    final session = await pumpSession(tester, MockKernels.codex);
+    final transport = _UiCodexTransport();
+    late final KernelDescriptor descriptor;
+    descriptor = KernelDescriptor(
+      id: 'codex', label: 'Codex', icon: Icons.data_object_rounded,
+      description: '',
+      create: (context) => CodexKernel(
+        descriptor, context, start: (_) async => transport,
+      ),
+    );
+    final session = await pumpSession(tester, descriptor);
     session.send(const ComposerMessage(text: '把输入框改成随内容增高'));
     await runWhile(tester, () => session.pendingInteraction == null);
+    expect(transport.methods, containsAllInOrder([
+      'initialize', 'skills/list', 'config/read', 'thread/start', 'turn/start',
+    ]));
     expect(find.byType(InteractionPanel), findsOneWidget);
     expect(find.text('Run command'), findsOneWidget);
     expect(find.text('Allow once'), findsOneWidget);
@@ -672,8 +697,11 @@ void main() {
       },
     });
     await tester.pump();
-    expect(tester.widget<PlanCard>(card).item.status, PlanStatus.awaiting);
     expect(session.awaitingPlan?.path, plan);
+    // Same-count history updates are coalesced (66 ms watched / 250 ms away).
+    // The model is already awaiting; let the history view publish that state.
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(tester.widget<PlanCard>(card).item.status, PlanStatus.awaiting);
     // Not started while the turn that put it goes on.
     expect(session.canStartPlan, isFalse);
     expect(start, findsOneWidget);
@@ -692,6 +720,7 @@ void main() {
     // Sent back once the CLI takes it, the card folds to a line saying so.
     cli.push(cli.users.last);
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
     expect(
       find.textContaining(
         'Plan v1 · Sent back：Keep it to five lines',

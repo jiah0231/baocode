@@ -363,6 +363,8 @@ void main() {
     });
     expect(status, 200);
     expect(upstream.headers.single.containsKey(UsageHeaders.session), isFalse);
+    // Client EOF can precede the handler's final usage record.
+    await proxy.drainRequests();
     ledger.flush();
     expect(await ledger.ofSession(session), isEmpty);
     final call = (await ledger.ofSession('conversation-1')).single;
@@ -506,10 +508,25 @@ void main() {
         ..set('x-api-key', 'tok')
         ..contentType = ContentType.json;
       asked.write(jsonEncode(request(model: 'claude-x')));
+      StreamSubscription<String>? answerSubscription;
       if (answering) {
-        // Its answer begun, the rest held upstream.
+        // Wait for an actual answer delta, not an arbitrary first HTTP
+        // chunk (which can contain only message_start on Windows). Keep
+        // listening until the explicit disconnect below.
         final answer = await asked.close();
-        await answer.first;
+        final firstDelta = Completer<void>();
+        answerSubscription = answer
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())
+            .listen((line) {
+              if (!firstDelta.isCompleted &&
+                  line.contains('"type":"content_block_delta"')) {
+                firstDelta.complete();
+              }
+            }, onError: (Object error) {
+              if (!firstDelta.isCompleted) firstDelta.completeError(error);
+            });
+        await firstDelta.future.timeout(const Duration(seconds: 5));
       } else {
         unawaited(asked.close().then((_) {}, onError: (_) {}));
         while (upstream.ended.isEmpty) {
@@ -524,6 +541,7 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 10));
       }
       expect(ledger.underway(session), isEmpty);
+      await proxy.drainRequests().timeout(const Duration(seconds: 5));
       ledger.flush();
       final call = (await ledger.ofSession(session)).last;
       expect(call.cancelled, isTrue);
@@ -532,6 +550,7 @@ void main() {
       expect(call.error, isNull);
       expect(call.firstToken == null, !answering);
       expect(call.input, answering ? 12 : 0);
+      await answerSubscription?.cancel();
       upstream.before?.complete();
       upstream.held!.complete();
     }
