@@ -11,6 +11,12 @@ import 'package:baocode/models/model_provider.dart';
 import 'package:baocode/models/model_providers.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+// A matched synchronous stream event proves the condition, but its producer
+// may still be dispatching. Resume actions on the next event-loop turn rather
+// than reentering that producer from a Future/stream continuation. This is a
+// dispatch boundary, not a timed readiness wait or a retry.
+Future<void> _afterEventDispatch() => Future<void>(() {});
+
 void main() {
   late _WriterHarness h;
   setUp(() => h = _WriterHarness());
@@ -326,6 +332,7 @@ void main() {
       'turn': {'id': 'server-turn-1', 'status': 'completed'},
     });
     await firstEnded.timeout(const Duration(seconds: 10));
+    await _afterEventDispatch();
     old.delayExit = true;
     kernel.model.select('@custom/test-model');
     kernel.send(const KernelTurn(id: 'second', text: 'Continue elsewhere'));
@@ -395,7 +402,10 @@ class _WriterHarness {
   }
 
   Future<void> until(bool Function() condition, String description) async {
-    if (condition()) return;
+    if (condition()) {
+      await _afterEventDispatch();
+      return;
+    }
     final reached = Completer<void>();
     final subscription = _changes.stream.listen((_) {
       if (!reached.isCompleted && condition()) reached.complete();
@@ -408,6 +418,7 @@ class _WriterHarness {
     } finally {
       await subscription.cancel();
     }
+    await _afterEventDispatch();
   }
 
   Future<void> ready(CodexKernel kernel, {required int servers}) async {
