@@ -493,7 +493,7 @@ void main() {
     });
 
     test(
-      'a bot is offered its abilities\' tools; a project\'s agent none',
+      'a bot has only its abilities; project session queries require selection',
       () async {
         final assistant = bots.bots.single;
         final its = await offered(assistant.folder);
@@ -512,8 +512,18 @@ void main() {
         ]) {
           expect(its, contains(tool));
         }
-        expect(await offered(app), isNot(contains('bot_list_chats')));
-        expect(ClaudeSdkTools.serversFor(app), isEmpty);
+        // Ordinary projects have only the capability-scoped history tool,
+        // never the bot's control tools. Bots cannot use the history bridge.
+        expect(await offered(app), ['session_query']);
+        expect(ClaudeSdkTools.serversFor(app), ['baocode']);
+        expect(its, isNot(contains('session_query')));
+        final denied = await ClaudeSdkTools.handle({
+          'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call',
+          'params': {'name': 'session_query', 'arguments': {
+            'capability': 'not-selected', 'session_id': 'claude-code:target',
+          }},
+        }, ClaudeSdkCall(cwd: app, sessionId: 'source'));
+        expect((denied['result'] as Map)['isError'], isTrue);
 
         // A new one may do nothing until the user says.
         final mia = bots.save(

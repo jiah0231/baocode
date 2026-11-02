@@ -93,7 +93,7 @@ void main() {
     expect(kernel.health.status, KernelHealthStatus.ready);
     expect(replacement.requests('thread/resume'), hasLength(1));
     final queued = replacement.requests('turn/start').single['params'] as Map;
-    expect(queued['input'], contains({'type': 'text', 'text': 'Queued message'}));
+    expect(queued['input'], contains(equals({'type': 'text', 'text': 'Queued message'})));
     expect(h.servers.expand((s) => s.requests('turn/start')), hasLength(2));
     expect(h.conflicts, 0);
   });

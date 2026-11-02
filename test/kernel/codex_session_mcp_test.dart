@@ -15,7 +15,25 @@ class _DenyGate implements ClaudeSdkGate {
   bool asksUser(String cwd) => false;
 }
 
+// Real sockets only to this test's loopback MCP server, never external hosts.
+class _LoopbackHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    final client = super.createHttpClient(context);
+    client.connectionFactory = (uri, proxyHost, proxyPort) {
+      final address = InternetAddress.tryParse(uri.host);
+      if (proxyHost != null || address == null || !address.isLoopback) {
+        throw StateError('Fixture HTTP must stay on loopback: $uri');
+      }
+      return Socket.startConnect(address, uri.port);
+    };
+    return client;
+  }
+}
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  HttpOverrides? previousHttpOverrides;
   late CodexSessionMcp bridge;
   late SessionQueryService service;
   late HttpClient client;
@@ -43,6 +61,8 @@ void main() {
   };
 
   setUp(() async {
+    previousHttpOverrides = HttpOverrides.current;
+    HttpOverrides.global = _LoopbackHttpOverrides();
     client = HttpClient();
     service = SessionQueryService(read: (id) async => SessionQuerySnapshot(
       targetId: id, title: 'Claude target', kernel: 'Claude Code', messages: const [
@@ -55,6 +75,7 @@ void main() {
   });
   tearDown(() async {
     client.close(force: true);
+    HttpOverrides.global = previousHttpOverrides;
     await bridge.close();
     service.dispose();
     ClaudeSdkTools.unregister('unrelated');
