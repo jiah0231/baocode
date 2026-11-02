@@ -316,16 +316,14 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       var record = thread.record?.id == thread.id ? thread.record : null;
       // A newly running conversation may not yet have its storage path in the
       // sidebar. Resolve only its catalog identity; never guess a storage path.
-      if (record == null) {
-        record = (await catalog.sessionsIn(thread.project.path))
-            .where((record) => record.id == thread.id).firstOrNull;
-      }
+      record ??= (await catalog.sessionsIn(thread.project.path))
+          .where((record) => record.id == thread.id).firstOrNull;
       record ??= SessionRecord(
         id: thread.id!, title: thread.title, updatedAt: thread.updatedAt,
         cwd: thread.project.path,
       );
       final position = cursor == null ? null : jsonDecode(cursor) as Map;
-      final page = await catalog.readTextPage(
+      final SessionTextPage page = await catalog.readTextPage(
         record, cursor: position?['cursor'] as String?,
       );
       if (!identical(_queryTarget(targetId), thread)) return null;

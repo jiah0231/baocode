@@ -445,7 +445,7 @@ abstract interface class SessionCatalog {
 
 /// A read-only catalog history page. Reading never starts/resumes a target
 /// agent or grants it the querying conversation's permissions.
-abstract interface class SessionHistoryCatalog {
+abstract interface class SessionHistoryCatalog implements SessionCatalog {
   Future<SessionTextPage> readTextPage(
     SessionRecord session, {
     String? cursor,

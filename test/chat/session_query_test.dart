@@ -45,9 +45,9 @@ void main() {
         'arguments': {
           'capability': capability ?? token,
           'session_id': target ?? 'codex:target',
-          if (query != null) 'query': query,
-          if (before != null) 'before': before,
-          if (older != null) 'older': older,
+          'query': ?query,
+          'before': ?before,
+          'older': ?older,
         },
       },
     }, ClaudeSdkCall(cwd: '/source', sessionId: session, cancelled: cancelled));

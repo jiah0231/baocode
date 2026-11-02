@@ -103,7 +103,7 @@ class CodexCatalog implements SessionCatalog, MovesSessions, SessionHistoryCatal
         'limit': 30,
         'itemsView': 'full',
         'sortDirection': 'desc',
-        if (cursor != null) 'cursor': cursor,
+        'cursor': ?cursor,
       });
       final messages = <SessionTextMessage>[];
       for (final turn in (result['data'] as List? ?? const []).reversed) {

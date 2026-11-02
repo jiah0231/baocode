@@ -191,7 +191,7 @@ void main() {
       'session_id': targetId,
       'query': 'port',
       if (older) 'older': true,
-      if (before != null) 'before': before,
+      'before': ?before,
     }, ClaudeSdkCall(cwd: '/tmp/session-query', sessionId: caller));
     return jsonDecode(result as String) as Map<String, dynamic>;
   }
