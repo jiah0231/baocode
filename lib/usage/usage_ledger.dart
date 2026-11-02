@@ -376,12 +376,19 @@ class UsageLedger extends ChangeNotifier {
       final days = (_index ??= {})[session] ??= {};
       if (days.add(day)) _indexChanged = true;
     }
-    _flush ??= Timer(const Duration(milliseconds: 600), flush);
-    _changed();
+    if (_disposed) {
+      // A request already accepted may finish during shutdown. Keep its
+      // last usage without scheduling notifications on a disposed ledger.
+      flush();
+    } else {
+      _flush ??= Timer(const Duration(milliseconds: 600), flush);
+      _changed();
+    }
   }
 
   void _changed() {
     _version++;
+    if (_disposed) return;
     _notify ??= Timer(const Duration(milliseconds: 250), () {
       _notify = null;
       notifyListeners();
@@ -417,9 +424,37 @@ class UsageLedger extends ChangeNotifier {
 
   bool _disposed = false;
 
+  // --- Under way ------------------------------------------------------------
+
+  /// The calls asked but not yet answered in full, by whoever follows
+  /// them: what each is so far. Not kept: only shown, till it is.
+  final Map<Object, UsageCall Function()> _underway = {};
+
+  /// [key]'s call is under way, [progress] telling what it is so far.
+  void begin(Object key, UsageCall Function() progress) {
+    if (!enabled || _disposed) return;
+    _underway[key] = progress;
+    notifyListeners();
+  }
+
+  /// [key]'s call is over: kept ([record]) first, where it is.
+  void end(Object key) {
+    if (_underway.remove(key) != null && !_disposed) notifyListeners();
+  }
+
+  /// The calls under way, as they are now: [session]'s (all, without it),
+  /// oldest first.
+  List<UsageCall> underway([String? session]) => [
+    for (final progress in _underway.values)
+      if (progress() case final call
+          when session == null || call.session == session)
+        call,
+  ]..sort((a, b) => a.at.compareTo(b.at));
+
   @override
   void dispose() {
     _disposed = true;
+    _underway.clear();
     flush();
     _notify?.cancel();
     _settings?.removeListener(_read);

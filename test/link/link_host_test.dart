@@ -43,6 +43,7 @@ void main() {
           '~/code/baocode/lib/chat/chat_history_view.dart': 'class View {}',
           '~/code/baocode/assets/logo.png': null,
           '~/code/baocode/node_modules/x/index.js': '',
+          p.absolute('/tmp/a.log'): 'started',
         }),
         paths: p.context,
       ),
@@ -54,18 +55,12 @@ void main() {
 
   tearDown(() => host.dispose());
 
-  /// A phone's connection to the host, its handshake done.
+  /// A phone's connection to the host, over the memory network.
   Future<LinkPeer> connect(LinkIdentity identity) async {
-    final (a, b) = MemoryLinkSocket.pair();
-    platform.incoming.add(b);
-    final channel = await SecureChannel.connect(
-      a,
-      identity: identity,
-      serverKey: decodeKey(
-        (platform.kept['identity']! as Map)['privateKey'] as String,
-      ).let((private) => LinkIdentity.fromPrivateKey(private).publicKey),
-    );
-    return LinkPeer(channel);
+    final connection = await platform
+        .phone(identity)
+        .connect(LinkAddress(host.id));
+    return LinkPeer.connect(connection);
   }
 
   Future<LinkPeer> pair() async {
@@ -105,10 +100,215 @@ void main() {
     final hello =
         await peer2.call(LinkMethods.hello, {'name': 'iPhone'}) as Map;
     expect((hello['device'] as Map)['name'], 'Test Mac');
-    expect(
-      ((hello['device'] as Map)['endpoints'] as List).first,
-      '192.168.1.5:47100',
+    final device = DeviceInfo.fromJson(
+      hello['device']! as Map<String, Object?>,
     );
+    expect(device.addrs.first, '192.168.1.5:47100');
+    expect(device.relays, contains(defaultLinkRelays.first));
+  });
+
+  test('the offer tells where the desktop is: relays, addresses', () async {
+    final offer = (await host.beginPairing())!;
+    expect(offer.id, host.id);
+    expect(offer.relays, defaultLinkRelays);
+    expect(offer.addrs, ['192.168.1.5:47100']);
+    final parsed = PairingOffer.parse(offer.uri);
+    expect(parsed.address.id, host.id);
+    expect(parsed.address.relays, offer.relays);
+  });
+
+  test('one relay picked: kept to, told and bound to alone; automatic '
+      'again, all of BaoCode\'s', () async {
+    await host.setEnabled(true);
+    expect(platform.boundRelays, defaultLinkRelays);
+    // The one in use picked at first.
+    await host.setRelayMode(LinkRelayMode.pinned);
+    expect(host.relays, [defaultLinkRelays.first]);
+    expect(platform.boundRelays, host.relays);
+
+    await host.pinRelay(defaultLinkRelays.last);
+    expect(platform.boundRelays, [defaultLinkRelays.last]);
+
+    // One at an address of one's own.
+    await host.pinRelay('https://relay.example.com');
+    expect(platform.boundRelays, ['https://relay.example.com']);
+    expect(platform.kept['relayMode'], 'pinned');
+    expect(platform.kept['pinnedRelay'], 'https://relay.example.com');
+    final offer = (await host.beginPairing())!;
+    expect(offer.relays, ['https://relay.example.com']);
+
+    await host.setRelayMode(LinkRelayMode.auto);
+    expect(platform.boundRelays, defaultLinkRelays);
+  });
+
+  test('direct only: no relay kept, told or bound to; its own port alone',
+      () async {
+    await host.setEnabled(true);
+    await host.setRelayMode(LinkRelayMode.direct);
+    expect(host.relays, isEmpty);
+    expect(platform.boundRelays, isEmpty);
+    expect(platform.boundStrictPort, isTrue);
+    expect(platform.kept['relayMode'], 'direct');
+
+    final offer = (await host.beginPairing())!;
+    expect(offer.relays, isEmpty);
+    expect(offer.direct, isTrue);
+    final parsed = PairingOffer.parse(offer.uri);
+    expect(parsed.direct, isTrue);
+    expect(parsed.relays, isEmpty);
+
+    final peer = await connect(phone);
+    final hello =
+        await peer.call(LinkMethods.hello, {
+              'name': 'iPhone',
+              'token': encodeKey(offer.token),
+            })
+            as Map;
+    final device = DeviceInfo.fromJson(
+      hello['device']! as Map<String, Object?>,
+    );
+    expect(device.direct, isTrue);
+    expect(device.relays, isEmpty);
+    await peer.close();
+  });
+
+  test('the direct port: kept, and bound to alone', () async {
+    await host.setEnabled(true);
+    await host.setRelayMode(LinkRelayMode.direct);
+    expect(host.linkPort, defaultLinkPort);
+    expect(platform.boundPort, defaultLinkPort);
+
+    expect(await host.setLinkPort(51000), isTrue);
+    expect(host.linkPort, 51000);
+    expect(platform.boundPort, 51000);
+    expect(platform.kept['linkPort'], 51000);
+
+    expect(await host.setLinkPort(80), isFalse);
+    expect(host.linkPort, 51000);
+  });
+
+  test('relays of one\'s own kept before there was a choice: the first '
+      'picked', () async {
+    host.dispose();
+    platform.kept = {
+      'relays': ['https://relay.example.com', 'https://relay.other.com'],
+    };
+    host = LinkHost(workspace: workspace, platform: platform);
+    await host.load();
+    expect(host.relayMode, LinkRelayMode.pinned);
+    expect(host.relays, ['https://relay.example.com']);
+  });
+
+  test(
+    'a connected phone\'s path is shown, and counted once settled',
+    () async {
+      platform.network.path = const LinkPath(
+        LinkPathKind.direct,
+        rtt: Duration(milliseconds: 42),
+      );
+      host.dispose();
+      host = LinkHost(
+        workspace: workspace,
+        platform: platform,
+        pathSettle: const Duration(milliseconds: 50),
+      );
+      await host.load();
+      final peer = await pair();
+      final id = deviceIdOf(phone.publicKey);
+      expect(host.pathOf(id)?.kind, LinkPathKind.direct);
+      expect(host.pathOf(id)?.rtt, const Duration(milliseconds: 42));
+      await _until(() => host.pathCounts.pending != null);
+      expect(host.pathCounts.pending, {'direct': 1});
+      host.pathCountsSent({'direct': 1});
+      expect(host.pathCounts.pending, isNull);
+      await peer.close();
+      await _until(() => host.pathOf(id) == null);
+    },
+  );
+
+  test('phones paired over the old link are kept to pair again', () async {
+    final threadsBefore = workspace.threads.toList();
+    final historyBefore = [
+      for (final thread in threadsBefore)
+        jsonEncode([
+          for (var i = 0; i < thread.session.itemCount; i++)
+            ChatCodec.encode(thread.session.itemAt(i)),
+        ]),
+    ];
+    platform.kept = {
+      'version': 1,
+      'identity': {
+        'privateKey': encodeKey(Uint8List(32)),
+        'publicKey': encodeKey(Uint8List(32)),
+      },
+      'enabled': true,
+      'port': 47100,
+      'phones': [
+        {
+          'key': encodeKey(Uint8List(32)),
+          'name': 'Old iPhone',
+          'system': 'iOS 18',
+          'pairedAt': 1700000000000,
+        },
+      ],
+    };
+    host.dispose();
+    host = LinkHost(workspace: workspace, platform: platform);
+    await host.load();
+    expect(host.phones, isEmpty);
+    expect(host.legacyPhones.single.name, 'Old iPhone');
+    expect(host.id, hasLength(64));
+    expect(host.enabled, isTrue);
+    expect(platform.kept['version'], 2);
+    expect((platform.kept['identity']! as Map)['kind'], 'ed25519');
+    expect(platform.kept['legacyPhones'], hasLength(1));
+
+    // Restart after migration: preserve the new identity and old-device
+    // notice, without generating another key or duplicating old devices.
+    final migratedId = host.id;
+    host.dispose();
+    host = LinkHost(workspace: workspace, platform: platform);
+    await host.load();
+    expect(host.id, migratedId);
+    expect(host.phones, isEmpty);
+    expect(host.legacyPhones, hasLength(1));
+    expect(host.legacyPhones.single.name, 'Old iPhone');
+    expect(workspace.threads, orderedEquals(threadsBefore));
+    for (var i = 0; i < threadsBefore.length; i++) {
+      final session = threadsBefore[i].session;
+      expect(
+        jsonEncode([
+          for (var j = 0; j < session.itemCount; j++)
+            ChatCodec.encode(session.itemAt(j)),
+        ]),
+        historyBefore[i],
+      );
+    }
+
+    // Paired again under the same name: no longer listed as old.
+    final offer = (await host.beginPairing())!;
+    final again = await connect(phone);
+    await again.call(LinkMethods.hello, {
+      'name': 'Old iPhone',
+      'token': encodeKey(offer.token),
+    });
+    await again.call(LinkMethods.confirm);
+    expect(host.phones.single.name, 'Old iPhone');
+    expect(host.legacyPhones, isEmpty);
+
+    // Or let go.
+    host.dispose();
+    platform.kept = {
+      ...platform.kept,
+      'legacyPhones': [
+        {'name': 'iPad', 'system': 'iPadOS', 'pairedAt': 1700000000000},
+      ],
+    };
+    host = LinkHost(workspace: workspace, platform: platform);
+    await host.load();
+    host.forgetLegacy(host.legacyPhones.single);
+    expect(host.legacyPhones, isEmpty);
+    expect(platform.kept['legacyPhones'], isNull);
   });
 
   test(
@@ -137,6 +337,45 @@ void main() {
       expect(host.phones, isEmpty);
     },
   );
+
+  test('an expired offer accepts neither its token nor nearby requests', () async {
+    host.dispose();
+    host = LinkHost(
+      workspace: workspace,
+      platform: platform,
+      offerLifetime: Duration.zero,
+    );
+    await host.load();
+    final offer = (await host.beginPairing())!;
+    final peer = await connect(phone);
+    addTearDown(peer.close);
+    await expectLater(
+      peer.call(LinkMethods.hello, {'token': encodeKey(offer.token)}),
+      throwsA(isA<LinkRemoteException>().having((e) => e.code, 'code', 'badToken')),
+    );
+    await expectLater(
+      peer.call(LinkMethods.hello, {'request': true}),
+      throwsA(isA<LinkRemoteException>().having((e) => e.code, 'code', 'notPairing')),
+    );
+    expect(host.phones, isEmpty);
+    expect(host.pending, isNull);
+  });
+
+  test('a phone disconnected while comparing codes is not kept', () async {
+    final offer = (await host.beginPairing())!;
+    final peer = await connect(phone);
+    await peer.call(LinkMethods.hello, {'token': encodeKey(offer.token)});
+    expect(host.pending, isNotNull);
+    await peer.close();
+    await _until(() => host.pending == null);
+    expect(host.phones, isEmpty);
+    // The same offer can be retried after a transient disconnect.
+    final retry = await connect(phone);
+    addTearDown(retry.close);
+    await retry.call(LinkMethods.hello, {'token': encodeKey(offer.token)});
+    await retry.call(LinkMethods.confirm);
+    expect(host.phones.single.id, phone.id);
+  });
 
   test(
     'codes that do not match, said on the desktop, end the pairing',
@@ -225,6 +464,30 @@ void main() {
       workspace.threads.firstWhere((t) => t.title == first.title).pinned,
       isTrue,
     );
+
+    // A project pinned from the phone, on top as the desktop's.
+    await peer.call(LinkMethods.pinProject, {
+      'project': '~/code/cursor-docs',
+      'pinned': true,
+    });
+    final pinned = LinkState.fromJson(
+      (await peer.call(LinkMethods.state))! as Map<String, Object?>,
+    );
+    expect(pinned.projects.first.id, '~/code/cursor-docs');
+    expect(pinned.projects.first.pinned, isTrue);
+    expect(pinned.projects.skip(1).map((p) => p.pinned), everyElement(false));
+
+    // Deleted from the phone, as the desktop deletes one.
+    await peer.call(LinkMethods.delete, {'session': created['session']});
+    expect(workspace.threads, isNot(contains(thread)));
+    // A project off the list, as the desktop's Remove from list.
+    await peer.call(LinkMethods.hideProject, {'project': '~/code/cursor-docs'});
+    final after = LinkState.fromJson(
+      (await peer.call(LinkMethods.state))! as Map<String, Object?>,
+    );
+    expect([
+      for (final p in after.projects) p.name,
+    ], isNot(contains('cursor-docs')));
   });
 
   test('a new agent from the phone starts as picked there', () async {
@@ -332,22 +595,103 @@ void main() {
     );
   });
 
+  test('a message sent again is not taken twice', () async {
+    final peer = await pair();
+    Future<Object?> send(String text, String id) => peer.call(
+      LinkMethods.send,
+      {'project': '~/code/baocode', 'text': text, 'id': id},
+    );
+    final first = await send('only once', 'm1');
+    // Its answer lost, sent again: answered as before.
+    expect(await send('only once', 'm1'), first);
+    expect(
+      workspace.threads.where((t) => t.title == 'only once'),
+      hasLength(1),
+    );
+    // Another message, though it says the same.
+    await send('only once', 'm2');
+    expect(
+      workspace.threads.where((t) => t.title == 'only once'),
+      hasLength(2),
+    );
+  });
+
+  test('any file of the machine opens by its full path', () async {
+    final peer = await pair();
+    final read =
+        (await peer.call(LinkMethods.read, {
+              'project': '~/code/baocode',
+              'path': p.absolute('/tmp/./a.log'),
+            }))!
+            as Map;
+    expect(read['text'], 'started');
+    await expectLater(
+      peer.call(LinkMethods.read, {
+        'project': '~/code/baocode',
+        'path': p.absolute('/tmp/none.log'),
+      }),
+      throwsA(
+        isA<LinkRemoteException>().having((e) => e.code, 'code', 'notFound'),
+      ),
+    );
+    // As it is, for an app of the phone's to open.
+    final file =
+        (await peer.call(LinkMethods.download, {
+              'project': '~/code/baocode',
+              'path': p.absolute('/tmp/a.log'),
+            }))!
+            as Map;
+    expect(utf8.decode(base64.decode(file['data'] as String)), 'started');
+  });
+
+  test('a project whose server cannot be reached says so, not that it has '
+      'no files', () async {
+    host.dispose();
+    host = LinkHost(
+      workspace: workspace,
+      platform: platform,
+      filesOf: (project) => (
+        files: _MemoryFiles({'~/code/baocode/README.md': '#'}),
+        paths: p.context,
+      ),
+      reachHost: (project) async => throw StateError('ssh: timed out'),
+    );
+    await host.load();
+    final peer = await pair();
+    for (final (method, params) in [
+      (LinkMethods.files, {'project': '~/code/baocode'}),
+      (LinkMethods.read, {'project': '~/code/baocode', 'path': 'README.md'}),
+    ]) {
+      await expectLater(
+        peer.call(method, params),
+        throwsA(
+          isA<LinkRemoteException>()
+              .having((e) => e.code, 'code', LinkErrors.unreachable)
+              .having((e) => e.message, 'message', contains('timed out')),
+        ),
+      );
+    }
+  });
+
   test('a workspace\'s files are its folders\', each under its name', () async {
     host.dispose();
     final multi = Workspace(
       kernels: [MockKernels.claudeCode],
       workspaceDirectories: _WorkspaceDirectories(),
     );
-    final made = multi.createWorkspace('web', ['/code/site', '/code/api'])!;
+    final made = multi.createWorkspace('web', [
+      p.absolute('/code/site'),
+      p.absolute('/code/api'),
+    ])!;
     host = LinkHost(
       workspace: multi,
       platform: platform,
       filesOf: (project) => (
         files: _MemoryFiles({
           '${made.path}/web.code-workspace': '{}',
-          '/code/site/index.html': '<p>',
-          '/code/api/main.go': 'package main',
-          '/code/api/go.mod': 'module api',
+          p.absolute('/code/site/index.html'): '<p>',
+          p.absolute('/code/api/main.go'): 'package main',
+          p.absolute('/code/api/go.mod'): 'module api',
         }),
         paths: p.context,
       ),
@@ -365,12 +709,26 @@ void main() {
             }))!
             as Map;
     expect(read['text'], 'package main');
-    for (final path in [
-      'site/../api/main.go',
-      'web.code-workspace',
-      '/code/api/main.go',
-      'api',
-    ]) {
+    // By its full path too, as any file of the machine.
+    expect(
+      ((await peer.call(LinkMethods.read, {
+            'project': made.path,
+            'path': p.absolute('/code/api/main.go'),
+          }))!
+          as Map)['text'],
+      'package main',
+    );
+    // As an agent wrote it in its words: under one of the folders, not
+    // named.
+    expect(
+      ((await peer.call(LinkMethods.read, {
+            'project': made.path,
+            'path': 'main.go',
+          }))!
+          as Map)['text'],
+      'package main',
+    );
+    for (final path in ['site/../api/main.go', 'web.code-workspace', 'api']) {
       await expectLater(
         peer.call(LinkMethods.read, {'project': made.path, 'path': path}),
         throwsA(isA<LinkRemoteException>()),
@@ -386,7 +744,7 @@ void main() {
     });
     expect(
       multi.threads.map((t) => t.title),
-      contains('look at @${p.normalize('/code/api/main.go')}'),
+      contains('look at @${p.absolute('/code/api/main.go')}'),
     );
   });
 
@@ -491,7 +849,7 @@ void main() {
     expect(advert.pairing, isFalse);
     expect(
       advert.key,
-      LinkIdentity.fromJson(platform.kept['identity']! as Map<String, Object?>)
+      LinkIdentity.fromJson(platform.kept['identity']! as Map<String, Object?>)!
           .publicKey,
     );
 
@@ -599,14 +957,9 @@ Future<void> _until(bool Function() done) async {
   expect(done(), isTrue);
 }
 
-extension<T> on T {
-  R let<R>(R Function(T) f) => f(this);
-}
-
 /// Files kept in memory, by absolute path; null for a binary one.
 class _MemoryFiles implements IdeFileService {
-  // This is a local file service: the fallback walker uses host-native joins.
-  // Wire paths remain POSIX, as the assertions above require.
+  // Local services use host-native paths; protocol paths stay POSIX.
   _MemoryFiles(Map<String, String?> files)
     : files = {
         for (final entry in files.entries) p.normalize(entry.key): entry.value,

@@ -8372,6 +8372,29 @@ class AppLocalizationsZh extends AppLocalizations {
   String get mobilePairCopyLink => '复制链接';
 
   @override
+  String get mobilePairQrHint => '点按复制链接，在手机上粘贴';
+
+  @override
+  String get mobileGetApp => '下载手机版';
+
+  @override
+  String get mobileGetAppDescription => '用手机相机扫码下载，和官网下载页上的一样。';
+
+  @override
+  String get mobileGetAndroidDetail => '安装包，之后在应用内自动更新';
+
+  @override
+  String get mobileGetIos => 'iPhone 和 iPad';
+
+  @override
+  String get mobileGetIosDetail => 'TestFlight 测试版';
+
+  @override
+  String mobileGetOpen(String url) {
+    return '点击在浏览器中打开 $url';
+  }
+
+  @override
   String get mobilePairCopied => '已复制';
 
   @override
@@ -8487,10 +8510,39 @@ class AppLocalizationsZh extends AppLocalizations {
       '只用你指定的一台：BaoCode 的某一台，或自定义地址。';
 
   @override
+  String get mobileRelayModeDirect => '仅直连';
+
+  @override
+  String get mobileRelayModeDirectDescription =>
+      '不经过任何中继：手机直接连到这台电脑。电脑要有公网 IP，或者让下面的端口能从外面访问。';
+
+  @override
+  String get mobileDirectPort => '直连端口';
+
+  @override
+  String get mobileDirectPortDescription =>
+      '手机连接的 UDP 端口。路由器后面的话，把这个 UDP 端口转发给这台电脑，并在防火墙和云安全组里放行。';
+
+  @override
+  String get mobileDirectPortInvalid => '端口要在 1024–65535 之间。';
+
+  @override
+  String get mobileDirectAddress => '直连地址';
+
+  @override
+  String get mobileDirectAddressDescription => '配对二维码和之后的每次连接都会带上它。';
+
+  @override
+  String get mobileDirectAddressNone => '还没有公网地址：电脑上线后再看；在路由器后面的话，需要把端口转发过来。';
+
+  @override
+  String get mobileStatusDirect => '已开启 · 仅直连';
+
+  @override
   String get mobilePathLan => '局域网直连';
 
   @override
-  String get mobilePathDirect => '打洞直连';
+  String get mobilePathDirect => '直连';
 
   @override
   String get mobilePathRelay => '经中继';
@@ -9168,7 +9220,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get accountsDescription =>
-      '登录 GitHub 或 GitLab 后，Stash 中链接的 issue 和 PR 会显示最新状态，可以把 issue 导入为 Stash，并在你确认后回帖。';
+      '登录 GitHub、GitLab 或 Gitee 后，Stash 中链接的 issue 和 PR 会显示最新状态，可以把 issue 导入为 Stash，并在你确认后回帖。';
 
   @override
   String get accountsSignedIn => '已登录';
@@ -9178,13 +9230,17 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get accountsKeptLocally =>
-      '令牌只保存在本机钥匙串里，只会发给对应的 GitHub 或 GitLab。未经你确认，不会发布任何内容。';
+      '令牌只保存在本机钥匙串里，只会发给对应的 GitHub、GitLab 或 Gitee。未经你确认，不会发布任何内容。';
 
   @override
   String get accountsGitHubHosts => 'github.com，或公司的 GitHub Enterprise';
 
   @override
-  String get accountsGitLabHosts => 'gitlab.com，或自建的 GitLab';
+  String get accountsGitLabHosts =>
+      'gitlab.com，或自建的 GitLab（http:// 或 https://，可带端口）';
+
+  @override
+  String get accountsGiteeHosts => 'gitee.com，使用私人令牌登录';
 
   @override
   String get accountsSignInBrowser => '在浏览器中登录';
@@ -9238,12 +9294,31 @@ class AppLocalizationsZh extends AppLocalizations {
   String get accountsTokenGitLabScopes => '需要勾选 api 范围的个人访问令牌。';
 
   @override
+  String get accountsTokenGiteeScopes =>
+      '需要勾选 user_info、projects、pull_requests、issues、notes 权限的私人令牌。';
+
+  @override
   String accountsTokenCreate(String host) {
     return '在 $host 上创建令牌';
   }
 
   @override
   String get accountsTokenRefused => '令牌无效，请检查是否完整、是否已过期。';
+
+  @override
+  String get accountsCertificateTitle => '证书不受信任';
+
+  @override
+  String accountsCertificateDetail(
+    String host,
+    String issuer,
+    String fingerprint,
+  ) {
+    return '$host 的证书无法验证（签发者：$issuer）。\n\nSHA-256 指纹：\n$fingerprint\n\n信任后 BaoCode 会连接这台服务器，并且只接受这个指纹的证书；证书更换后会再次询问。';
+  }
+
+  @override
+  String get accountsCertificateTrust => '信任并继续';
 
   @override
   String accountsBrowserTitle(String forge) {
@@ -9400,7 +9475,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get stashImportAdd => '添加';
 
   @override
-  String get stashImportNotALink => '不是 GitHub 或 GitLab 的 issue / PR 链接。';
+  String get stashImportNotALink => '不是 GitHub、GitLab 或 Gitee 的 issue / PR 链接。';
 
   @override
   String stashImportSignIn(String forge) {
@@ -9427,7 +9502,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get stashImportNoRepos =>
-      '没有项目的 Git 远程在 GitHub 或 GitLab 上，可以在上面粘贴 issue 链接。';
+      '没有项目的 Git 远程在 GitHub、GitLab 或 Gitee 上，可以在上面粘贴 issue 链接。';
 
   @override
   String get stashImportNone => '这里没有打开的 issue。';
@@ -9473,7 +9548,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get stashWelcomeTrack =>
-      '卡片上实时显示对话状态，链接的 GitHub、GitLab issue 和 PR 也会同步状态。';
+      '卡片上实时显示对话状态，链接的 GitHub、GitLab、Gitee issue 和 PR 也会同步状态。';
 
   @override
   String get stashWelcomeStart => '开始使用';
@@ -10188,7 +10263,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get stashSettingsIssueSyncDescription =>
-      '项目是 GitHub / GitLab 上的 Git 仓库（并已在「账号」中登录）时，它的未关闭 issue 会成为 Stash，一个 issue 只对应一条，双向保持一致。删除或取消关联的不会再被拉回来。';
+      '项目是 GitHub / GitLab / Gitee 上的 Git 仓库（并已在「账号」中登录）时，它的未关闭 issue 会成为 Stash，一个 issue 只对应一条，双向保持一致。删除或取消关联的不会再被拉回来。';
 
   @override
   String get stashIssueSyncMine => '只同步指派给我或我创建的';
@@ -12194,6 +12269,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get ustatFieldUpstreamLatency => '上游响应';
 
   @override
+  String get ustatCallAsking => '请求中';
+
+  @override
+  String get ustatCallAnswering => '输出中';
+
+  @override
+  String get ustatCallCancelled => '已取消';
+
+  @override
   String get ustatFieldFirstToken => '首字';
 
   @override
@@ -12632,7 +12716,8 @@ class AppLocalizationsZh extends AppLocalizations {
   String get ustatPrices => '模型价格';
 
   @override
-  String get ustatPricesDetail => '每百万 token 的价格。费用按当前价格计算，改价后之前的调用也按新价格算。';
+  String get ustatPricesDetail =>
+      '每百万 token 的价格。费用按当前价格计算，改价后之前的调用也按新价格算；设了生效日期的价格只算那天之后的调用。';
 
   @override
   String get ustatPricesAgentHint =>
@@ -12733,6 +12818,68 @@ class AppLocalizationsZh extends AppLocalizations {
       'Claude Code 自带模型没填价格时按 Anthropic API 价折算，即输入框里的灰色数字。';
 
   @override
+  String ustatPriceRuleTiers(int count) {
+    return '按上下文长度分 $count 档';
+  }
+
+  @override
+  String get ustatPriceRuleSchedule => '峰谷时段';
+
+  @override
+  String ustatPriceRuleFast(String factor) {
+    return '快速模式 ×$factor';
+  }
+
+  @override
+  String get ustatPriceRuleServiceTiers => '按服务档位';
+
+  @override
+  String get ustatPriceRuleGeo => '按区域';
+
+  @override
+  String ustatPriceRulePerCall(String amount) {
+    return '每次 $amount';
+  }
+
+  @override
+  String get ustatPriceRuleTools => '工具按次计费';
+
+  @override
+  String ustatPriceRuleVersions(int count) {
+    return '$count 个按日期生效的价格';
+  }
+
+  @override
+  String ustatPriceRuleRate(String factor) {
+    return '上游倍率 ×$factor';
+  }
+
+  @override
+  String ustatPriceRuleTime(String factor) {
+    return '时段 ×$factor';
+  }
+
+  @override
+  String ustatPriceRuleFees(String amount) {
+    return '费用 $amount';
+  }
+
+  @override
+  String get ustatFees => '按次费用';
+
+  @override
+  String get ustatPricedBy => '计价依据';
+
+  @override
+  String get ustatUpstreamRates => '上游倍率';
+
+  @override
+  String get ustatUpstreamRatesDetail => '这些上游里没有单独设价的模型，按别处同名模型的价格乘以倍率计算。';
+
+  @override
+  String get ustatUpstreamRateClear => '清除倍率';
+
+  @override
   String get ustatContextUnpickHint => '再次点击取消选中，回到当前上下文';
 
   @override
@@ -12772,7 +12919,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get botsBackendDescription =>
-      '空闲时选择各机器人的内核。不同内核保留各自的对话；切换会清除模型选择，不会删除历史。Codex 仅使用 BaoCode 授权工具及只读沙箱。';
+      '空闲时选择各机器人的内核。不同内核保留各自的对话；切换会清除模型选择，不会删除历史。Codex 默认仅聊天，使用受限工具和只读沙箱。在手机上关闭“仅聊天”后可写入工作区。权限请求需在支持审批的客户端确认；若无法确认，请取消任务并改回仅聊天。';
 
   @override
   String get botsBackendBusy => '请等待此机器人结束回复后切换。';

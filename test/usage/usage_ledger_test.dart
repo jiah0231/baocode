@@ -556,6 +556,25 @@ void main() {
     expect(file.existsSync(), isFalse);
   });
 
+  test('late proxy completion cannot notify a disposed ledger', () async {
+    final ledger = UsageLedger(MemoryUsageStorage());
+    var notifications = 0;
+    ledger.addListener(() => notifications++);
+    final key = Object();
+    ledger.begin(key, () => _call(DateTime(2026, 11, 2)));
+    expect(ledger.underway(), hasLength(1));
+    expect(notifications, 1);
+    ledger.dispose();
+    ledger.record(_call(DateTime(2026, 11, 2)));
+    await ledger.flushAndWait();
+    expect(await ledger.ofSession('s1'), hasLength(1));
+    expect(() => ledger.end(key), returnsNormally);
+    expect(() => ledger.begin(Object(), () => _call(DateTime(2026, 11, 2))),
+        returnsNormally);
+    expect(ledger.underway(), isEmpty);
+    expect(notifications, 1);
+  });
+
   test('a header\'s secret is kept by its ends only', () {
     expect(
       UsageTraceMessage.redact('authorization', 'Bearer sk-abcdefghijklmnop'),

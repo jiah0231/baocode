@@ -14382,6 +14382,48 @@ abstract class AppLocalizations {
   /// **'Copy Link'**
   String get mobilePairCopyLink;
 
+  /// No description provided for @mobilePairQrHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Click to copy the link, to paste on the phone'**
+  String get mobilePairQrHint;
+
+  /// No description provided for @mobileGetApp.
+  ///
+  /// In en, this message translates to:
+  /// **'Get the Phone App'**
+  String get mobileGetApp;
+
+  /// No description provided for @mobileGetAppDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan with the phone\'s camera: the same downloads as on baocode.dev.'**
+  String get mobileGetAppDescription;
+
+  /// No description provided for @mobileGetAndroidDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'The APK; it keeps itself up to date'**
+  String get mobileGetAndroidDetail;
+
+  /// No description provided for @mobileGetIos.
+  ///
+  /// In en, this message translates to:
+  /// **'iPhone and iPad'**
+  String get mobileGetIos;
+
+  /// No description provided for @mobileGetIosDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'The beta, on TestFlight'**
+  String get mobileGetIosDetail;
+
+  /// No description provided for @mobileGetOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Click to open {url}'**
+  String mobileGetOpen(String url);
+
   /// No description provided for @mobilePairCopied.
   ///
   /// In en, this message translates to:
@@ -14579,6 +14621,60 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Only the one picked: one of BaoCode\'s, or a custom address.'**
   String get mobileRelayModePinnedDescription;
+
+  /// No description provided for @mobileRelayModeDirect.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct Only'**
+  String get mobileRelayModeDirect;
+
+  /// No description provided for @mobileRelayModeDirectDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'No relay: phones connect straight to this computer. It needs a public address, or the port below forwarded to it.'**
+  String get mobileRelayModeDirectDescription;
+
+  /// No description provided for @mobileDirectPort.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct Port'**
+  String get mobileDirectPort;
+
+  /// No description provided for @mobileDirectPortDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'The UDP port phones connect to. Forward it to this computer at the router, and allow it in the firewall.'**
+  String get mobileDirectPortDescription;
+
+  /// No description provided for @mobileDirectPortInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'A port from 1024 to 65535.'**
+  String get mobileDirectPortInvalid;
+
+  /// No description provided for @mobileDirectAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Direct Address'**
+  String get mobileDirectAddress;
+
+  /// No description provided for @mobileDirectAddressDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'It goes in the pairing code and in every connection after.'**
+  String get mobileDirectAddressDescription;
+
+  /// No description provided for @mobileDirectAddressNone.
+  ///
+  /// In en, this message translates to:
+  /// **'No public address yet: check again once this computer is online, or forward the port to it if it is behind a router.'**
+  String get mobileDirectAddressNone;
+
+  /// No description provided for @mobileStatusDirect.
+  ///
+  /// In en, this message translates to:
+  /// **'On, direct only'**
+  String get mobileStatusDirect;
 
   /// No description provided for @mobilePathLan.
   ///
@@ -15813,7 +15909,7 @@ abstract class AppLocalizations {
   /// No description provided for @accountsDescription.
   ///
   /// In en, this message translates to:
-  /// **'Sign in to GitHub or GitLab to see the state of the issues and pull requests linked in Stash, import issues as stashes, and reply to them once you confirm.'**
+  /// **'Sign in to GitHub, GitLab or Gitee to see the state of the issues and pull requests linked in Stash, import issues as stashes, and reply to them once you confirm.'**
   String get accountsDescription;
 
   /// No description provided for @accountsSignedIn.
@@ -15831,7 +15927,7 @@ abstract class AppLocalizations {
   /// No description provided for @accountsKeptLocally.
   ///
   /// In en, this message translates to:
-  /// **'Tokens are kept in this computer\'s keychain and are sent only to the GitHub or GitLab they are for. Nothing is posted without your confirmation.'**
+  /// **'Tokens are kept in this computer\'s keychain and are sent only to the GitHub, GitLab or Gitee they are for. Nothing is posted without your confirmation.'**
   String get accountsKeptLocally;
 
   /// No description provided for @accountsGitHubHosts.
@@ -15843,8 +15939,14 @@ abstract class AppLocalizations {
   /// No description provided for @accountsGitLabHosts.
   ///
   /// In en, this message translates to:
-  /// **'gitlab.com, or a self-managed GitLab'**
+  /// **'gitlab.com, or a self-managed GitLab (http:// or https://, with its port)'**
   String get accountsGitLabHosts;
+
+  /// No description provided for @accountsGiteeHosts.
+  ///
+  /// In en, this message translates to:
+  /// **'gitee.com, with a personal access token'**
+  String get accountsGiteeHosts;
 
   /// No description provided for @accountsSignInBrowser.
   ///
@@ -15909,7 +16011,7 @@ abstract class AppLocalizations {
   /// No description provided for @accountsHost.
   ///
   /// In en, this message translates to:
-  /// **'Host'**
+  /// **'Server'**
   String get accountsHost;
 
   /// No description provided for @accountsToken.
@@ -15930,6 +16032,12 @@ abstract class AppLocalizations {
   /// **'A personal access token with the api scope.'**
   String get accountsTokenGitLabScopes;
 
+  /// No description provided for @accountsTokenGiteeScopes.
+  ///
+  /// In en, this message translates to:
+  /// **'A personal access token with the user_info, projects, pull_requests, issues and notes scopes.'**
+  String get accountsTokenGiteeScopes;
+
   /// No description provided for @accountsTokenCreate.
   ///
   /// In en, this message translates to:
@@ -15941,6 +16049,28 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The token was not accepted. Check that it is complete and has not expired.'**
   String get accountsTokenRefused;
+
+  /// Title of the dialog asking whether to trust a forge server's certificate.
+  ///
+  /// In en, this message translates to:
+  /// **'Untrusted Certificate'**
+  String get accountsCertificateTitle;
+
+  /// What a self-signed or privately issued forge certificate is, before the user confirms it.
+  ///
+  /// In en, this message translates to:
+  /// **'The certificate of {host} cannot be verified ({issuer}).\n\nSHA-256 fingerprint:\n{fingerprint}\n\nTrusting it lets BaoCode reach this server, and only the certificate with this fingerprint is accepted. You are asked again if the certificate changes.'**
+  String accountsCertificateDetail(
+    String host,
+    String issuer,
+    String fingerprint,
+  );
+
+  /// Button that trusts the certificate shown, and only that one.
+  ///
+  /// In en, this message translates to:
+  /// **'Trust and Continue'**
+  String get accountsCertificateTrust;
 
   /// No description provided for @accountsBrowserTitle.
   ///
@@ -16209,7 +16339,7 @@ abstract class AppLocalizations {
   /// No description provided for @stashImportNotALink.
   ///
   /// In en, this message translates to:
-  /// **'Not a GitHub or GitLab issue or pull request link.'**
+  /// **'Not a GitHub, GitLab or Gitee issue or pull request link.'**
   String get stashImportNotALink;
 
   /// No description provided for @stashImportSignIn.
@@ -16257,7 +16387,7 @@ abstract class AppLocalizations {
   /// No description provided for @stashImportNoRepos.
   ///
   /// In en, this message translates to:
-  /// **'No project has a GitHub or GitLab remote. Paste an issue link above.'**
+  /// **'No project has a GitHub, GitLab or Gitee remote. Paste an issue link above.'**
   String get stashImportNoRepos;
 
   /// No description provided for @stashImportNone.
@@ -16335,7 +16465,7 @@ abstract class AppLocalizations {
   /// No description provided for @stashWelcomeTrack.
   ///
   /// In en, this message translates to:
-  /// **'Cards show their conversations live, and the GitHub and GitLab issues and pull requests they link to stay in sync.'**
+  /// **'Cards show their conversations live, and the GitHub, GitLab and Gitee issues and pull requests they link to stay in sync.'**
   String get stashWelcomeTrack;
 
   /// No description provided for @stashWelcomeStart.
@@ -17631,7 +17761,7 @@ abstract class AppLocalizations {
   /// No description provided for @stashSettingsIssueSyncDescription.
   ///
   /// In en, this message translates to:
-  /// **'A project that is a Git repository on GitHub or GitLab (signed in under Accounts): its open issues are stashes, each once, kept in step both ways. A stash deleted, or unlinked from its issue, does not come back.'**
+  /// **'A project that is a Git repository on GitHub, GitLab or Gitee (signed in under Accounts): its open issues are stashes, each once, kept in step both ways. A stash deleted, or unlinked from its issue, does not come back.'**
   String get stashSettingsIssueSyncDescription;
 
   /// No description provided for @stashIssueSyncMine.
@@ -21036,6 +21166,24 @@ abstract class AppLocalizations {
   /// **'Upstream answered'**
   String get ustatFieldUpstreamLatency;
 
+  /// A call under way, nothing of its answer yet
+  ///
+  /// In en, this message translates to:
+  /// **'Requesting'**
+  String get ustatCallAsking;
+
+  /// A call under way, its answer coming
+  ///
+  /// In en, this message translates to:
+  /// **'Answering'**
+  String get ustatCallAnswering;
+
+  /// A call Claude Code gave up on before it was answered in full (it timed out, or was interrupted)
+  ///
+  /// In en, this message translates to:
+  /// **'Cancelled'**
+  String get ustatCallCancelled;
+
   /// No description provided for @ustatFieldFirstToken.
   ///
   /// In en, this message translates to:
@@ -21759,7 +21907,7 @@ abstract class AppLocalizations {
   /// No description provided for @ustatPricesDetail.
   ///
   /// In en, this message translates to:
-  /// **'A million tokens each. Costs are worked out at the prices as they are now, the calls before a change included.'**
+  /// **'A million tokens each. Costs are worked out at the prices as they are now, the calls before a change included, unless a price is set from a date on.'**
   String get ustatPricesDetail;
 
   /// No description provided for @ustatPricesAgentHint.
@@ -21918,6 +22066,102 @@ abstract class AppLocalizations {
   /// **'Claude Code\'s own models without a price of yours are priced at Anthropic\'s API prices: the grey figures.'**
   String get ustatPriceClaudeDefault;
 
+  /// No description provided for @ustatPriceRuleTiers.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} tiers by prompt length'**
+  String ustatPriceRuleTiers(int count);
+
+  /// No description provided for @ustatPriceRuleSchedule.
+  ///
+  /// In en, this message translates to:
+  /// **'peak and off-peak hours'**
+  String get ustatPriceRuleSchedule;
+
+  /// No description provided for @ustatPriceRuleFast.
+  ///
+  /// In en, this message translates to:
+  /// **'fast mode ×{factor}'**
+  String ustatPriceRuleFast(String factor);
+
+  /// No description provided for @ustatPriceRuleServiceTiers.
+  ///
+  /// In en, this message translates to:
+  /// **'by service tier'**
+  String get ustatPriceRuleServiceTiers;
+
+  /// No description provided for @ustatPriceRuleGeo.
+  ///
+  /// In en, this message translates to:
+  /// **'by region'**
+  String get ustatPriceRuleGeo;
+
+  /// No description provided for @ustatPriceRulePerCall.
+  ///
+  /// In en, this message translates to:
+  /// **'{amount} a call'**
+  String ustatPriceRulePerCall(String amount);
+
+  /// No description provided for @ustatPriceRuleTools.
+  ///
+  /// In en, this message translates to:
+  /// **'tools priced a use'**
+  String get ustatPriceRuleTools;
+
+  /// No description provided for @ustatPriceRuleVersions.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} prices by date'**
+  String ustatPriceRuleVersions(int count);
+
+  /// No description provided for @ustatPriceRuleRate.
+  ///
+  /// In en, this message translates to:
+  /// **'upstream rate ×{factor}'**
+  String ustatPriceRuleRate(String factor);
+
+  /// No description provided for @ustatPriceRuleTime.
+  ///
+  /// In en, this message translates to:
+  /// **'time of week ×{factor}'**
+  String ustatPriceRuleTime(String factor);
+
+  /// No description provided for @ustatPriceRuleFees.
+  ///
+  /// In en, this message translates to:
+  /// **'fees {amount}'**
+  String ustatPriceRuleFees(String amount);
+
+  /// No description provided for @ustatFees.
+  ///
+  /// In en, this message translates to:
+  /// **'Fees'**
+  String get ustatFees;
+
+  /// No description provided for @ustatPricedBy.
+  ///
+  /// In en, this message translates to:
+  /// **'Priced by'**
+  String get ustatPricedBy;
+
+  /// No description provided for @ustatUpstreamRates.
+  ///
+  /// In en, this message translates to:
+  /// **'Upstream rates'**
+  String get ustatUpstreamRates;
+
+  /// No description provided for @ustatUpstreamRatesDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'The models of these upstreams without a price of their own: the same model\'s price elsewhere, times the rate.'**
+  String get ustatUpstreamRatesDetail;
+
+  /// No description provided for @ustatUpstreamRateClear.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear the rate'**
+  String get ustatUpstreamRateClear;
+
   /// No description provided for @ustatContextUnpickHint.
   ///
   /// In en, this message translates to:
@@ -21957,7 +22201,7 @@ abstract class AppLocalizations {
   /// Bot backends
   String get botsBackendTitle;
 
-  /// Choose each bot’s backend while idle. Each backend keeps its own conversation; switching clears the model choice, not history. Codex uses only BaoCode’s gated tools and a read-only sandbox.
+  /// Choose each bot’s backend while idle. Each backend keeps its own conversation; switching clears the model choice, not history. Codex starts in chat-only mode with gated tools and a read-only sandbox. Turn off Chat Only on the phone to allow workspace writes. Permission requests need an approval-capable client; otherwise cancel and switch back to Chat Only.
   String get botsBackendDescription;
 
   /// Wait for this bot to finish before switching.

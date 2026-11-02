@@ -26,6 +26,7 @@ class Bot {
     this.kernel = 'claude-code',
     this.assistant = false,
     this.created,
+    this.chatOnly = false,
   });
 
   final String id;
@@ -68,6 +69,11 @@ class Bot {
   /// When the user made it, where known.
   final DateTime? created;
 
+  /// Only talks, as the user set it: no files, no commands, none of an
+  /// agent's tools; the web's and its own only. Else it has all an
+  /// agent has, and works wherever the conversation takes it.
+  final bool chatOnly;
+
   bool can(BotAbility ability) => abilities.contains(ability);
 
   Bot copyWith({
@@ -83,6 +89,7 @@ class Bot {
     String? model,
     String? kernel,
     bool clearModel = false,
+    bool? chatOnly,
   }) => Bot(
     id: id,
     name: name ?? this.name,
@@ -98,6 +105,7 @@ class Bot {
     kernel: kernel ?? this.kernel,
     assistant: assistant,
     created: created,
+    chatOnly: chatOnly ?? this.chatOnly,
   );
 }
 

@@ -10,6 +10,7 @@ import 'package:baocode/bots/bot_pacer.dart';
 import 'package:baocode/bots/bot_permissions.dart';
 import 'package:baocode/bots/bot_prompt.dart';
 import 'package:baocode/bots/bot_tools.dart';
+import 'package:baocode/bots/bot_watch.dart';
 import 'package:baocode/bots/bots.dart';
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/chat_session.dart';
@@ -160,7 +161,20 @@ void main() {
       final told = botAbilities(bot);
       expect(told, contains('bot_list_chats'));
       expect(told, contains('bot_stop_chat'));
-      expect(told, contains('You do not read or change files'));
+      // All an agent has, unless it only chats.
+      expect(told, contains('You can work on the computer as an agent does'));
+      expect(
+        botAbilities(
+          Bot(
+            id: bot.id,
+            name: bot.name,
+            folder: bot.folder,
+            abilities: bot.abilities,
+            chatOnly: true,
+          ),
+        ),
+        contains('You do not read or change files'),
+      );
       expect(
         botAbilities(const Bot(id: 'q', name: 'Q', folder: '/bots/q')),
         contains("You cannot see the user's agents"),
@@ -170,21 +184,53 @@ void main() {
       expect(told, contains('generate_image'));
     });
 
-    test('what of Claude Code\'s it has: the web\'s, the browser\'s by '
-        'the tool search; no files, no commands', () {
-      Bot bot(Set<BotAbility> abilities) =>
-          Bot(id: 'b1', name: 'Mia', folder: '/bots/b1', abilities: abilities);
+    test('what of Claude Code\'s it has: all of it; only chatting, the '
+        'web\'s, the browser\'s by the tool search, no files, no commands', () {
+      Bot bot(Set<BotAbility> abilities, {bool chatOnly = false}) => Bot(
+        id: 'b1',
+        name: 'Mia',
+        folder: '/bots/b1',
+        abilities: abilities,
+        chatOnly: chatOnly,
+      );
+      expect(BotPermissions.tools(bot({})), isNull);
       for (final abilities in [
         <BotAbility>{},
         {BotAbility.agents},
       ]) {
-        expect(BotPermissions.tools(bot(abilities)), ['WebSearch', 'WebFetch']);
+        expect(BotPermissions.tools(bot(abilities, chatOnly: true)), [
+          'WebSearch',
+          'WebFetch',
+        ]);
       }
-      expect(BotPermissions.tools(bot({BotAbility.browser})), [
+      expect(BotPermissions.tools(bot({BotAbility.browser}, chatOnly: true)), [
         'WebSearch',
         'WebFetch',
         'ToolSearch',
       ]);
+      final codex = bot({}).copyWith(kernel: 'codex', chatOnly: true);
+      expect(codex.chatOnly, isTrue);
+      expect(BotPermissions.tools(codex), isNotNull);
+      final restricted = botAbilities(codex);
+      expect(restricted, contains('this Codex bot session is restricted'));
+      expect(restricted, isNot(contains('You can work on the computer')));
+      expect(restricted, contains('Direct web search is disabled'));
+      expect(BotPermissions.tools(codex.copyWith(chatOnly: false)), isNull);
+      final legacy = BotFiles.read('/bots/old',
+          '---\nname: Old\nkernel: codex\n---\n')!;
+      expect(legacy.chatOnly, isTrue);
+      final optedIn = legacy.copyWith(chatOnly: false);
+      final optedCard = BotFiles.cardText(optedIn);
+      expect(optedCard, contains('chat_only: false'));
+      expect(BotFiles.read('/bots/old', optedCard)!.chatOnly, isFalse);
+      // Kept on its card; not said, all of it.
+      final card = BotFiles.cardText(bot({}, chatOnly: true));
+      expect(card, contains('chat_only: true'));
+      expect(BotFiles.read('/bots/b1', card)!.chatOnly, isTrue);
+      expect(
+        BotFiles.read('/bots/b1', BotFiles.cardText(bot({})))!.chatOnly,
+        isFalse,
+      );
       // Its files not shown it: its tools keep them.
       final told = botInstructions(bot(BotAbility.values.toSet()), memory: '');
       expect(told, contains('bot_remember'));
@@ -328,10 +374,15 @@ void main() {
       expect(workspace.current, shown);
       // Shown before the bots were (kept from the last run): no longer.
       final setup = workspace.agentSetup;
-      workspace.agentSetup = null;
+      final root = workspace.appFolderRoot;
+      workspace
+        ..agentSetup = null
+        ..appFolderRoot = null;
       workspace.select(thread);
       expect(workspace.current, thread);
-      workspace.agentSetup = setup;
+      workspace
+        ..appFolderRoot = root
+        ..agentSetup = setup;
       expect(workspace.grid.contains(thread), isFalse);
       expect(workspace.current, isNot(thread));
       expect(workspace.current!.project.path, app);
@@ -344,6 +395,14 @@ void main() {
       expect(workspace.listsInSidebar(thread), isFalse);
       expect(bots.threadFor(bot), same(thread));
       expect(workspace.agentSetup!(bot.folder)!.settings, Bots.settings);
+      // A folder left behind, its bot gone: still the app's own, no
+      // project of the sidebar's (nor of the phone's).
+      expect(workspace.isAppFolder('/bots/left-behind'), isTrue);
+      expect(workspace.isAppFolder('/elsewhere'), isFalse);
+      expect(
+        workspace.sidebarProjects.map((project) => project.path),
+        isNot(contains('/bots/left-behind')),
+      );
       // Named by none of what it is told.
       thread.session.send(const ComposerMessage(text: '<bao-event>x'));
       workspace.notifyListeners();
@@ -386,6 +445,18 @@ void main() {
           folders.files[p.join(selected.folder, 'BOT.md')]!,
         );
         expect(BotFiles.read(selected.folder, card)!.kernel, 'codex');
+        expect(workspace.agentSetup!(selected.folder)!.workspace().tools,
+            isNotNull);
+        final optedIn = bots.save(id: selected.id, name: selected.name,
+            identity: selected.identity, abilities: selected.abilities,
+            chatOnly: false);
+        final setup = workspace.agentSetup!(optedIn.folder)!;
+        expect(setup.settings['permission'], 'workspace-write');
+        expect(setup.workspace().tools, isNull);
+        expect(setup.workspace().approvesAll, isFalse);
+        final optedCard = utf8.decode(folders.files[
+            p.join(optedIn.folder, 'BOT.md')]!);
+        expect(BotFiles.read(optedIn.folder, optedCard)!.chatOnly, isFalse);
         bots.setKernel(selected, 'claude-code');
         expect(bots.threadFor(bots.bots.single), same(oldThread));
       },
@@ -446,7 +517,7 @@ void main() {
       },
     );
 
-    test('its agent is told who it is, with its own tools only', () async {
+    test('its agent is told who it is, with all an agent has', () async {
       final bot = bots.bots.single;
       bots.threadFor(bot).session.send(const ComposerMessage(text: '在吗'));
       for (var i = 0; i < 50 && launches.isEmpty; i++) {
@@ -475,21 +546,16 @@ void main() {
         isTrue,
       );
       expect(launch.sdkServers, [ClaudeSdkTools.server]);
-      // The web's, the browser's tool search; no other.
-      expect(launch.tools, ['WebSearch', 'WebFetch', 'ToolSearch']);
-      expect(
-        launch.arguments,
-        containsAllInOrder(['--tools', 'WebSearch,WebFetch,ToolSearch']),
-      );
+      // All of Claude Code's tools, as an agent's.
+      expect(launch.tools, isNull);
+      expect(launch.arguments, isNot(contains('--tools')));
       // Nothing it is made to ask about.
       expect(
         (launch.settings['permissions'] as Map?)?.containsKey('ask'),
         isNot(true),
       );
-      // No project its to work in: the agents do.
+      // No project of its own: it works where the conversation takes it.
       expect(launch.directories, isEmpty);
-      // None of the user's MCP servers: their notices are not its to tell.
-      expect(launch.arguments, contains('--strict-mcp-config'));
     });
 
     test(
@@ -942,23 +1008,39 @@ void main() {
       expect(folders.files, isNot(contains(p.join(bot.folder, 'MEMORY.md'))));
     });
 
-    test('it writes first of an agent done, in a note of the app\'s', () async {
+    test('it writes first of an agent of its own done, in a note of the '
+        'app\'s; of another, it is only kept', () async {
       final bot = toldOfAll();
-      final agent = workspace.startAgent(workspace.projectAt(app));
-      agent.session.send(const ComposerMessage(text: 'build it'));
-      for (var i = 0; i < 300 && !agent.session.isStreaming; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 10));
+      Future<AgentThread> finished({bool its = false}) async {
+        final agent = workspace.startAgent(workspace.projectAt(app));
+        agent.session.send(const ComposerMessage(text: 'build it'));
+        for (var i = 0; i < 300 && !agent.session.isStreaming; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        if (its) bots.watch(bot, agent);
+        workspace.notifyListeners();
+        // Its turn over (stopped, not to wait for the mock's whole script).
+        agent.session.stop();
+        for (var i = 0; i < 300 && agent.session.isStreaming; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        workspace.notifyListeners();
+        now = now.add(const Duration(minutes: 2));
+        bots.deliver();
+        return agent;
       }
-      workspace.notifyListeners();
-      // Its turn over (stopped, not to wait for the mock's whole script).
-      agent.session.stop();
-      for (var i = 0; i < 300 && agent.session.isStreaming; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-      }
-      workspace.notifyListeners();
-      now = now.add(const Duration(minutes: 2));
-      bots.deliver();
-      expect(notes(bot).single, contains('done: "${agent.title}"'));
+
+      // Not one it started: not woken, a line of its events.
+      final other = await finished();
+      expect(notes(bot), isEmpty);
+      expect(
+        bots.recentEvents(bot).single,
+        allOf(contains('done: "${other.title}"'), endsWith('-> ignore')),
+      );
+      // One it started.
+      final its = await finished(its: true);
+      expect(notes(bot).single, contains('done: "${its.title}"'));
+      expect(bots.recentEvents(bot).last, endsWith('-> tell'));
     });
 
     test('only a bot let be is told of the agents; another, not even of '
@@ -989,6 +1071,10 @@ void main() {
         bots.deliver();
       }
 
+      // Told of every agent done, as the user asked it.
+      bots.setWatchRules(assistant, const [
+        BotWatchRule(kinds: {BotEventKind.done}, action: BotWatchAction.tell),
+      ]);
       final first = await run();
       await finish(first);
       expect(notes(assistant), hasLength(1));
@@ -1093,6 +1179,18 @@ void main() {
       );
       await call(assistant, 'bot_delete_bot', {'bot': cat.id});
       expect(bots.byId(cat.id), isNull);
+      // A new one with a picture it made, set by it, not left to the user.
+      await call(assistant, 'bot_save_bot', {
+        'name': '阿狗',
+        'picture': file.path,
+      });
+      final dog = bots.bots.firstWhere((b) => b.name == '阿狗');
+      expect(isAvatarImage(dog.avatar!), isTrue);
+      expect(bots.avatarImage(dog), isNotNull);
+      expect(
+        botInstructions(self, memory: ''),
+        contains('never leave it to the user'),
+      );
       // None but the assistant does so.
       final mia = bots.save(name: 'Mia', identity: '', abilities: {});
       expect((await call(mia, 'bot_list_bots', {}))['isError'], isTrue);
@@ -1206,6 +1304,17 @@ void main() {
       );
       bots.reload();
       expect(bots.bots.first.can(BotAbility.agents), isFalse);
+      final restricted = bots.save(id: self.id, name: self.name,
+          identity: self.identity, abilities: self.abilities, chatOnly: true);
+      write(cardPath, read(cardPath).replaceFirst('chat_only: true',
+          'chat_only: false'));
+      bots.reload(by: restricted);
+      expect(bots.byId(self.id)!.chatOnly, isTrue);
+      expect(read(cardPath), contains('chat_only: true'));
+      write(cardPath, read(cardPath).replaceFirst('chat_only: true',
+          'chat_only: false'));
+      bots.reload();
+      expect(bots.byId(self.id)!.chatOnly, isFalse);
     });
 
     test('every bot changes its own profile: with bot_edit_me, or in its '
@@ -1395,6 +1504,8 @@ void main() {
       for (var i = 0; i < 300 && !agent.session.isStreaming; i++) {
         await Future<void>.delayed(const Duration(milliseconds: 10));
       }
+      // One it started: told of, as its rules have it at first.
+      bots.watch(bot, agent);
       workspace.notifyListeners();
       addTearDown(agent.session.stop);
       now = now.add(const Duration(minutes: 29));
@@ -1473,8 +1584,197 @@ void main() {
       );
       expect(
         botAbilities(bot.copyWith(abilities: {BotAbility.proactive})),
-        contains('when any of the user'),
+        contains('as your rules say (bot_watch'),
       );
+      // Woken by the app: a word, or nothing; no narration.
+      expect(botEvents, contains('Woken by the app, never narrate'));
+    });
+
+    test('its rules: what fits one with notify, the phone tells of, it not '
+        'woken; what fits none, only kept', () async {
+      final bot = toldOfAll();
+      bots.setWatchRules(bot, const [
+        BotWatchRule(
+          kinds: {BotEventKind.done},
+          project: 'app',
+          action: BotWatchAction.notify,
+        ),
+      ]);
+      expect(
+        utf8.decode(folders.files['${bot.folder}/WATCH.md']!),
+        contains('- done project:app -> notify'),
+      );
+      var changed = 0;
+      bots.addListener(() => changed++);
+      final agent = await runAndFinish();
+      bots.deliver();
+      expect(notes(bot), isEmpty);
+      final notice = bots.notices(bot).single;
+      expect(notice.kind, 'done');
+      expect(notice.chat, BotTools.idOf(agent));
+      expect(notice.title, agent.title);
+      expect(changed, greaterThan(0));
+      expect(bots.recentEvents(bot).single, endsWith('-> notify'));
+      // Another, later: a notice past it.
+      await runAndFinish();
+      expect(bots.notices(bot).last.id, greaterThan(notice.id));
+      // No rules at all: told of nothing, kept still.
+      bots.setWatchRules(bot, const []);
+      await runAndFinish();
+      bots.deliver();
+      expect(notes(bot), isEmpty);
+      expect(bots.notices(bot), hasLength(2));
+      expect(bots.recentEvents(bot), hasLength(3));
+    });
+
+    test('its rules, changed with its tool: listed, added first, removed, '
+        'as at first again', () async {
+      final bot = toldOfAll();
+      String text(Map result) =>
+          ((result['content'] as List).first as Map)['text'] as String;
+      expect(
+        text(await call(bot, 'bot_watch', {'action': 'list'})),
+        allOf(
+          contains('1. waiting,failed -> tell'),
+          contains('2. any mine -> tell'),
+        ),
+      );
+      final added = text(
+        await call(bot, 'bot_watch', {
+          'action': 'add',
+          'when': ['done'],
+          'project': 'my app',
+          'then': 'notify',
+        }),
+      );
+      expect(added, contains('1. done project:"my app" -> notify'));
+      expect(bots.watchRules(bot).first.project, 'my app');
+      expect(
+        text(await call(bot, 'bot_watch', {'action': 'remove', 'number': 1})),
+        isNot(contains('my app')),
+      );
+      bots.setWatchRules(bot, const []);
+      await call(bot, 'bot_watch', {'action': 'reset'});
+      expect(bots.watchRules(bot), BotWatch.defaults);
+      // Not a bot's that is told of nothing.
+      final mia = bots.save(name: 'Mia', identity: '', abilities: {});
+      expect(await offered(mia.folder), isNot(contains('bot_watch')));
+      expect(await offered(bot.folder), contains('bot_recent_events'));
+    });
+
+    test('woken by the app, not writing until it says a word', () async {
+      final bot = toldOfAll();
+      final session = bots.threadFor(bot).session;
+      bots.later(bot, const Duration(minutes: 1), 'Ask how it went');
+      now = now.add(const Duration(minutes: 2));
+      bots.deliver();
+      for (var i = 0; i < 300 && !session.isStreaming; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(bots.threadOf(bot)!.status, ThreadStatus.running);
+      expect(bots.typing(bot), isFalse);
+      session.stop();
+      for (var i = 0; i < 300 && session.isStreaming; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      // The user's words: writing back.
+      session.send(const ComposerMessage(text: 'hi'));
+      for (var i = 0; i < 300 && !session.isStreaming; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(bots.typing(bot), isTrue);
+      session.stop();
+    });
+  });
+
+  group('WATCH.md', () {
+    test('its lines read back as written; another line, its own', () {
+      const text =
+          '# mine\n'
+          '- waiting,failed -> tell\n'
+          '- done project:"my app" mine → notify\n'
+          '- any chat:3f2a -> ignore\n'
+          '- sometimes -> tell\n'
+          'a note\n';
+      final rules = BotWatch.read(text);
+      expect(rules.map((rule) => rule.line), [
+        '- waiting,failed -> tell',
+        '- done project:"my app" mine -> notify',
+        '- any chat:3f2a -> ignore',
+      ]);
+      expect(BotWatch.withRules(text, rules.reversed.toList()), '''
+# mine
+- sometimes -> tell
+a note
+
+- any chat:3f2a -> ignore
+- done project:"my app" mine -> notify
+- waiting,failed -> tell''');
+    });
+
+    test('the first rule that fits decides; none, ignored', () {
+      BotEvent event(BotEventKind kind, {String project = 'app'}) => BotEvent(
+        chat: 'c1',
+        title: 'Fix it',
+        project: project,
+        projectPath: '/code/$project',
+        kind: kind,
+        at: DateTime(2026, 11, 2),
+      );
+      final rules = BotWatch.read(
+        '- done project:scratch -> ignore\n'
+        '- done project:/code/api -> notify\n'
+        '- done -> tell\n',
+      );
+      BotWatchAction of(BotEvent e, {bool mine = false}) =>
+          BotWatch.actionFor(rules, e, mine: mine);
+      expect(
+        of(event(BotEventKind.done, project: 'scratch')),
+        BotWatchAction.ignore,
+      );
+      expect(
+        of(event(BotEventKind.done, project: 'api')),
+        BotWatchAction.notify,
+      );
+      expect(of(event(BotEventKind.done)), BotWatchAction.tell);
+      expect(of(event(BotEventKind.running)), BotWatchAction.ignore);
+      // At first: any agent asking or failing, and the bot's own.
+      BotWatchAction first(BotEventKind kind, {bool mine = false}) =>
+          BotWatch.actionFor(BotWatch.defaults, event(kind), mine: mine);
+      expect(first(BotEventKind.waiting), BotWatchAction.tell);
+      expect(first(BotEventKind.failed), BotWatchAction.tell);
+      expect(first(BotEventKind.done), BotWatchAction.ignore);
+      expect(first(BotEventKind.done, mine: true), BotWatchAction.tell);
+    });
+
+    test('EVENTS.md keeps the last day, the latest fifty', () {
+      final start = DateTime(2026, 11, 2, 9);
+      var text = '';
+      for (var i = 0; i < 60; i++) {
+        final at = start.add(Duration(minutes: i));
+        text = BotEvents.withEvents(text, [
+          (
+            BotEvent(
+              chat: 'c$i',
+              title: 'Run $i',
+              project: 'app',
+              kind: BotEventKind.done,
+              at: at,
+            ),
+            BotWatchAction.ignore,
+          ),
+        ], at);
+      }
+      final lines = BotEvents.latest(text, 100);
+      expect(lines, hasLength(BotEvents.most));
+      expect(
+        lines.first,
+        '- 2026-11-02 09:10 done: "Run 10" in app (chat c10) -> ignore',
+      );
+      // A day on: the old gone.
+      final later = start.add(const Duration(hours: 25));
+      text = BotEvents.withEvents(text, const [], later);
+      expect(BotEvents.latest(text, 100), isEmpty);
     });
   });
 }

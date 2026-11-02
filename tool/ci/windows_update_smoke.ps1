@@ -49,7 +49,7 @@ try {
   # not forced process closure. WAITPID/quit guards remain unit-tested separately.
   Install $new (Join-Path $root 'upgrade.log')
   Assert-Version $exe $expected
-  foreach ($relative in @('baocode.exe', 'data\app.so')) {
+  foreach ($relative in @('baocode.exe', 'data\app.so', 'bao_iroh.dll', 'baocode_wer.dll')) {
     $installedHash = (Get-FileHash (Join-Path $appDir $relative) -Algorithm SHA256).Hash
     $builtHash = (Get-FileHash (Join-Path $bundle $relative) -Algorithm SHA256).Hash
     if ($installedHash -ne $builtHash) { throw "Upgrade did not replace $relative with the tested build" }

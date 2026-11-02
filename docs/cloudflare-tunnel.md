@@ -1,3 +1,5 @@
+> **历史文档（Link v1）**：以下内容仅适用于旧版手机配对，不适用于当前 Link v2 / iroh。当前手机连接与重新配对请参阅 [mobile-link.md](mobile-link.md)，无需按本文配置公网端口或隧道。
+
 # 公网访问：用 Cloudflare Tunnel 打通
 
 手机在外网连桌面端，本来是靠「公网地址」直连（在路由器上转发端口，或桌面端有公网 IPv6）。如果你**没有公网 IP**、也不想在路由器上开端口，可以用 Cloudflare Tunnel：由 Cloudflare 给你一个固定域名，流量经它转发到本机的 47100。

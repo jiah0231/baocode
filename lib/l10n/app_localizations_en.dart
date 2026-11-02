@@ -8868,6 +8868,31 @@ class AppLocalizationsEn extends AppLocalizations {
   String get mobilePairCopyLink => 'Copy Link';
 
   @override
+  String get mobilePairQrHint =>
+      'Click to copy the link, to paste on the phone';
+
+  @override
+  String get mobileGetApp => 'Get the Phone App';
+
+  @override
+  String get mobileGetAppDescription =>
+      'Scan with the phone\'s camera: the same downloads as on baocode.dev.';
+
+  @override
+  String get mobileGetAndroidDetail => 'The APK; it keeps itself up to date';
+
+  @override
+  String get mobileGetIos => 'iPhone and iPad';
+
+  @override
+  String get mobileGetIosDetail => 'The beta, on TestFlight';
+
+  @override
+  String mobileGetOpen(String url) {
+    return 'Click to open $url';
+  }
+
+  @override
   String get mobilePairCopied => 'Copied';
 
   @override
@@ -8989,6 +9014,37 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get mobileRelayModePinnedDescription =>
       'Only the one picked: one of BaoCode\'s, or a custom address.';
+
+  @override
+  String get mobileRelayModeDirect => 'Direct Only';
+
+  @override
+  String get mobileRelayModeDirectDescription =>
+      'No relay: phones connect straight to this computer. It needs a public address, or the port below forwarded to it.';
+
+  @override
+  String get mobileDirectPort => 'Direct Port';
+
+  @override
+  String get mobileDirectPortDescription =>
+      'The UDP port phones connect to. Forward it to this computer at the router, and allow it in the firewall.';
+
+  @override
+  String get mobileDirectPortInvalid => 'A port from 1024 to 65535.';
+
+  @override
+  String get mobileDirectAddress => 'Direct Address';
+
+  @override
+  String get mobileDirectAddressDescription =>
+      'It goes in the pairing code and in every connection after.';
+
+  @override
+  String get mobileDirectAddressNone =>
+      'No public address yet: check again once this computer is online, or forward the port to it if it is behind a router.';
+
+  @override
+  String get mobileStatusDirect => 'On, direct only';
 
   @override
   String get mobilePathLan => 'Same network';
@@ -9692,7 +9748,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get accountsDescription =>
-      'Sign in to GitHub or GitLab to see the state of the issues and pull requests linked in Stash, import issues as stashes, and reply to them once you confirm.';
+      'Sign in to GitHub, GitLab or Gitee to see the state of the issues and pull requests linked in Stash, import issues as stashes, and reply to them once you confirm.';
 
   @override
   String get accountsSignedIn => 'Signed in';
@@ -9702,14 +9758,18 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get accountsKeptLocally =>
-      'Tokens are kept in this computer\'s keychain and are sent only to the GitHub or GitLab they are for. Nothing is posted without your confirmation.';
+      'Tokens are kept in this computer\'s keychain and are sent only to the GitHub, GitLab or Gitee they are for. Nothing is posted without your confirmation.';
 
   @override
   String get accountsGitHubHosts =>
       'github.com, or your company\'s GitHub Enterprise';
 
   @override
-  String get accountsGitLabHosts => 'gitlab.com, or a self-managed GitLab';
+  String get accountsGitLabHosts =>
+      'gitlab.com, or a self-managed GitLab (http:// or https://, with its port)';
+
+  @override
+  String get accountsGiteeHosts => 'gitee.com, with a personal access token';
 
   @override
   String get accountsSignInBrowser => 'Sign in with Browser';
@@ -9750,7 +9810,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get accountsSignIn => 'Sign In';
 
   @override
-  String get accountsHost => 'Host';
+  String get accountsHost => 'Server';
 
   @override
   String get accountsToken => 'Token';
@@ -9764,6 +9824,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'A personal access token with the api scope.';
 
   @override
+  String get accountsTokenGiteeScopes =>
+      'A personal access token with the user_info, projects, pull_requests, issues and notes scopes.';
+
+  @override
   String accountsTokenCreate(String host) {
     return 'Create a Token on $host';
   }
@@ -9771,6 +9835,21 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get accountsTokenRefused =>
       'The token was not accepted. Check that it is complete and has not expired.';
+
+  @override
+  String get accountsCertificateTitle => 'Untrusted Certificate';
+
+  @override
+  String accountsCertificateDetail(
+    String host,
+    String issuer,
+    String fingerprint,
+  ) {
+    return 'The certificate of $host cannot be verified ($issuer).\n\nSHA-256 fingerprint:\n$fingerprint\n\nTrusting it lets BaoCode reach this server, and only the certificate with this fingerprint is accepted. You are asked again if the certificate changes.';
+  }
+
+  @override
+  String get accountsCertificateTrust => 'Trust and Continue';
 
   @override
   String accountsBrowserTitle(String forge) {
@@ -9930,7 +10009,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get stashImportNotALink =>
-      'Not a GitHub or GitLab issue or pull request link.';
+      'Not a GitHub, GitLab or Gitee issue or pull request link.';
 
   @override
   String stashImportSignIn(String forge) {
@@ -9957,7 +10036,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get stashImportNoRepos =>
-      'No project has a GitHub or GitLab remote. Paste an issue link above.';
+      'No project has a GitHub, GitLab or Gitee remote. Paste an issue link above.';
 
   @override
   String get stashImportNone => 'No open issues here.';
@@ -10005,7 +10084,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get stashWelcomeTrack =>
-      'Cards show their conversations live, and the GitHub and GitLab issues and pull requests they link to stay in sync.';
+      'Cards show their conversations live, and the GitHub, GitLab and Gitee issues and pull requests they link to stay in sync.';
 
   @override
   String get stashWelcomeStart => 'Get Started';
@@ -10767,7 +10846,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get stashSettingsIssueSyncDescription =>
-      'A project that is a Git repository on GitHub or GitLab (signed in under Accounts): its open issues are stashes, each once, kept in step both ways. A stash deleted, or unlinked from its issue, does not come back.';
+      'A project that is a Git repository on GitHub, GitLab or Gitee (signed in under Accounts): its open issues are stashes, each once, kept in step both ways. A stash deleted, or unlinked from its issue, does not come back.';
 
   @override
   String get stashIssueSyncMine => 'Only those assigned to or opened by me';
@@ -12879,6 +12958,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get ustatFieldUpstreamLatency => 'Upstream answered';
 
   @override
+  String get ustatCallAsking => 'Requesting';
+
+  @override
+  String get ustatCallAnswering => 'Answering';
+
+  @override
+  String get ustatCallCancelled => 'Cancelled';
+
+  @override
   String get ustatFieldFirstToken => 'First token';
 
   @override
@@ -13369,7 +13457,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get ustatPricesDetail =>
-      'A million tokens each. Costs are worked out at the prices as they are now, the calls before a change included.';
+      'A million tokens each. Costs are worked out at the prices as they are now, the calls before a change included, unless a price is set from a date on.';
 
   @override
   String get ustatPricesAgentHint =>
@@ -13479,6 +13567,69 @@ class AppLocalizationsEn extends AppLocalizations {
       'Claude Code\'s own models without a price of yours are priced at Anthropic\'s API prices: the grey figures.';
 
   @override
+  String ustatPriceRuleTiers(int count) {
+    return '$count tiers by prompt length';
+  }
+
+  @override
+  String get ustatPriceRuleSchedule => 'peak and off-peak hours';
+
+  @override
+  String ustatPriceRuleFast(String factor) {
+    return 'fast mode ×$factor';
+  }
+
+  @override
+  String get ustatPriceRuleServiceTiers => 'by service tier';
+
+  @override
+  String get ustatPriceRuleGeo => 'by region';
+
+  @override
+  String ustatPriceRulePerCall(String amount) {
+    return '$amount a call';
+  }
+
+  @override
+  String get ustatPriceRuleTools => 'tools priced a use';
+
+  @override
+  String ustatPriceRuleVersions(int count) {
+    return '$count prices by date';
+  }
+
+  @override
+  String ustatPriceRuleRate(String factor) {
+    return 'upstream rate ×$factor';
+  }
+
+  @override
+  String ustatPriceRuleTime(String factor) {
+    return 'time of week ×$factor';
+  }
+
+  @override
+  String ustatPriceRuleFees(String amount) {
+    return 'fees $amount';
+  }
+
+  @override
+  String get ustatFees => 'Fees';
+
+  @override
+  String get ustatPricedBy => 'Priced by';
+
+  @override
+  String get ustatUpstreamRates => 'Upstream rates';
+
+  @override
+  String get ustatUpstreamRatesDetail =>
+      'The models of these upstreams without a price of their own: the same model\'s price elsewhere, times the rate.';
+
+  @override
+  String get ustatUpstreamRateClear => 'Clear the rate';
+
+  @override
   String get ustatContextUnpickHint =>
       'Click again to unpick: back to the context as it is now';
 
@@ -13521,7 +13672,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get botsBackendDescription =>
-      'Choose each bot’s backend while idle. Each backend keeps its own conversation; switching clears the model choice, not history. Codex uses only BaoCode’s gated tools and a read-only sandbox.';
+      'Choose each bot’s backend while idle. Each backend keeps its own conversation; switching clears the model choice, not history. Codex starts in chat-only mode with gated tools and a read-only sandbox. Turn off Chat Only on the phone to allow workspace writes. Permission requests need an approval-capable client; otherwise cancel and switch back to Chat Only.';
 
   @override
   String get botsBackendBusy => 'Wait for this bot to finish before switching.';

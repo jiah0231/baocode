@@ -5,6 +5,9 @@
 //   dart run tool/build_windows.dart --no-updates   disable upstream updates
 //                                                  for a custom build
 //   dart run tool/build_windows.dart --skip-build   package what is built
+//   dart run tool/build_windows.dart --build-only   build, not package (CI,
+//                                                  while the remote server
+//                                                  is still building)
 //   dart run tool/build_windows.dart --remote-built take the remote server
 //                                                  already in build\remote\
 //                                                  (CI builds it once, for
@@ -76,6 +79,10 @@ const _required = [
   // installer's keys point the browsers to (windows/BrowserBridge).
   'baocode-browser-host.exe',
   'dev.baocode.browser.json',
+  // What writes down a fast fail (windows/wer), which the app registers.
+  'baocode_wer.dll',
+  // Native asset required by the restored iroh phone transport.
+  'bao_iroh.dll',
   // The VC++ runtime, carried rather than taken from System32, which may
   // be older than the build's (see windows/CMakeLists.txt).
   'msvcp140.dll',
@@ -144,6 +151,10 @@ Future<void> main(List<String> arguments) async {
       '--no-updates needs a fresh build; it cannot change an existing bundle.',
     );
   }
+  final buildOnly = arguments.contains('--build-only');
+  if (skipBuild && buildOnly) {
+    _fail('--skip-build and --build-only leave nothing to do.');
+  }
   final remoteBuilt = arguments.contains('--remote-built');
   final releaseAt = arguments.indexOf('--remote-release');
   final remoteRelease = releaseAt < 0
@@ -200,6 +211,10 @@ Future<void> main(List<String> arguments) async {
 
   _step('Checking the bundle');
   _checkBundle(bundle, _required);
+  if (buildOnly) {
+    _step('Built: --skip-build packages it');
+    return;
+  }
 
   if (patchedEngine) {
     _step('Putting in the patched engine');
