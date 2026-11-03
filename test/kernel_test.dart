@@ -6537,7 +6537,7 @@ exec /usr/bin/env "\$@"
           'name': 'BaoCode',
           'base_url': 'http://127.0.0.1:9/p/codex/v1',
           'wire_api': 'responses',
-          'experimental_bearer_token': 'tok',
+          'env_key': 'BAOCODE_CODEX_PROXY_TOKEN',
           'supports_websockets': false,
         });
         // The proxy reads the effort and fast off the name, not a tier.
@@ -6597,10 +6597,11 @@ exec /usr/bin/env "\$@"
       kernel.model.select('default');
       kernel.send(const KernelTurn(id: 't2', text: 'again'));
       await pumpEventQueue();
-      expect(servers, hasLength(2));
+      expect(servers, hasLength(3));
+      expect(servers[1]._exited.isCompleted, isTrue);
       expect(servers.first._exited.isCompleted, isTrue);
       expect(servers.first._out.isClosed, isTrue);
-      final forkMessage = servers.first.written.firstWhere(
+      final forkMessage = servers[1].written.firstWhere(
         (message) => message['method'] == 'thread/fork',
       );
       final forked = forkMessage['params'] as Map;

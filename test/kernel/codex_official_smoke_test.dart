@@ -7,6 +7,8 @@ import 'package:baocode/kernel/codex/codex_session_mcp.dart';
 import 'package:baocode/kernel/codex/codex_install.dart';
 import 'package:baocode/kernel/codex/codex_app_tools.dart';
 import 'package:baocode/kernel/codex/codex_skills.dart';
+import 'package:baocode/kernel/codex/codex_proxy_configuration.dart';
+import 'package:baocode/kernel/codex/codex_transport.dart';
 import 'package:baocode/platform/data_dir.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -43,7 +45,17 @@ void main() {
             .create();
         final codexHome = await Directory(p.join(home.path, '.codex')).create();
         final configFile = await File(p.join(codexHome.path, 'config.toml'))
-            .writeAsString('');
+            .writeAsString('''
+[mcp_servers.AgentDock]
+command = "fixture-disabled-command"
+enabled = false
+env = { FIXTURE_ONLY = "kept-env" }
+[mcp_servers.numeric]
+url = "http://127.0.0.1:9/mcp"
+enabled = false
+tool_timeout_sec = 27.5
+http_headers = { "X-Fixture" = "kept-header" }
+''');
         final skillDirectory = await Directory(
           p.join(codexHome.path, 'skills', 'baocode-smoke'),
         ).create(recursive: true);
@@ -277,7 +289,10 @@ void main() {
         final resumed = await rpc.request('thread/resume', {
           'threadId': threadId, 'cwd': project.path,
           'approvalPolicy': 'never', 'sandbox': 'read-only',
-          'config': sessionBridge.configuration(),
+          'config': {
+            'mcp_servers.baocode_session':
+                (sessionBridge.configuration()['mcp_servers'] as Map)['baocode_session'],
+          },
         });
         expect((resumed['thread'] as Map)['id'], threadId);
         final discoveryDeadline = DateTime.now().add(const Duration(seconds: 15));
@@ -330,6 +345,9 @@ void main() {
         // Distinguish protocol success from later OS resource cleanup failures.
         // ignore: avoid_print
         print('Official protocol assertions complete: legacy MCP retrieval and denial passed; no model turn.');
+        await rpc.close();
+        rpc = null;
+        await _verifyProviderRoutes(executable, environment, project, configFile);
       } on Object catch (error) {
         protocolFailure = error;
         rethrow;
@@ -360,6 +378,112 @@ void main() {
     skip: Platform.environment['BAOCODE_CODEX_OFFICIAL_SMOKE'] != '1',
     timeout: const Timeout(Duration(minutes: 20)),
   );
+}
+
+/// Verify the exact native provider admission behavior without any model turn.
+Future<void> _verifyProviderRoutes(
+  String executable,
+  Map<String, String> environment,
+  Directory project,
+  File configFile,
+) async {
+  const proxy = CodexProxyConfiguration(
+    baseUrl: 'http://127.0.0.1:9/p/codex', token: 'isolated-fixture-only',
+  );
+  final before = await configFile.readAsString();
+  final providerConfig = {'model_providers': {'baocode': proxy.provider}};
+  _Rpc? rpc;
+  Future<_Rpc> open({bool proxied = false, bool bridge = false}) async {
+    final launch = CodexLaunch(cwd: project.path, proxy: proxied ? proxy : null);
+    final arguments = [
+      ...launch.arguments,
+      if (bridge) ...[
+        '-c',
+        "mcp_servers.baocode_session={url='http://127.0.0.1:9/bridge',enabled=false,tool_timeout_sec=35}",
+      ],
+    ];
+    expect(arguments.any((arg) => arg.contains(proxy.token)), false);
+    final server = _Rpc(await Process.start(executable, arguments,
+      workingDirectory: project.path,
+      environment: {...environment, ...proxy.environment},
+      includeParentEnvironment: false,
+    ));
+    try {
+      await server.request('initialize', {
+        'clientInfo': {'name': 'baocode-provider-smoke', 'version': '1.0.0'},
+        'capabilities': {'experimentalApi': true},
+      });
+      server.notify('initialized', const {});
+      return server;
+    } on Object {
+      await server.close();
+      rethrow;
+    }
+  }
+  Map<String, Object?> options() => {
+    'cwd': project.path, 'approvalPolicy': 'never', 'sandbox': 'read-only',
+    'model': 'fixture-model',
+  };
+  try {
+    rpc = await open();
+    final started = await rpc.request('thread/start', {
+      ...options(), 'modelProvider': 'baocode', 'config': providerConfig,
+    });
+    final original = (started['thread'] as Map)['id'] as String;
+    await expectLater(rpc.request('thread/resume', {
+      'threadId': original, 'modelProvider': 'baocode', 'config': providerConfig,
+    }), throwsA(isA<StateError>().having((e) => '$e', 'native provider check', contains('current provider is openai'))));
+    await rpc.close();
+    rpc = await open(proxied: true, bridge: true);
+    final effective = (await rpc.request('config/read', {
+      'includeLayers': false, 'cwd': project.path,
+    }))['config'] as Map;
+    expect(effective['model_provider'], 'baocode');
+    final mcp = effective['mcp_servers'] as Map;
+    expect(mcp.keys, containsAll(['AgentDock', 'numeric', 'baocode_session']));
+    expect((mcp['AgentDock'] as Map)['tool_timeout_sec'], isNull);
+    expect((mcp['AgentDock'] as Map)['enabled'], false);
+    expect((mcp['AgentDock'] as Map)['env'], {'FIXTURE_ONLY': 'kept-env'});
+    expect((mcp['numeric'] as Map)['tool_timeout_sec'], 27.5);
+    expect((mcp['numeric'] as Map)['enabled'], false);
+    expect((mcp['numeric'] as Map)['http_headers'], {'X-Fixture': 'kept-header'});
+    final resumed = await rpc.request('thread/resume', {
+      'threadId': original, 'modelProvider': 'baocode', 'config': providerConfig,
+    });
+    expect((resumed['thread'] as Map)['id'], original);
+    await rpc.close();
+    rpc = await open();
+    final nativeFork = await rpc.request('thread/fork', {
+      'cwd': project.path, 'approvalPolicy': 'never', 'sandbox': 'read-only',
+      'threadId': original, 'deferGoalContinuation': true,
+    });
+    final nativeId = (nativeFork['thread'] as Map)['id'] as String;
+    expect(nativeId, isNot(original));
+    expect((nativeFork['thread'] as Map)['modelProvider'], 'openai');
+    await rpc.close();
+    rpc = await open();
+    final nativeResume = await rpc.request('thread/resume', {'threadId': nativeId});
+    expect((nativeResume['thread'] as Map)['id'], nativeId);
+    await rpc.close();
+    rpc = await open(proxied: true);
+    final proxyFork = await rpc.request('thread/fork', {
+      ...options(), 'threadId': nativeId, 'deferGoalContinuation': true,
+      'modelProvider': 'baocode', 'config': providerConfig,
+    });
+    final proxyId = (proxyFork['thread'] as Map)['id'] as String;
+    expect(proxyId, isNot(nativeId));
+    await rpc.close();
+    rpc = await open(proxied: true);
+    final finalResume = await rpc.request('thread/resume', {'threadId': proxyId});
+    expect((finalResume['thread'] as Map)['id'], proxyId);
+    final unchanged = await rpc.request('thread/read', {'threadId': original, 'includeTurns': false});
+    expect((unchanged['thread'] as Map)['modelProvider'], 'baocode');
+    expect(await configFile.readAsString(), before);
+    // ignore: avoid_print
+    print('Native provider assertions complete: rejection, same-ID recovery, both explicit switch directions, and sparse MCP merge; no model turn.');
+  } finally {
+    await rpc?.close();
+  }
 }
 
 // The opt-in integration test must use real HTTPS rather than Flutter's test

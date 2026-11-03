@@ -57,6 +57,31 @@ jobs:
       - run: flutter gen-l10n
       - run: flutter analyze --no-pub
         id: analyze
+      - name: Build and test owned Windows Codex launcher
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S windows/codex_launcher -B build/codex-launcher-fixture -A x64 -DBAOCODE_LAUNCHER_TESTS=ON
+          if ($LASTEXITCODE -ne 0) { throw 'Owned launcher configure failed' }
+          cmake --build build/codex-launcher-fixture --config Release
+          if ($LASTEXITCODE -ne 0) { throw 'Owned launcher build failed' }
+          $fixture = Join-Path $PWD 'build/codex-launcher-fixture/Release'
+          $helper = Join-Path $fixture 'BaocodeCodexLauncher.exe'
+          if (-not (Test-Path -LiteralPath $helper)) { throw 'Owned launcher fixture missing' }
+          "BAOCODE_TEST_LAUNCHER=$helper" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          python tool/test_codex_owned_launcher.py --helper $helper --reject-job-helper (Join-Path $fixture 'BaocodeCodexLauncherRejectJob.exe') --reject-membership-helper (Join-Path $fixture 'BaocodeCodexLauncherRejectMembership.exe')
+          if ($LASTEXITCODE -ne 0) { throw 'Owned launcher process isolation tests failed' }
+      - name: Test Codex provider MCP and shutdown regressions early
+        run: >-
+          flutter test
+          test/kernel/codex_provider_route_test.dart
+          test/kernel/codex_owned_process_test.dart
+          test/kernel/codex_transport_shutdown_test.dart
+          test/kernel/codex_transport_decode_test.dart
+          test/kernel/codex_path_setting_test.dart
+          test/kernel/codex_bot_kernel_test.dart
+          test/kernel/codex_writer_lifecycle_test.dart
       - name: Test browser recorder privacy scripts
         run: node --test test/browser/browser_recorder_script_test.mjs
       - name: Test browser routing and human takeover early
@@ -219,6 +244,14 @@ jobs:
         run: flutter test test/e2e_review_real_test.dart
       - run: choco install innosetup --no-progress -y
       - run: dart run tool/build_windows.dart --arch x64 --custom-updates --remote-release 1.7.3.23-958eff42c6ca
+      - name: Test packaged Codex process ownership
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixture = Join-Path $PWD 'build/codex-launcher-fixture/Release'
+          python tool/test_codex_owned_launcher.py --helper 'build/windows/x64/runner/Release/BaocodeCodexLauncher.exe' --reject-job-helper (Join-Path $fixture 'BaocodeCodexLauncherRejectJob.exe') --reject-membership-helper (Join-Path $fixture 'BaocodeCodexLauncherRejectMembership.exe')
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged owned launcher process isolation tests failed' }
       - name: Smoke-test startup
         shell: pwsh
         run: |

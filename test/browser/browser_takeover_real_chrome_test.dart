@@ -50,8 +50,25 @@ void main() {
     control.resetForTesting();
 
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final servedRequests = <Map<String, Object?>>[];
+    var servedCount = 0;
+    var closedCount = 0;
     server.listen((request) async {
       final response = request.response;
+      // Only bounded local-fixture routing/status evidence, never bodies,
+      // headers, queries, credentials, or arbitrary browser content.
+      final served = <String, Object?>{
+        'method': request.method,
+        'preflight': request.headers.value('X-Bao-Fixture-Probe') == '1',
+        'path': request.uri.path.length <= 120
+            ? request.uri.path : request.uri.path.substring(0, 120),
+        'closed': false,
+      };
+      if (servedRequests.length == 16) {
+        servedRequests.removeAt(0);
+      }
+      servedRequests.add(served);
+      servedCount++;
       if (request.uri.path == '/event') {
         response.headers.contentType = ContentType.json;
         response.write('{"fixture":true}');
@@ -69,7 +86,11 @@ window.fixtureTraffic = async function (marker) {
 </script>
 ''');
       }
+      served['status'] = response.statusCode;
+      served['contentType'] = response.headers.contentType.toString();
       await response.close();
+      served['closed'] = true;
+      closedCount++;
     });
     final page = Uri.parse('http://127.0.0.1:${server.port}/');
     final chrome = RealChromeFixture(root, page);
@@ -112,6 +133,23 @@ window.fixtureTraffic = async function (marker) {
       expect(cleanupError, isNull);
       expect(chrome.errors, isEmpty, reason: 'Late Chrome protocol errors after closure.');
     });
+    // Prove the exact local URL serves executable fixture HTML before Chrome
+    // starts. This uses the same scoped real loopback client, with no proxies.
+    final preflight = HttpClient();
+    try {
+      await () async {
+        final request = await preflight.getUrl(page);
+        request.headers.set('X-Bao-Fixture-Probe', '1');
+        final response = await request.close();
+        expect(response.statusCode, 200, reason: 'Local fixture preflight status.');
+        expect(response.headers.contentType?.mimeType, 'text/html');
+        final body = await utf8.decodeStream(response);
+        expect(body.contains('window.fixtureTraffic = async function'), isTrue,
+            reason: 'Local fixture preflight function source is missing.');
+      }().timeout(const Duration(seconds: 3));
+    } finally {
+      preflight.close(force: true);
+    }
     await bridge.start();
     expect(bridge.otherApp, isFalse);
     await chrome.start(executable!, version!);
@@ -157,9 +195,27 @@ window.fixtureTraffic = async function (marker) {
     expect(text(initiallyDenied), contains('paused'));
     expect(chrome.commands, isEmpty);
     await resume();
-    await chromeUntil(() async => await humanEvaluate(
-      "document.readyState === 'complete' && typeof window.fixtureTraffic === 'function'",
-    ) == true, reason: 'The local fixture document did not become ready.');
+    Object? documentStatus;
+    try {
+      await chromeUntil(() async {
+        documentStatus = await humanEvaluate("""
+({readyState: document.readyState, origin: location.origin,
+  path: location.pathname.slice(0, 120), title: document.title.slice(0, 120),
+  fixtureTrafficType: typeof window.fixtureTraffic,
+  scriptCount: document.scripts.length})
+""");
+        final status = documentStatus;
+        return status is Map && status['readyState'] == 'complete' &&
+            status['origin'] == page.origin && status['path'] == page.path &&
+            status['fixtureTrafficType'] == 'function';
+      }, reason: 'The local fixture document did not become ready.');
+    } on Object catch (error, stack) {
+      Error.throwWithStackTrace(StateError(
+        '$error\nLast local document status: ${jsonEncode(documentStatus)}'
+        '\nLocal fixture request counts: received=$servedCount closed=$closedCount'
+        '\nLast local fixture requests: ${jsonEncode(servedRequests)}',
+      ), stack);
+    }
     final first = await tool('browser_evaluate', {
       'tabId': 1, 'expression': "fixtureTraffic('AUTHORIZED_BEFORE').then(() => 'ready')",
     });

@@ -216,9 +216,11 @@ void main() {
       (m) => m['method'] == 'thread/resume',
     )['params'] as Map;
     expect(params.containsKey('dynamicTools'), false);
-    final mcp = (params['config'] as Map)['mcp_servers'] as Map;
-    expect(mcp['external'], {'enabled': true});
-    final bridge = mcp['baocode_session'] as Map;
+    final config = params['config'] as Map;
+    // Sparse native overrides preserve external servers without serializing
+    // their optional null fields back into invalid TOML strings.
+    expect(config.containsKey('mcp_servers'), false);
+    final bridge = config['mcp_servers.baocode_session'] as Map;
     final url = Uri.parse(bridge['url'] as String);
     expect(url.host, '127.0.0.1');
     expect(url.path, '/mcp');
@@ -228,7 +230,7 @@ void main() {
     expect(server.written.any((m) => m['method'] == 'turn/start'), false);
   });
 
-  test('optional MCP setup failure warns but ordinary legacy chat still resumes', () async {
+  test('legacy MCP injection does not depend on config/read serialization', () async {
     kernel.dispose();
     server = _Server()..configAvailable = false;
     kernel = CodexKernel.withTransport(
@@ -249,12 +251,12 @@ void main() {
     expect(server.written.any((m) => m['method'] == 'thread/resume'), true);
     expect(server.written.any((m) => m['method'] == 'turn/start'), true);
     final turn = server.written.firstWhere((m) => m['method'] == 'turn/start')['params'] as Map;
-    expect(turn['input'].toString(), contains('unavailable for this request'));
-    expect(turn['input'].toString(), isNot(contains('secret-placeholder')));
+    expect(turn['input'].toString(), isNot(contains('unavailable for this request')));
+    expect(turn['input'].toString(), contains('secret-placeholder'));
     expect(events.whereType<ItemUpserted>().any((event) =>
       event.item is NoticeItem &&
       (event.item as NoticeItem).kind == NoticeKind.warning &&
-      (event.item as NoticeItem).text.contains('@session')), true);
+      (event.item as NoticeItem).text.contains('@session')), false);
   });
 
   test('resumed ordinary chat serves persisted dispatcher with current registry', () async {

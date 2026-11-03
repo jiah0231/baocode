@@ -1,3 +1,5 @@
+import 'codex_proxy_configuration.dart';
+
 /// How to start `codex app-server` for one session.
 class CodexLaunch {
   const CodexLaunch({
@@ -5,6 +7,7 @@ class CodexLaunch {
     this.resume,
     this.model,
     this.modelProvider,
+    this.proxy,
     this.approvalPolicy,
     this.sandbox,
     this.effort,
@@ -20,6 +23,11 @@ class CodexLaunch {
 
   final String? model;
   final String? modelProvider;
+
+  /// Scoped to this process; does not change the user config or saved history.
+  final CodexProxyConfiguration? proxy;
+
+  List<String> get arguments => ['app-server', ...?proxy?.arguments];
   final String? approvalPolicy;
 
   /// `read-only`, `workspace-write` or `danger-full-access`.
@@ -37,6 +45,7 @@ class CodexLaunch {
     resume: resume ?? this.resume,
     model: model,
     modelProvider: modelProvider,
+    proxy: proxy,
     approvalPolicy: approvalPolicy,
     sandbox: sandbox,
     effort: effort,
@@ -65,6 +74,12 @@ abstract interface class CodexTransport {
 
   /// Completes once the process is gone, closed or not.
   Future<void> get exited;
+}
+
+/// Optional, secret-free facts for a shutdown that has not completed.
+/// Root exit is not proof that descendants or inherited pipes have ended.
+abstract interface class CodexShutdownDiagnostics {
+  Map<String, Object?> get shutdownDiagnostics;
 }
 
 /// The message a transport ends with: the process is gone.

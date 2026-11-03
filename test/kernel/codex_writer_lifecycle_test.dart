@@ -109,83 +109,61 @@ void main() {
     expect(h.conflicts, 0);
   });
 
-  test('a cancelled proxy lookup cannot start a stale thread on the replacement', () async {
+  test('a cancelled proxy lookup cannot launch a stale process or thread', () async {
     final kernel = h.kernel('unused', resume: false);
     kernel.model.select('@custom/test-model');
-    expect(await kernel.prepareConversation(), isTrue);
     final gate = Completer<void>();
     h.nextProxyGate = gate;
     kernel.send(const KernelTurn(id: 'stale', text: 'Cancelled message'));
-    await h.until(() => h.proxyCalls == 1, 'the proxy lookup gate');
-    final old = h.servers.single;
-    expect(h.proxyCalls, 1);
-    expect(old.requests('thread/start'), isEmpty);
+    await h.until(() => h.proxyCalls == 1, 'the process proxy lookup gate');
+    expect(h.servers, isEmpty);
     kernel.restart();
-    await h.ready(kernel, servers: 2);
-    expect(h.servers, hasLength(2));
-    expect(kernel.health.status, KernelHealthStatus.ready);
-    // The new lifecycle must not wait on the obsolete proxy lookup.
-    kernel.send(const KernelTurn(id: 'fresh', text: 'Replacement message'));
-    await h.until(() => h.servers.last.requests('turn/start').isNotEmpty,
-        'the replacement turn to be sent');
-    final replacement = h.servers.last;
-    expect(replacement.requests('thread/start'), hasLength(1));
-    final id = kernel.sessionId;
-    expect(id, isNotNull);
-    gate.complete();
     await pumpEventQueue();
-    expect(kernel.sessionId, id);
-    expect(old.requests('thread/start'), isEmpty);
+    expect(h.servers, isEmpty);
+    gate.complete();
+    await h.ready(kernel, servers: 1);
+    kernel.send(const KernelTurn(id: 'fresh', text: 'Replacement message'));
+    await h.until(() => h.servers.single.requests('turn/start').isNotEmpty,
+        'the replacement turn to be sent');
+    final replacement = h.servers.single;
     expect(replacement.requests('thread/start'), hasLength(1));
     expect(replacement.requests('turn/start'), hasLength(1));
-    expect((replacement.requests('turn/start').single['params'] as Map)['threadId'], id);
-    expect(h.writers.keys, [id]);
+    expect(h.writers.keys, [kernel.sessionId]);
     expect(h.conflicts, 0);
   });
 
-  test('dispose during a proxy lookup never creates a thread when the lookup finishes', () async {
+  test('dispose during a proxy lookup never launches a process', () async {
     final kernel = h.kernel('unused', resume: false);
     kernel.model.select('@custom/test-model');
-    expect(await kernel.prepareConversation(), isTrue);
     final gate = Completer<void>();
     h.nextProxyGate = gate;
     kernel.send(const KernelTurn(id: 'stale', text: 'Cancelled message'));
-    await h.until(() => h.proxyCalls == 1, 'the proxy lookup gate');
-    expect(h.proxyCalls, 1);
+    await h.until(() => h.proxyCalls == 1, 'the process proxy lookup gate');
     kernel.dispose();
     gate.complete();
     await pumpEventQueue();
-    expect(h.servers, hasLength(1));
-    expect(h.servers.single.closeRequested, isTrue);
-    expect(h.servers.single.requests('thread/start'), isEmpty);
+    expect(h.servers, isEmpty);
     expect(kernel.sessionId, isNull);
     expect(h.writers, isEmpty);
   });
 
-  test('restart during resume fences its stale proxy result before replacing the startup', () async {
+  test('restart during resume fences proxy preparation before process creation', () async {
     final kernel = h.kernel('source');
     kernel.model.select('@custom/test-model');
     final gate = Completer<void>();
     h.nextProxyGate = gate;
     kernel.prepare();
-    await h.until(() => h.proxyCalls == 1, 'the proxy lookup gate');
-    final old = h.servers.single;
-    expect(h.proxyCalls, 1);
-    expect(old.requests('thread/resume'), isEmpty);
+    await h.until(() => h.proxyCalls == 1, 'the process proxy lookup gate');
+    expect(h.servers, isEmpty);
     kernel.restart();
     await pumpEventQueue();
-    // Resume is part of startup: join that startup until it observes its
-    // cancellation, rather than opening a concurrent launch generation.
-    expect(old.closeRequested, isTrue);
-    expect(h.servers, hasLength(1));
+    // Startup must observe cancellation before the replacement generation.
+    expect(h.servers, isEmpty);
     gate.complete();
-    await h.ready(kernel, servers: 2);
-    expect(h.servers, hasLength(2));
-    expect(old.requests('thread/resume'), isEmpty);
-    expect(h.servers.last.requests('thread/resume'), hasLength(1));
+    await h.ready(kernel, servers: 1);
+    expect(h.servers.single.requests('thread/resume'), hasLength(1));
     expect(kernel.sessionId, 'source');
-    expect(kernel.health.status, KernelHealthStatus.ready);
-    expect(h.writers['source'], same(h.servers.last));
+    expect(h.writers['source'], same(h.servers.single));
     expect(h.conflicts, 0);
   });
 
@@ -334,18 +312,27 @@ void main() {
     await firstEnded.timeout(const Duration(seconds: 10));
     await _afterEventDispatch();
     old.delayExit = true;
+    h.delayNewExits = true;
     kernel.model.select('@custom/test-model');
     kernel.send(const KernelTurn(id: 'second', text: 'Continue elsewhere'));
-    await h.until(() => old.closeRequested, 'the provider fork writer handoff');
-    expect(old.requests('thread/fork'), hasLength(1));
-    expect((old.requests('thread/fork').single['params'] as Map)['modelProvider'], 'baocode');
-    expect(old.closeRequested, isTrue);
-    expect(h.servers, hasLength(1));
+    await h.until(() => h.servers.length == 2 && h.servers.last.closeRequested,
+        'the target-provider helper writer handoff');
+    final helper = h.servers.last;
+    expect(old.requests('thread/fork'), isEmpty);
+    expect(helper.requests('thread/fork'), hasLength(1));
+    expect((helper.requests('thread/fork').single['params'] as Map)['modelProvider'], 'baocode');
+    expect(old.closeRequested, isFalse);
     expect(h.writers['source'], same(old));
-    expect(h.writers['fork-1'], same(old));
-    old.finishExit();
-    await h.ready(kernel, servers: 2);
+    expect(h.writers['fork-1'], same(helper));
+    h.delayNewExits = false;
+    helper.finishExit();
+    await h.until(() => old.closeRequested, 'the source writer handoff');
     expect(h.servers, hasLength(2));
+    expect(h.writers['source'], same(old));
+    expect(h.writers['fork-1'], isNull);
+    old.finishExit();
+    await h.ready(kernel, servers: 3);
+    expect(h.servers, hasLength(3));
     expect(kernel.sessionId, 'fork-1');
     expect(kernel.health.status, KernelHealthStatus.ready);
     final replacement = h.servers.last;

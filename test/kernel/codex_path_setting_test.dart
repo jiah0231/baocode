@@ -2,9 +2,11 @@ import 'dart:io';
 
 import 'package:bao_remote/local.dart' show ClaudeEnvironment;
 import 'package:baocode/kernel/codex/codex_path_setting.dart';
+import 'package:baocode/kernel/codex/codex_owned_process_io.dart';
 import 'package:baocode/kernel/codex/codex_process_transport.dart';
 import 'package:baocode/kernel/codex/codex_process_transport_io.dart';
 import 'package:baocode/kernel/codex/codex_transport.dart';
+import 'package:baocode/kernel/codex/codex_proxy_configuration.dart';
 import 'package:baocode/network/network_proxy_io.dart';
 import 'package:baocode/network/proxy_settings.dart';
 import 'package:flutter/foundation.dart';
@@ -16,9 +18,12 @@ void main() {
 
   setUp(() {
     root = Directory.systemTemp.createTempSync('baocode-codex-path-');
+    CodexOwnedProcess.helperExecutableForTesting =
+        Platform.environment['BAOCODE_TEST_LAUNCHER'];
   });
   tearDown(() {
     CodexPathSetting.current = () => null;
+    CodexOwnedProcess.helperExecutableForTesting = null;
     ClaudeEnvironment.use(null);
     root.deleteSync(recursive: true);
   });
@@ -120,6 +125,14 @@ void main() {
     await transport.exited.timeout(const Duration(seconds: 10));
     await CodexProcessTransport.registry.flush();
     expect(args.readAsLinesSync(), ['app-server']);
+    const proxy = CodexProxyConfiguration(
+      baseUrl: 'http://127.0.0.1:9/p/codex', token: 'fixture-env-only',
+    );
+    final launch = CodexLaunch(cwd: root.path, proxy: proxy);
+    final proxied = await startCodexProcess(launch);
+    await proxied.exited.timeout(const Duration(seconds: 10));
+    expect(args.readAsLinesSync(), launch.arguments);
+    expect(args.readAsStringSync().contains(proxy.token), false);
   }, skip: Platform.isWindows ? 'Uses a POSIX fixture executable.' : false);
 
   test(
@@ -136,7 +149,13 @@ void main() {
           '  echo codex-cli 1.2.3\r\n'
           '  exit /b 0\r\n'
           ')\r\n'
-          'echo %~1>"%~dp0args.txt"\r\n'
+          'type nul >"%~dp0args.txt"\r\n'
+          ':arguments\r\n'
+          'if "%~1"=="" goto arguments_done\r\n'
+          'echo %~1>>"%~dp0args.txt"\r\n'
+          'shift /1\r\n'
+          'goto arguments\r\n'
+          ':arguments_done\r\n'
           'cd >"%~dp0cwd.txt"\r\n'
           'exit /b 0\r\n',
         );
@@ -180,6 +199,14 @@ void main() {
         File(p.join(bin.path, 'cwd.txt')).readAsStringSync().trim(),
         root.path,
       );
+      const proxy = CodexProxyConfiguration(
+        baseUrl: 'http://127.0.0.1:9/p/codex', token: 'fixture-env-only',
+      );
+      final launch = CodexLaunch(cwd: root.path, proxy: proxy);
+      final proxied = await startCodexProcess(launch);
+      await proxied.exited.timeout(const Duration(seconds: 10));
+      expect(args.readAsLinesSync(), launch.arguments);
+      expect(args.readAsStringSync().contains(proxy.token), false);
     },
     skip: !Platform.isWindows ? 'Exercises the Windows npm shim.' : false,
   );

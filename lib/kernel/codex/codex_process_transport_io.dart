@@ -10,17 +10,34 @@ import '../../network/network_proxy_io.dart';
 import '../../platform/child_process_registry.dart';
 import '../../platform/data_dir.dart';
 import 'codex_transport.dart';
+import 'codex_owned_process_io.dart';
 import 'codex_json_decode_io.dart';
 import 'codex_path_setting.dart';
 
 /// `codex app-server` as a child process, over its stdin and stdout.
-class CodexProcessTransport implements CodexTransport {
-  CodexProcessTransport._(this._process, {this.executable}) {
+class CodexProcessTransport implements CodexTransport, CodexShutdownDiagnostics {
+  CodexProcessTransport._(
+    this._process, {
+    this.executable,
+    bool? windows,
+    Future<ProcessResult> Function(String, List<String>)? terminateTree,
+    Duration shutdownGrace = const Duration(seconds: 1),
+    Duration terminationTimeout = const Duration(seconds: 3),
+  }) : _windows = windows ?? Platform.isWindows,
+       _terminateTree = terminateTree ?? _runTermination,
+       _shutdownGrace = shutdownGrace,
+       _terminationTimeout = terminationTimeout {
     _live.add(this);
     unawaited(registry.add(_process.pid));
     _process.stdout
         .transform(_decoder)
         .transform(const LineSplitter())
+        .transform(StreamTransformer<String, String>.fromHandlers(
+          handleDone: (sink) {
+            _stdoutEof = true;
+            sink.close();
+          },
+        ))
         .asyncMap(_line)
         .listen((_) {}, onError: _undecodable, onDone: _stdoutDone);
     _process.stderr
@@ -41,8 +58,23 @@ class CodexProcessTransport implements CodexTransport {
 
   /// A transport over [process], e.g. a stand-in process under test.
   @visibleForTesting
-  factory CodexProcessTransport.forProcess(Process process) =>
-      CodexProcessTransport._(process);
+  factory CodexProcessTransport.forProcess(
+    Process process, {
+    bool? windows,
+    Future<ProcessResult> Function(String, List<String>)? terminateTree,
+    Duration shutdownGrace = const Duration(seconds: 1),
+    Duration terminationTimeout = const Duration(seconds: 3),
+  }) => CodexProcessTransport._(
+    process,
+    windows: windows,
+    terminateTree: terminateTree,
+    shutdownGrace: shutdownGrace,
+    terminationTimeout: terminationTimeout,
+  );
+
+  static Future<ProcessResult> _runTermination(
+    String executable, List<String> arguments,
+  ) => Process.run(executable, arguments);
 
   /// Where the running processes are kept track of across runs.
   @visibleForTesting
@@ -109,8 +141,12 @@ class CodexProcessTransport implements CodexTransport {
       final process = await _startExecutable(
         executable,
         'app-server',
+        extraArguments: launch.proxy?.arguments ?? const [],
         workingDirectory: launch.cwd,
-        environment: {...environment, ...proxy, ...?launch.env},
+        environment: {
+          ...environment, ...proxy, ...?launch.env,
+          ...?launch.proxy?.environment,
+        },
       );
       return CodexProcessTransport._(process, executable: executable);
     } on ProcessException catch (error) {
@@ -200,38 +236,52 @@ class CodexProcessTransport implements CodexTransport {
   static Future<Process> _startExecutable(
     String executable,
     String argument, {
+    List<String> extraArguments = const [],
     required Map<String, String> environment,
     String? workingDirectory,
   }) {
     if (argument != 'app-server' && argument != '--version') {
       throw ArgumentError.value(argument, 'argument');
     }
+    Future<Process> launch(String path, List<String> arguments,
+        Map<String, String> env) {
+      if (Platform.isWindows && argument == 'app-server') {
+        return CodexOwnedProcess.start(path, arguments,
+            workingDirectory: workingDirectory, environment: env);
+      }
+      return Process.start(path, arguments,
+          workingDirectory: workingDirectory, environment: env,
+          includeParentEnvironment: Platform.isWindows);
+    }
     final extension = p.extension(executable).toLowerCase();
     if (Platform.isWindows && (extension == '.cmd' || extension == '.bat')) {
       if (executable.contains(RegExp('["\\r\\n]'))) {
         throw const CodexUnavailable('Invalid Codex executable path');
       }
+      final arguments = [argument, ...extraArguments];
+      if (arguments.any((value) => value.contains(RegExp('["\\r\\n]')))) {
+        throw const CodexUnavailable('Invalid Codex launch argument');
+      }
       final windows =
           Platform.environment['SystemRoot'] ??
           Platform.environment['SYSTEMROOT'] ??
           r'C:\Windows';
-      return Process.start(
+      return launch(
         p.join(windows, 'System32', 'cmd.exe'),
-        ['/d', '/v:off', '/c', '%baocode_codex_executable%', argument],
-        workingDirectory: workingDirectory,
-        environment: {
+        [
+          '/d', '/v:off', '/c', '%baocode_codex_executable%',
+          for (var i = 0; i < arguments.length; i++)
+            '%baocode_codex_argument_$i%',
+        ],
+        {
           ...environment,
           'baocode_codex_executable': '"$executable"',
+          for (var i = 0; i < arguments.length; i++)
+            'baocode_codex_argument_$i': '"${arguments[i]}"',
         },
       );
     }
-    return Process.start(
-      executable,
-      [argument],
-      workingDirectory: workingDirectory,
-      environment: environment,
-      includeParentEnvironment: Platform.isWindows,
-    );
+    return launch(executable, [argument, ...extraArguments], environment);
   }
 
   /// Inspect the same executable local sessions use. Never install anything.
@@ -279,6 +329,10 @@ class CodexProcessTransport implements CodexTransport {
   }
 
   final Process _process;
+  final bool _windows;
+  final Future<ProcessResult> Function(String, List<String>) _terminateTree;
+  final Duration _shutdownGrace;
+  final Duration _terminationTimeout;
 
   /// The CLI run, to name in a report of its failing.
   final String? executable;
@@ -292,6 +346,25 @@ class CodexProcessTransport implements CodexTransport {
 
   int? _exitCode;
   bool _stdoutClosed = false;
+  bool _stdoutEof = false;
+  bool _closeRequested = false;
+  bool _decoding = false;
+  String _termination = 'not_requested';
+
+  /// Facts only: no paths, command arguments, environment, or stderr content.
+  @override
+  Map<String, Object?> get shutdownDiagnostics => {
+    'root_exited': _exitCode != null,
+    'root_exit_code': _exitCode,
+    'stdout_eof_observed': _stdoutEof,
+    'decoder_active': _decoding,
+    'decoder_drained': _stdoutClosed,
+    'messages_drained': _finished.isCompleted,
+    'termination': _termination,
+    'descendants': _process is CodexOwnedProcess ? 'windows_job' : 'not_tracked',
+    if (_process is CodexOwnedProcess)
+      ..._process.diagnostics,
+  };
   final _finished = Completer<void>();
 
   @override
@@ -299,6 +372,7 @@ class CodexProcessTransport implements CodexTransport {
 
   Future<void> _line(String line) async {
     if (line.trim().isEmpty) return;
+    _decoding = true;
     try {
       final decoded = await decodeCodexJson(line);
       if (decoded is Map<String, Object?>) _messages.add(decoded);
@@ -306,6 +380,8 @@ class CodexProcessTransport implements CodexTransport {
       // Not protocol (e.g. a warning printed to stdout): keep it for the
       // failure report.
       _stderrLine(line);
+    } finally {
+      _decoding = false;
     }
   }
 
@@ -355,12 +431,17 @@ class CodexProcessTransport implements CodexTransport {
 
   @override
   void close() {
-    if (_exitCode != null) return;
+    if (_exitCode != null || _closeRequested) return;
+    _closeRequested = true;
     unawaited(_process.stdin.close().catchError((_) {}));
-    if (Platform.isWindows) {
+    if (_process is CodexOwnedProcess) {
+      _termination = 'owned_job_shutdown_requested';
+      // The helper sees EOF, closes child stdin, and after grace terminates
+      // only its Job by handle. Never taskkill the helper or a stored child PID.
+    } else if (_windows) {
       unawaited(_endTree());
     } else {
-      _process.kill();
+      _termination = _process.kill() ? 'signal_sent' : 'signal_failed';
     }
   }
 
@@ -369,13 +450,31 @@ class CodexProcessTransport implements CodexTransport {
   /// closed, then ended with all it started.
   Future<void> _endTree() async {
     final ended = await _process.exitCode
-        .timeout(const Duration(seconds: 1))
+        .timeout(_shutdownGrace)
         .then((_) => true, onError: (Object _) => false);
-    if (ended) return;
+    // Never issue a PID-based command once we have observed root exit.
+    // This guard cannot provide atomic process-tree ownership; a Job-backed
+    // launcher is needed to eliminate the remaining check/use race on Windows.
+    if (ended || _exitCode != null) {
+      _termination = 'root_exited_before_tree_termination';
+      return;
+    }
+    _termination = 'tree_termination_requested';
     try {
-      await Process.run('taskkill', ['/pid', '${_process.pid}', '/T', '/F']);
+      final result = await _terminateTree(
+        'taskkill', ['/pid', '${_process.pid}', '/T', '/F'],
+      ).timeout(_terminationTimeout);
+      _termination = result.exitCode == 0
+          ? 'tree_termination_command_succeeded'
+          : 'tree_termination_failed_${result.exitCode}';
+    } on TimeoutException {
+      // A timeout is not success; do not retry a potentially reused PID.
+      _termination = 'tree_termination_timeout_outcome_unknown';
     } on ProcessException {
-      _process.kill();
+      _termination = 'tree_termination_unavailable';
+      // Do not fall back to another PID-based termination attempt. Keep the
+      // barrier closed and report failure; root-only kill cannot prove that
+      // descendants released their writers.
     }
   }
 }

@@ -79,6 +79,8 @@ const _required = [
   // installer's keys point the browsers to (windows/BrowserBridge).
   'baocode-browser-host.exe',
   'dev.baocode.browser.json',
+  // Owns the managed Codex process tree; never fall back to an unowned launch.
+  'BaocodeCodexLauncher.exe',
   // What writes down a fast fail (windows/wer), which the app registers.
   'baocode_wer.dll',
   // Native asset required by the restored iroh phone transport.

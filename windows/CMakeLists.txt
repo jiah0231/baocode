@@ -60,6 +60,9 @@ add_subdirectory("runner")
 # The browsers' native messaging host; see BrowserBridge/CMakeLists.txt.
 add_subdirectory("BrowserBridge")
 
+# Contained Codex process trees; no PID-based termination.
+add_subdirectory("codex_launcher")
+
 # Windows Error Reporting's module for the app's fast fails; see
 # wer/CMakeLists.txt.
 add_subdirectory("wer")
@@ -91,6 +94,9 @@ install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
 install(TARGETS baocode-browser-host RUNTIME
   DESTINATION "${CMAKE_INSTALL_PREFIX}" COMPONENT Runtime)
 install(FILES "BrowserBridge/dev.baocode.browser.json"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}" COMPONENT Runtime)
+
+install(TARGETS BaocodeCodexLauncher RUNTIME
   DESTINATION "${CMAKE_INSTALL_PREFIX}" COMPONENT Runtime)
 
 # The module that writes down a fast fail, beside the app that registers it.

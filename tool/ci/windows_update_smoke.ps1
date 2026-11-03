@@ -49,17 +49,18 @@ try {
   # not forced process closure. WAITPID/quit guards remain unit-tested separately.
   Install $new (Join-Path $root 'upgrade.log')
   Assert-Version $exe $expected
-  foreach ($relative in @('baocode.exe', 'data\app.so', 'bao_iroh.dll', 'baocode_wer.dll')) {
+  foreach ($relative in @('baocode.exe', 'data\app.so', 'bao_iroh.dll', 'baocode_wer.dll', 'BaocodeCodexLauncher.exe')) {
     $installedHash = (Get-FileHash (Join-Path $appDir $relative) -Algorithm SHA256).Hash
     $builtHash = (Get-FileHash (Join-Path $bundle $relative) -Algorithm SHA256).Hash
     if ($installedHash -ne $builtHash) { throw "Upgrade did not replace $relative with the tested build" }
+    Write-Host "Verified installed bundle hash: $relative SHA256 $installedHash"
   }
   if ((Get-Content $marker -Raw).Trim() -ne 'isolated test data') { throw 'Upgrade changed user data' }
   $process = Start-Process -FilePath $exe -PassThru
   Start-Sleep -Seconds 15
   $process.Refresh()
   if ($process.HasExited) { throw "Upgraded app failed startup: $($process.ExitCode)" }
-  Write-Host "PASS: $OldVersion -> $Version per-user Setup, executable/AOT hashes, preserved data, startup"
+  Write-Host "PASS: $OldVersion -> $Version per-user Setup, executable/AOT/native/helper hashes, preserved data, startup"
 } finally {
   if ($process) {
     $process.Refresh()

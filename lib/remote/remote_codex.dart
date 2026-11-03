@@ -140,8 +140,9 @@ class RemoteCodexTransport implements CodexTransport {
       }
       final process = await client.start(
         'codex',
-        const ['app-server'],
+        launch.arguments,
         cwd: cwd,
+        environment: {...?launch.env, ...?launch.proxy?.environment},
         login: true,
       );
       return RemoteCodexTransport._(process);

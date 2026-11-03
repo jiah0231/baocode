@@ -33,6 +33,7 @@ import 'codex_command_output.dart';
 import 'codex_output_meter.dart';
 import 'codex_goals.dart';
 import 'codex_process_transport.dart';
+import 'codex_proxy_configuration.dart';
 import 'codex_transport.dart';
 import 'codex_skills.dart';
 import 'codex_session_mcp.dart';
@@ -153,9 +154,13 @@ class CodexKernel
   late final KernelChoiceSource model = LocalChoice(
     _modelOptions,
     onChanged: (id) {
+      if (!_reportingModel) _modelSelected = true;
       _modelId = id;
       // Another model may not take the effort this one does.
       _settleSettings(id);
+      if (!_reportingModel && _selectionAfterResume != null) {
+        _selectionAfterResume = (model: id, effort: _effort, fast: _fast);
+      }
       emitInfoChanged();
     },
   );
@@ -207,6 +212,18 @@ class CodexKernel
   final Map<String, bool> _pickedFast = {};
   bool _fast = false;
   String? _modelId;
+  bool _reportingModel = false;
+  bool _modelSelected = false;
+  ({String? model, String? effort, bool fast})? _selectionAfterResume;
+
+  void _reportModel(String id) {
+    _reportingModel = true;
+    try {
+      model.select(id);
+    } finally {
+      _reportingModel = false;
+    }
+  }
 
   /// The model as the server takes it: none for Default, which leaves the
   /// pick to the server's own; one of BaoCode's as its proxy names it
@@ -232,7 +249,7 @@ class CodexKernel
 
   /// What a session on one of BaoCode's models goes through: the proxy's
   /// provider id, as the thread's `modelProvider`.
-  static const _proxyProviderId = 'baocode';
+  static const _proxyProviderId = CodexProxyConfiguration.providerId;
 
   /// Whether [info] of [provider] takes fast mode: Responses' models,
   /// whose tier the proxy sets, or its models' names.
@@ -477,6 +494,7 @@ class CodexKernel
 
   /// The provider the thread runs on ([_providerOf]).
   String _threadProvider = '';
+  CodexProxyConfiguration? _processProxy;
   bool _initialized = false;
   bool _disposed = false;
   bool _released = false;
@@ -553,6 +571,7 @@ class CodexKernel
   @override
   Future<void> get stopped => _stopped;
   Future<void> _stopped = Future.value();
+  CodexShutdownDiagnostics? _shutdownDiagnostics;
 
   @override
   int get contextWindow => _contextWindow;
@@ -678,24 +697,16 @@ class CodexKernel
         return proxy;
       }
       try {
-        final response = await _request('config/read', {
-          'includeLayers': false, 'cwd': ?_projectPath,
-        });
-        checkRuntime();
-        final configured = response['config'];
-        if (configured is! Map) {
-          throw const CodexUnavailable('Cannot preserve existing MCP configuration');
-        }
         final bridge = await _legacySessionMcpConfig();
         checkRuntime();
         _sessionMcpUnavailable = false;
         return {
           ...?proxy,
-          'mcp_servers': {
-            ...?(configured['mcp_servers'] as Map?)?.cast<String, Object?>(),
-            ...?(proxy?['mcp_servers'] as Map?)?.cast<String, Object?>(),
-            ...(bridge['mcp_servers'] as Map).cast<String, Object?>(),
-          },
+          // Native dotted overrides merge into the existing config. Never
+          // round-trip config/read: absent optional fields become JSON null,
+          // which Codex's JSON-to-TOML conversion turns into an empty string.
+          for (final entry in (bridge['mcp_servers'] as Map).entries)
+            'mcp_servers.${entry.key}': entry.value,
         };
       } on Object {
         // A compatibility endpoint is optional for ordinary conversation use.
@@ -843,6 +854,7 @@ class CodexKernel
     if (subscription != null) unawaited(subscription.cancel());
     _transport?.close();
     _transport = null;
+    _processProxy = null;
     _threadId = null;
     _threadStarting = null;
     _initialized = false;
@@ -861,12 +873,24 @@ class CodexKernel
         if (_starting != null && !identical(_starting, starting)) {
           return _ensureStarted(resume: resume);
         }
+        if (_sessionId == null && _threadId == null &&
+            (_processProxy != null) != (_custom != null)) {
+          return _ensureStarted(resume: resume);
+        }
         if (resume && _sessionId != null && _threadId == null) {
           await _resumeInitialized();
         }
       });
     }
     if (_transport != null && _initialized && !_released) {
+      // prepare() may precede the first model choice. Restart only the empty
+      // runtime here; an existing conversation changes provider via an explicit
+      // model-switch fork, never as recovery from a provider error.
+      if (_sessionId == null && _threadId == null &&
+          (_processProxy != null) != (_custom != null)) {
+        _teardown();
+        return _trackStarting(_open(resume: resume));
+      }
       if (resume && _sessionId != null && _threadId == null) {
         return _trackStarting(_resumeInitialized());
       }
@@ -885,17 +909,25 @@ class CodexKernel
 
   Future<void> _waitForStopped() => _stopped.timeout(
     const Duration(seconds: 10),
-    onTimeout: () => throw const CodexUnavailable(
+    onTimeout: () => throw CodexUnavailable(
       'Codex is still closing this conversation',
-      detail: 'The previous app-server has not exited. Wait for it to finish, '
-          'then retry. The conversation and its writer lock were not changed.',
+      detail: 'The previous connection has not finished shutting down and '
+          'delivering its final output. Wait for it to finish, then retry. '
+          'The conversation and its writer lock were not changed.'
+          '${_shutdownDiagnostics == null ? '' : '\nShutdown state: ${jsonEncode(_shutdownDiagnostics!.shutdownDiagnostics)}'}',
     ),
   );
 
   Future<void> _resumeInitialized() async {
     final epoch = _lifecycleEpoch;
     try {
+      if (_sessionId != null && await _alignResumeProvider()) {
+        _teardown();
+        await _open(resume: true);
+        return;
+      }
       await _ensureThread();
+      _restoreModelAfterResume();
     } on Object catch (error) {
       if (_disposed || epoch != _lifecycleEpoch) rethrow;
       _teardown();
@@ -925,23 +957,31 @@ class CodexKernel
       // Never replace this barrier with lock deletion or an unbounded retry.
       await _waitForStopped();
       if (cancelled()) throw StateError('Codex startup cancelled');
+      final proxy = await _processProxyConfiguration();
+      if (cancelled()) throw StateError('Codex startup cancelled');
       final transport = await _start(
         CodexLaunch(
           cwd: _context.cwd ?? _context.resume?.cwd ?? '',
           resume: _sessionId,
           model: _modelForServer,
+          modelProvider: proxy == null ? null : CodexProxyConfiguration.providerId,
+          proxy: proxy,
           approvalPolicy: _approvalPolicy,
           sandbox: _sandboxMode,
           effort: _effort,
         ),
       );
       _stopped = transport.exited;
+      _shutdownDiagnostics = transport is CodexShutdownDiagnostics
+          ? transport
+          : null;
       if (cancelled()) {
         transport.close();
         await _waitForStopped();
         throw StateError('Codex startup cancelled');
       }
       _transport = transport;
+      _processProxy = proxy;
       _subscription = transport.messages.listen(
         (message) => _receive(message, transport),
       );
@@ -966,9 +1006,25 @@ class CodexKernel
       if (cancelled()) throw StateError('Codex startup cancelled');
       await _loadPrompts();
       if (cancelled()) throw StateError('Codex startup cancelled');
+      // A model choice can change while the process is initializing. An
+      // empty chat has no history to migrate, so rebuild its scoped runtime.
+      if (_sessionId == null &&
+          (_processProxy != null) != (_custom != null)) {
+        _teardown();
+        return _open(resume: resume);
+      }
+      // Read-only metadata remains available even when native resume rejects
+      // the current provider. Restore the saved route before acquiring a writer.
+      if (resume && _sessionId != null && await _alignResumeProvider()) {
+        _teardown();
+        return _open(resume: true);
+      }
       // A new chat starts its thread with its first message, so no empty
       // one is kept for a chat the user only looked at.
-      if (resume && _sessionId != null) await _resumeThread();
+      if (resume && _sessionId != null) {
+        await _resumeThread();
+        _restoreModelAfterResume();
+      }
       if (cancelled() || !identical(_transport, transport)) {
         throw StateError('Codex startup cancelled');
       }
@@ -1023,6 +1079,7 @@ class CodexKernel
     _cancelHistoryReplay();
     _closeSessionMcp();
     _transport = null;
+    _processProxy = null;
     _threadId = null;
     _threadStarting = null;
     _initialized = false;
@@ -1125,12 +1182,13 @@ class CodexKernel
     if (remember) _keepModels(data);
     _syncModelOptions();
     final wanted = _modelId;
-    final chosen = _modelOptions.any((option) => option.id == wanted)
+    final chosen = _modelOptions.any((option) => option.id == wanted) ||
+            parseModelRef(wanted) != null
         ? wanted!
         : _modelOptions.first.id;
     _modelId = chosen;
     if (emit) {
-      model.select(chosen);
+      _reportModel(chosen);
     } else {
       (model as LocalChoice).reported = chosen;
       _settleSettings(chosen);
@@ -1227,12 +1285,13 @@ class CodexKernel
     if (_disposed) return;
     _syncModelOptions();
     final picked = _modelId;
-    if (picked != null && !_modelOptions.any((option) => option.id == picked)) {
+    if (picked != null && !_modelOptions.any((option) => option.id == picked) &&
+        !(_conversationStarted && parseModelRef(picked) != null)) {
       final fallback = _modelOptions.firstOrNull?.id;
       if (fallback != null) {
         _modelId = fallback;
         _settleSettings(fallback);
-        model.select(fallback);
+        _reportModel(fallback);
       }
     }
     emitInfoChanged();
@@ -1359,38 +1418,64 @@ class CodexKernel
     _ => id,
   };
 
-  /// The `modelProvider` and `config` a thread of the model now picked is
-  /// begun with: the proxy BaoCode's models go through, and how it asks
-  /// them. Null for the server's own models.
+  Future<CodexProxyConfiguration?> _processProxyConfiguration() async {
+    final custom = _custom;
+    if (custom == null) {
+      if (parseModelRef(_modelId) != null) {
+        throw const CodexUnavailable(
+          "This conversation's BaoCode model provider is unavailable",
+          detail: 'Restore its provider in Settings → Models before continuing. '
+              'The saved conversation was not changed.',
+        );
+      }
+      return null;
+    }
+    final endpoint = await _proxy();
+    if (endpoint == null) {
+      throw CodexUnavailable('${custom.$1.name} needs BaoCode\'s model proxy');
+    }
+    return CodexProxyConfiguration(baseUrl: endpoint.baseUrl, token: endpoint.token);
+  }
+
+  /// Reuse the process-local provider definition and credential environment.
+  /// Thread-only overrides do not satisfy native provider admission checks.
   Future<({String modelProvider, Map<String, Object?> config})?>
   _proxyThread() async {
     final custom = _custom;
     if (custom == null) return null;
-    final (provider, info) = custom;
-    final endpoint = await _proxy();
-    if (endpoint == null) {
-      throw CodexUnavailable('${provider.name} needs BaoCode\'s model proxy');
+    final proxy = _processProxy;
+    if (proxy == null) {
+      throw const CodexUnavailable('The selected Codex provider needs a new runtime');
     }
     return (
       modelProvider: _proxyProviderId,
       config: {
-        'model_providers': {
-          _proxyProviderId: {
-            'name': 'BaoCode',
-            'base_url': '${endpoint.baseUrl}/v1',
-            'wire_api': 'responses',
-            'experimental_bearer_token': endpoint.token,
-            'supports_websockets': false,
-          },
-        },
-        'model_context_window': info.initialContext,
-        // The server's own tools go to OpenAI, unasked: an upstream of
-        // another's would refuse them.
+        'model_providers': {_proxyProviderId: proxy.provider},
+        'model_context_window': custom.$2.initialContext,
         'web_search': 'disabled',
         'features': {'multi_agent': false},
       },
     );
   }
+
+  CodexKernel _providerHelper({String? model}) => CodexKernel(
+    descriptor,
+    KernelContext(
+      cwd: _context.cwd ?? _context.resume?.cwd,
+      settings: {
+        ..._context.settings,
+        KernelChoiceKind.model.name: ?(model ?? _modelId),
+        KernelChoiceKind.effort.name: ?_effort,
+        KernelChoiceKind.mode.name: _modeId,
+        KernelChoiceKind.permission.name: _permissionId,
+        KernelChoiceKind.fast.name: _fast ? 'fast' : 'default',
+      },
+      workspace: _context.workspace,
+    ),
+    start: _start,
+    providers: _providers,
+    providerProxy: _proxy,
+  );
 
   /// Bind asynchronous preparation to the process that requested it.
   void Function() _runtimeGuard() {
@@ -1412,20 +1497,24 @@ class CodexKernel
   /// staying on its own.
   Future<void> _forkToProvider(String threadId) async {
     final checkRuntime = _runtimeGuard();
-    final proxied = await _proxyThread();
-    checkRuntime();
-    final config = await _threadConfig(proxied?.config);
-    checkRuntime();
-    final workspaceOptions = await _workspaceOptions(start: false);
-    checkRuntime();
-    final Map<String, Object?>? thread;
+    // The source process remains bound to its original provider. Fork on a
+    // short-lived target-provider process, then wait for its writer to exit.
+    final helper = _providerHelper();
+    _forkHelpers.add(helper);
+    Map<String, Object?>? thread;
+    var noRollout = false;
     try {
-      final result = await _request('thread/fork', {
+      await helper._ensureStarted(resume: false);
+      checkRuntime();
+      final proxied = await helper._proxyThread();
+      final config = await helper._threadConfig(proxied?.config);
+      final workspaceOptions = await helper._workspaceOptions(start: false);
+      checkRuntime();
+      final result = await helper._request('thread/fork', {
         'threadId': threadId,
-        if (_supportsForkBoundary) 'deferGoalContinuation': true,
+        if (helper._supportsForkBoundary) 'deferGoalContinuation': true,
         'approvalPolicy': _approvalPolicy,
         'sandbox': _sandboxMode,
-        // None for Default: the server's own pick.
         'model': ?_modelForServer,
         if (proxied != null) 'modelProvider': proxied.modelProvider,
         'config': ?config,
@@ -1435,25 +1524,23 @@ class CodexKernel
       thread = (result['thread'] as Map?)?.cast<String, Object?>();
     } on CodexRpcError catch (error) {
       checkRuntime();
-      // A thread no turn ran on is nothing to copy: begun again on the
-      // provider picked (see [_ensureThread]).
       if (!error.message.toLowerCase().contains('no rollout')) rethrow;
-      _threadId = null;
-      _sessionId = null;
-      _threadProvider = '';
-      return;
+      noRollout = true;
+    } finally {
+      helper.dispose();
+      try {
+        await helper._waitForStopped();
+      } finally {
+        _forkHelpers.remove(helper);
+      }
     }
+    checkRuntime();
     final id = thread?['id'] as String?;
-    if (id == null || id.isEmpty) {
-      throw const CodexUnavailable(
-        'Codex could not go on with another provider',
-      );
+    if (!noRollout && (id == null || id.isEmpty || id == threadId)) {
+      throw const CodexUnavailable('Codex could not go on with another provider');
     }
-    _sessionId = id;
-    _threadId = null;
-    // This server now owns both the old and forked threads. Moving the UI
-    // to the fork without closing it strands the old writer, so opening
-    // the original history row would conflict even in one BaoCode window.
+    _sessionId = noRollout ? null : id;
+    _threadProvider = '';
     _teardown();
     await _ensureStarted();
   }
@@ -1481,10 +1568,68 @@ class CodexKernel
     _applyTier(result['serviceTier']);
   }
 
+  void _restoreModelAfterResume() {
+    final selected = _selectionAfterResume;
+    _selectionAfterResume = null;
+    if (selected == null) return;
+    _modelId = selected.model;
+    if (_modelId case final id?) _settleSettings(id);
+    _effort = selected.effort;
+    _fast = selected.fast;
+    (model as LocalChoice).reported = _modelId;
+  }
+
+  /// Keep a cold/released history row on its saved provider. An explicit
+  /// model choice is restored after reading history, so the normal confirmed
+  /// switch path can fork later; viewing a chat never silently forks it.
+  Future<bool> _alignResumeProvider() async {
+    final checkRuntime = _runtimeGuard();
+    final Map<String, Object?> result;
+    try {
+      result = await _request('thread/read', {
+        'threadId': _sessionId, 'includeTurns': false,
+      });
+    } on CodexRpcError catch (error) {
+      if (error.code == -32601) return false;
+      rethrow;
+    }
+    checkRuntime();
+    final thread = result['thread'];
+    if (thread is! Map || thread['modelProvider'] is! String) return false;
+    final savedProxy = thread['modelProvider'] == _proxyProviderId;
+    if (savedProxy == (_processProxy != null)) return false;
+    final raw = thread['model'] as String?;
+    final open = raw?.lastIndexOf('(') ?? -1;
+    final plain = raw != null && open > 0 && raw.endsWith(')')
+        ? raw.substring(0, open) : raw;
+    if (savedProxy && (plain == null || _providers.resolve(plain) == null)) {
+      throw const CodexUnavailable(
+        'The saved BaoCode model provider is unavailable',
+        detail: 'Restore its provider in Settings → Models. The saved conversation was not changed.',
+      );
+    }
+    // Unknown native provider IDs are not aliases for BaoCode. Let native
+    // configuration enforce their actual definitions and organizational policy.
+    if (!savedProxy && parseModelRef(plain) != null) return false;
+    if (_modelSelected && _selectionAfterResume == null) {
+      _selectionAfterResume = (model: _modelId, effort: _effort, fast: _fast);
+    }
+    _modelId = plain ?? 'default';
+    _settleSettings(_modelId!);
+    (model as LocalChoice).reported = _modelId;
+    return true;
+  }
+
   Future<void> _resumeThread() async {
     final checkRuntime = _runtimeGuard();
     final id = _sessionId;
     if (id == null) return _startThread();
+    if ((_processProxy != null) != (_custom != null)) {
+      throw const CodexUnavailable(
+        'The Codex model provider changed while this conversation was opening',
+        detail: 'Retry with the original provider. The saved conversation was not changed.',
+      );
+    }
     final proxied = await _proxyThread();
     checkRuntime();
     final config = await _threadConfig(proxied?.config);
@@ -1544,7 +1689,7 @@ class CodexKernel
           : model;
       _modelId = parseModelRef(plain) != null ? plain : model;
       if (_modelOptions.any((option) => option.id == _modelId)) {
-        this.model.select(_modelId!);
+        _reportModel(_modelId!);
       }
     }
     final effort = thread['reasoningEffort'] as String?;
@@ -2057,13 +2202,19 @@ class CodexKernel
       // the source server would leave that server owning the child's lock
       // when Workspace opens the child on another server. Use an isolated
       // server and wait for its exit before publishing the child record.
-      final helper = CodexKernel(
-        descriptor,
-        _context,
-        start: _start,
-        providers: _providers,
-        providerProxy: _proxy,
-      );
+      final metadata = await _request('thread/read', {
+        'threadId': threadId, 'includeTurns': false,
+      });
+      final source = (metadata['thread'] as Map?)?.cast<String, Object?>();
+      final sourceModel = source?['model'] as String?;
+      final effortStart = sourceModel?.lastIndexOf('(') ?? -1;
+      final plainModel = sourceModel != null && effortStart > 0 && sourceModel.endsWith(')')
+          ? sourceModel.substring(0, effortStart) : sourceModel;
+      if (source?['modelProvider'] == _proxyProviderId &&
+          (plainModel == null || _providers.resolve(plainModel) == null)) {
+        throw const CodexUnavailable('Restore the saved BaoCode model provider before copying this conversation');
+      }
+      final helper = _providerHelper(model: plainModel);
       _forkHelpers.add(helper);
       Map<String, Object?> result;
       try {
@@ -2074,8 +2225,12 @@ class CodexKernel
             'The fork server cannot preserve the requested history boundary.',
           );
         }
+        final proxy = await helper._proxyThread();
         result = await helper._request('thread/fork', {
           'threadId': threadId,
+          'model': ?sourceModel,
+          'modelProvider': ?source?['modelProvider'],
+          'config': ?proxy?.config,
           'beforeTurnId': ?beforeTurn,
           // A copied native goal must wait for the user's next message.
           if (helper._supportsForkBoundary) 'deferGoalContinuation': true,
