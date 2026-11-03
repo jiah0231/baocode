@@ -21,12 +21,15 @@ import 'package:path/path.dart' as p;
 import 'fixtures/real_chrome_fixture.dart';
 
 void main() {
+  // Its initial Future.value queue must be created before testWidgets enters
+  // FakeAsync, otherwise awaiting start in real I/O can deadlock that queue.
+  final bridge = BrowserBridge.instance;
   final enabled = Platform.environment['BAOCODE_REAL_CHROME_SMOKE'] == '1';
   for (final zoom in [1.0, 1.25, 1.5, 2.0]) {
     testWidgets('painted browser target receives real input at browser zoom $zoom',
         (tester) async {
       await HttpOverrides.runWithHttpOverrides(() async {
-        final mirror = _RealMirror(tester);
+        final mirror = _RealMirror(tester, bridge);
         try {
           await mirror.open(zoom);
           for (final ratio in [1.0, 1.25, 1.5, 2.0]) {
@@ -104,10 +107,10 @@ void main() {
 }
 
 class _RealMirror {
-  _RealMirror(this.tester);
+  _RealMirror(this.tester, this.bridge);
 
   final WidgetTester tester;
-  final bridge = BrowserBridge.instance;
+  final BrowserBridge bridge;
   final control = BrowserAgentControl.instance;
   final oldHome = BrowserBridge.home;
   final oldFolder = BrowserBridge.socketFolder;
@@ -144,7 +147,7 @@ class _RealMirror {
     DataDirectory.current = DataDirectory(p.join(_root!.path, 'app-data'));
     BrowserTools.lastTab.value = null;
     control.resetForTesting();
-    await tester.runAsync(() async {
+    await request<void>(() async {
       _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       _server!.listen((request) async {
         request.response.headers.contentType = ContentType.html;
@@ -159,7 +162,7 @@ class _RealMirror {
           browserZoom: zoom, deviceScaleFactor: 1);
       await chromeUntil(() => bridge.browsers.length == 1);
       _browser = bridge.browsers.single;
-    });
+    }, phase: 'start isolated Chrome and native bridge');
     final navigation = await command('Page.navigate', {'url': '${chrome.page}'});
     expect(navigation['errorText'], isNull);
     await waitUntil(() async => await evaluate(
@@ -204,7 +207,9 @@ class _RealMirror {
         'The production mirror did not start its real screencast.');
   }
 
-  Future<T> request<T>(Future<T> Function() action) async {
+  Future<T> request<T>(Future<T> Function() action, {
+    required String phase,
+  }) async {
     var completed = false;
     T? result;
     Object? error;
@@ -224,14 +229,24 @@ class _RealMirror {
       await tester.pump(const Duration(milliseconds: 20));
       await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
     }
-    if (!completed) throw TimeoutException('Real fixture request did not settle.');
-    if (error != null) Error.throwWithStackTrace(error!, stack!);
+    final evidence = 'connected=${_browser?.connected}, '
+        'last commands=${_chrome?.commands.reversed.take(8).toList()}, '
+        'errors=${_chrome?.errors}';
+    if (!completed) {
+      throw TimeoutException('Real mirror phase "$phase" did not settle. $evidence',
+          const Duration(seconds: 20));
+    }
+    if (error != null) {
+      Error.throwWithStackTrace(StateError(
+        'Real mirror phase "$phase" failed: $error. $evidence',
+      ), stack!);
+    }
     return result as T;
   }
 
   Future<Map<String, Object?>> command(String method,
       [Map<String, Object?> params = const {}]) =>
-      request(() => _browser!.cdp(1, method, params));
+      request(() => _browser!.cdp(1, method, params), phase: 'CDP $method');
 
   Future<Object?> evaluate(String expression) async {
     final response = await command('Runtime.evaluate', {
@@ -270,7 +285,7 @@ class _RealMirror {
     final boundary = boundaryKey.currentContext?.findRenderObject()
         as RenderRepaintBoundary?;
     if (boundary == null || boundary.debugNeedsPaint) return null;
-    return tester.runAsync<Rect?>(() async {
+    return request<Rect?>(() async {
       final image = await boundary.toImage(pixelRatio: 1);
       try {
         final bytes = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
@@ -301,7 +316,7 @@ class _RealMirror {
       } finally {
         image.dispose();
       }
-    });
+    }, phase: 'read painted marker image');
   }
 
   Future<void> checkPaintedInput(String label) async {
@@ -372,18 +387,22 @@ class _RealMirror {
           await command('Runtime.evaluate', {'expression': '0'});
         }
       } finally {
-        await tester.runAsync(() async {
+        try {
           try {
-            try {
-              await _chrome?.drain();
-            } finally {
-              await _chrome?.close();
-            }
+            await request<void>(() async { await _chrome?.drain(); },
+                phase: 'drain Chrome commands');
           } finally {
-            await bridge.stop();
-            await _server?.close(force: true);
+            await request<void>(() async { await _chrome?.close(); },
+                phase: 'close isolated Chrome');
           }
-        });
+        } finally {
+          try {
+            await request<void>(bridge.stop, phase: 'stop native bridge');
+          } finally {
+            await request<void>(() async { await _server?.close(force: true); },
+                phase: 'close fixture HTTP server');
+          }
+        }
       }
       expect(_chrome?.errors ?? <String>[], isEmpty,
           reason: 'Late real Chrome/transport errors must fail the smoke.');
@@ -396,7 +415,7 @@ class _RealMirror {
       DataDirectory.current = oldData;
       tester.view.resetDevicePixelRatio();
       tester.view.resetPhysicalSize();
-      await tester.runAsync(() async {
+      await request<void>(() async {
         await chromeUntil(() {
           try {
             if (_root?.existsSync() ?? false) _root!.deleteSync(recursive: true);
@@ -405,7 +424,7 @@ class _RealMirror {
             return false;
           }
         }, reason: 'Disposable mirror profile could not be removed.');
-      });
+      }, phase: 'remove disposable profile');
       await tester.pump();
     }
   }
