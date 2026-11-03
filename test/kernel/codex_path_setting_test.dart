@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:async';
+import 'dart:convert';
 
 import 'package:bao_remote/local.dart' show ClaudeEnvironment;
 import 'package:baocode/kernel/codex/codex_path_setting.dart';
@@ -191,8 +193,31 @@ void main() {
             .having((s) => s.version, 'version', 'codex-cli 1.2.3'),
         reason: status is LocalCodexFailed ? status.message : null,
       );
+      Future<void> awaitFixtureExit(CodexTransport process, String phase) async {
+        try {
+          await process.exited.timeout(const Duration(seconds: 10));
+        } on TimeoutException {
+          final state = switch (process) {
+            CodexShutdownDiagnostics(:final shutdownDiagnostics) =>
+              shutdownDiagnostics,
+            _ => const <String, Object?>{},
+          };
+          final diagnostic = '$phase shutdown timed out: ${jsonEncode(state)}; '
+              'args_file=${args.existsSync()}; '
+              'cwd_file=${File(p.join(bin.path, 'cwd.txt')).existsSync()}';
+          // Request only this owned fixture's Job cleanup. Keep the original
+          // failure and timeout; cleanup is not a retry or a passing result.
+          process.close();
+          try {
+            await process.exited.timeout(const Duration(seconds: 5));
+          } on TimeoutException {
+            // The diagnostic below retains the initial failing stage.
+          }
+          fail(diagnostic);
+        }
+      }
       final transport = await startCodexProcess(CodexLaunch(cwd: root.path));
-      await transport.exited.timeout(const Duration(seconds: 10));
+      await awaitFixtureExit(transport, 'plain');
       await CodexProcessTransport.registry.flush();
       expect(args.readAsStringSync().trim(), 'app-server');
       expect(
@@ -204,7 +229,7 @@ void main() {
       );
       final launch = CodexLaunch(cwd: root.path, proxy: proxy);
       final proxied = await startCodexProcess(launch);
-      await proxied.exited.timeout(const Duration(seconds: 10));
+      await awaitFixtureExit(proxied, 'proxied');
       expect(args.readAsLinesSync(), launch.arguments);
       expect(args.readAsStringSync().contains(proxy.token), false);
     },

@@ -7,6 +7,51 @@ import 'package:baocode/kernel/codex/codex_owned_process_io.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('real Dart Windows overlapped stdio drains before owned exit', () async {
+    final home = await Directory.systemTemp.createTemp('owned-dart-pipe-');
+    final previous = CodexOwnedProcess.helperExecutableForTesting;
+    CodexOwnedProcess.helperExecutableForTesting =
+        Platform.environment['BAOCODE_TEST_LAUNCHER'];
+    final script = File('${home.path}\\fixture.cmd');
+    await script.writeAsString('@echo off\r\n'
+        'for /L %%n in (1,1,4096) do echo fixture-line\r\n'
+        'exit /b 7\r\n');
+    CodexOwnedProcess? process;
+    try {
+      process = await CodexOwnedProcess.start(
+        '${Platform.environment['SystemRoot']}\\System32\\cmd.exe',
+        ['/d', '/v:off', '/c', '%BAO_PIPE_FIXTURE%'],
+        environment: {'BAO_PIPE_FIXTURE': '"${script.path}"'},
+        workingDirectory: home.path,
+      );
+      final output = process.stdout.transform(utf8.decoder).join();
+      final errors = process.stderr.drain<void>();
+      final running = process;
+      final code = await running.exitCode.timeout(const Duration(seconds: 10),
+          onTimeout: () => throw StateError(
+              'Owned Dart pipe timeout: ${running.diagnostics}'));
+      expect(code, 7);
+      expect(const LineSplitter().convert(await output),
+          List.filled(4096, 'fixture-line'));
+      await errors;
+      expect(process.jobEmpty, isTrue);
+    } finally {
+      if (process != null) {
+        await process.stdin.close().catchError((_) {});
+        await process.exitCode.timeout(const Duration(seconds: 5),
+            onTimeout: () => -1);
+      }
+      CodexOwnedProcess.helperExecutableForTesting = previous;
+      try {
+        await home.delete(recursive: true);
+      } on FileSystemException {
+        // Preserve the original stage-rich failure if its fixture could not
+        // finish cleanup. A successful ownership acknowledgement must clean up.
+        if (process == null || process.jobEmpty) rethrow;
+      }
+    }
+  }, skip: !Platform.isWindows ? 'Requires Dart Windows overlapped stdio.' : false);
+
   test('child output cannot spoof ownership status', () async {
     final helper = _Helper();
     final process = CodexOwnedProcess.forProcess(helper);

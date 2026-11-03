@@ -34,12 +34,42 @@ struct Handle {
   }
 };
 
-bool write_all(HANDLE handle, const void* data, DWORD size) {
+// Dart starts children with overlapped named-pipe stdio handles, whereas
+// Python and ordinary shells may supply synchronous pipes. Supplying a valid
+// OVERLAPPED works for either: synchronous completion returns directly; pending
+// I/O must keep both its buffer and event alive until completion.
+bool parent_io(HANDLE handle, void* bytes, DWORD size, DWORD& transferred,
+               bool writing) {
+  Handle event(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+  if (!event.value) return false;
+  OVERLAPPED operation{};
+  operation.hEvent = event.value;
+  transferred = 0;
+  const BOOL complete = writing
+      ? WriteFile(handle, bytes, size, &transferred, &operation)
+      : ReadFile(handle, bytes, size, &transferred, &operation);
+  if (complete) return true;
+  DWORD error = GetLastError();
+  if (error == ERROR_IO_PENDING) {
+    if (GetOverlappedResult(handle, &operation, &transferred, TRUE)) return true;
+    error = GetLastError();
+  }
+  // Closing the event must not overwrite the pipe/cancellation error observed
+  // by the caller (notably ERROR_BROKEN_PIPE and ERROR_OPERATION_ABORTED).
+  event.reset();
+  SetLastError(error);
+  return false;
+}
+
+bool write_all(HANDLE handle, const void* data, DWORD size,
+               bool parent = false) {
   auto* bytes = static_cast<const unsigned char*>(data);
   while (size) {
     DWORD written = 0;
-    if (!WriteFile(handle, bytes, size, &written, nullptr) || !written)
-      return false;
+    const bool complete = parent
+        ? parent_io(handle, const_cast<unsigned char*>(bytes), size, written, true)
+        : WriteFile(handle, bytes, size, &written, nullptr) != FALSE;
+    if (!complete || !written) return false;
     bytes += written;
     size -= written;
   }
@@ -50,7 +80,7 @@ bool read_all(HANDLE handle, void* data, DWORD size) {
   auto* bytes = static_cast<unsigned char*>(data);
   while (size) {
     DWORD read = 0;
-    if (!ReadFile(handle, bytes, size, &read, nullptr) || !read) return false;
+    if (!parent_io(handle, bytes, size, read, false) || !read) return false;
     bytes += read;
     size -= read;
   }
@@ -137,8 +167,8 @@ bool write_frame(HANDLE output, const Frame& frame) {
       static_cast<unsigned char>(size >> 8),
       static_cast<unsigned char>(size >> 16),
       static_cast<unsigned char>(size >> 24)};
-  return write_all(output, header, sizeof(header)) &&
-         write_all(output, frame.bytes.data(), size);
+  return write_all(output, header, sizeof(header), true) &&
+         write_all(output, frame.bytes.data(), size, true);
 }
 
 struct State {
@@ -165,7 +195,7 @@ DWORD WINAPI read_parent(void* context) {
   unsigned char bytes[kChunk];
   while (!state.stopping.load()) {
     DWORD read = 0;
-    if (!ReadFile(state.parent_input, bytes, kChunk, &read, nullptr) || !read) {
+    if (!parent_io(state.parent_input, bytes, kChunk, read, false) || !read) {
       if (!state.stopping.load()) state.parent_closed = true;
       break;
     }
@@ -278,7 +308,7 @@ bool job_empty(HANDLE job, bool& empty) {
     if (!write_frame(state.parent_output, frame)) {
       constexpr char diagnostic[] = "Codex owned launcher failed.\n";
       write_all(GetStdHandle(STD_ERROR_HANDLE), diagnostic,
-                sizeof(diagnostic) - 1);
+                sizeof(diagnostic) - 1, true);
     }
   }
   // Also closes the non-inherited kill-on-close job on any verification error.
@@ -287,9 +317,13 @@ bool job_empty(HANDLE job, bool& empty) {
 
 // Cancel repeatedly: cancellation can race with a worker entering ReadFile or
 // WriteFile. Never close a handle out from under a live I/O operation.
-void cancel_and_join(HANDLE thread) {
-  while (WaitForSingleObject(thread, 10) == WAIT_TIMEOUT)
+void cancel_and_join(HANDLE thread, HANDLE asynchronous = nullptr) {
+  while (WaitForSingleObject(thread, 10) == WAIT_TIMEOUT) {
+    if (asynchronous) CancelIoEx(asynchronous, nullptr);
+    // Python's inherited pipes remain synchronous even with an OVERLAPPED
+    // supplied, so cover both contracts without closing a live I/O handle.
     CancelSynchronousIo(thread);
+  }
 }
 }  // namespace
 
@@ -415,7 +449,7 @@ int main(int argc, char**) {
 
   state.stopping = true;
   state.input.close(true);
-  cancel_and_join(input_reader.value);
+  cancel_and_join(input_reader.value, state.parent_input);
   cancel_and_join(input_writer.value);
   // Job emptiness means every owned writer has gone. Drain both pipes before the
   // terminal frame, and the framed output queue before the helper itself exits.

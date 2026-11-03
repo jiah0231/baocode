@@ -424,12 +424,40 @@ Future<void> _verifyProviderRoutes(
     'cwd': project.path, 'approvalPolicy': 'never', 'sandbox': 'read-only',
     'model': 'fixture-model',
   };
+  Future<void> persistInertThread(_Rpc server, String threadId) async {
+    // Native thread/start defers rollout creation until meaningful state is
+    // recorded. A paused goal checkpoints settings without starting a turn,
+    // then clearing it leaves no objective that could run after resume/fork.
+    final paused = await server.request('thread/goal/set', {
+      'threadId': threadId,
+      'origin': 'user',
+      'objective': 'Isolated provider fixture only; do not execute',
+      'status': 'paused',
+    });
+    expect((paused['goal'] as Map)['status'], 'paused');
+    await server.request('thread/goal/clear', {
+      'threadId': threadId, 'origin': 'user',
+    });
+    final cleared = await server.request('thread/goal/get', {
+      'threadId': threadId,
+    });
+    expect(cleared['goal'], isNull);
+  }
   try {
     rpc = await open();
     final started = await rpc.request('thread/start', {
       ...options(), 'modelProvider': 'baocode', 'config': providerConfig,
     });
     final original = (started['thread'] as Map)['id'] as String;
+    await persistInertThread(rpc, original);
+    await rpc.close();
+    rpc = await open();
+    // Prove disk persistence from a new process before testing admission.
+    final persisted = await rpc.request('thread/read', {
+      'threadId': original, 'includeTurns': false,
+    });
+    expect((persisted['thread'] as Map)['id'], original);
+    expect((persisted['thread'] as Map)['modelProvider'], 'baocode');
     await expectLater(rpc.request('thread/resume', {
       'threadId': original, 'modelProvider': 'baocode', 'config': providerConfig,
     }), throwsA(isA<StateError>().having((e) => '$e', 'native provider check', contains('current provider is openai'))));
@@ -460,6 +488,7 @@ Future<void> _verifyProviderRoutes(
     final nativeId = (nativeFork['thread'] as Map)['id'] as String;
     expect(nativeId, isNot(original));
     expect((nativeFork['thread'] as Map)['modelProvider'], 'openai');
+    await persistInertThread(rpc, nativeId);
     await rpc.close();
     rpc = await open();
     final nativeResume = await rpc.request('thread/resume', {'threadId': nativeId});
@@ -472,6 +501,7 @@ Future<void> _verifyProviderRoutes(
     });
     final proxyId = (proxyFork['thread'] as Map)['id'] as String;
     expect(proxyId, isNot(nativeId));
+    await persistInertThread(rpc, proxyId);
     await rpc.close();
     rpc = await open(proxied: true);
     final finalResume = await rpc.request('thread/resume', {'threadId': proxyId});

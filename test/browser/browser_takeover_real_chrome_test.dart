@@ -196,7 +196,19 @@ window.fixtureTraffic = async function (marker) {
     expect(chrome.commands, isEmpty);
     await resume();
     Object? documentStatus;
+    Map<String, Object?>? navigation;
     try {
+      // Chrome can advertise the requested startup URL while the active
+      // document is still about:blank. Navigate the already-selected target
+      // explicitly; the fixture permits only this exact local URL.
+      navigation = await browser.cdp(1, 'Page.navigate', {
+        'url': page.toString(),
+      }, const Duration(seconds: 5));
+      expect(navigation['errorText'], isNull, reason: 'Local fixture navigation failed.');
+      expect(navigation['isDownload'], isNot(true));
+      expect(navigation['frameId'], isA<String>().having(
+        (value) => value.isNotEmpty, 'nonempty frame id', isTrue,
+      ));
       await chromeUntil(() async {
         documentStatus = await humanEvaluate("""
 ({readyState: document.readyState, origin: location.origin,
@@ -209,9 +221,14 @@ window.fixtureTraffic = async function (marker) {
             status['origin'] == page.origin && status['path'] == page.path &&
             status['fixtureTrafficType'] == 'function';
       }, reason: 'The local fixture document did not become ready.');
+      expect(servedRequests.any((request) =>
+          request['preflight'] == false && request['path'] == '/' &&
+          request['status'] == 200 && request['closed'] == true), isTrue,
+          reason: 'Chrome must actually request the fixture document.');
     } on Object catch (error, stack) {
       Error.throwWithStackTrace(StateError(
-        '$error\nLast local document status: ${jsonEncode(documentStatus)}'
+        '$error\nLocal fixture navigation: ${jsonEncode(navigation)}'
+        '\nLast local document status: ${jsonEncode(documentStatus)}'
         '\nLocal fixture request counts: received=$servedCount closed=$closedCount'
         '\nLast local fixture requests: ${jsonEncode(servedRequests)}',
       ), stack);

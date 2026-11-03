@@ -87,6 +87,8 @@ class RealChromeFixture {
       throw StateError('Chrome version differs from pinned CfT version: '
           '${browser['Browser']} (expected $version).');
     }
+    // Target metadata identifies our requested tab, not a committed document.
+    // The smoke explicitly navigates it after verifying paused startup/Resume.
     await chromeUntil(() async {
       final targets = (await _json('/json/list')) as List;
       final ours = targets.cast<Map>().where(
@@ -97,7 +99,7 @@ class RealChromeFixture {
       }
       _target = ours.single['id'] as String;
       return true;
-    }, reason: 'Local fixture page did not load.');
+    }, reason: 'The requested local fixture target did not appear.');
     await connectNative();
   }
 

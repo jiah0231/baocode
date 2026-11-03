@@ -83,8 +83,10 @@ jobs:
           test/kernel/codex_bot_kernel_test.dart
           test/kernel/codex_writer_lifecycle_test.dart
       - name: Test browser recorder privacy scripts
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
         run: node --test test/browser/browser_recorder_script_test.mjs
       - name: Test browser routing and human takeover early
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
         run: >-
           flutter test
           test/browser/browser_panel_controller_test.dart
