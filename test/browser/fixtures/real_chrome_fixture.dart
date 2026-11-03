@@ -381,7 +381,7 @@ class _CdpSocket {
     _pending[id] = result;
     socket.add(jsonEncode({
       'id': id, 'method': method, 'params': params,
-      if (sessionId != null) 'sessionId': sessionId,
+      'sessionId': ?sessionId,
     }));
     return result.future.timeout(const Duration(seconds: 15)).whenComplete(
       () { _pending.remove(id); },
