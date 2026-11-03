@@ -8,7 +8,7 @@ bool _validSize(Size size) =>
     size.height > 0;
 
 /// The page fits the view, centered horizontally and aligned to its top.
-/// Both sizes are logical/CSS pixels, not the encoded image's pixel size.
+/// [page] supplies the image's aspect ratio; it need not use CSS units.
 Rect browserFrameRect(Size view, Size page) {
   if (!_validSize(view) || !_validSize(page)) return Rect.zero;
   final scale = math.min(view.width / page.width, view.height / page.height);
@@ -25,9 +25,11 @@ Offset? browserPagePoint(
   Size view,
   Size page, {
   bool clamp = false,
+  Size? imageSize,
 }) {
   if (!local.dx.isFinite || !local.dy.isFinite) return null;
-  final rect = browserFrameRect(view, page);
+  if (!_validSize(page)) return null;
+  final rect = browserFrameRect(view, imageSize ?? page);
   if (rect.isEmpty || (!clamp && !rect.contains(local))) return null;
   final x = clamp ? local.dx.clamp(rect.left, rect.right) : local.dx;
   final y = clamp ? local.dy.clamp(rect.top, rect.bottom) : local.dy;
@@ -38,25 +40,57 @@ Offset? browserPagePoint(
 }
 
 /// Maps a logical wheel delta by the same scale used to draw the page.
-Offset? browserPageDelta(Offset delta, Size view, Size page) {
+Offset? browserPageDelta(Offset delta, Size view, Size page, {Size? imageSize}) {
   if (!delta.dx.isFinite || !delta.dy.isFinite) return null;
-  final rect = browserFrameRect(view, page);
+  if (!_validSize(page)) return null;
+  final rect = browserFrameRect(view, imageSize ?? page);
   if (rect.isEmpty) return null;
-  final mapped = delta * (page.width / rect.width);
+  final mapped = Offset(
+    delta.dx * page.width / rect.width,
+    delta.dy * page.height / rect.height,
+  );
   return mapped.dx.isFinite && mapped.dy.isFinite ? mapped : null;
 }
 
-/// The encoded image and its matching CSS viewport travel together.
+/// Chrome's content viewport and scale factors. The client size excludes
+/// classic scrollbars, so it detects changes but is not the whole image's
+/// input extent. Screencast deviceWidth/deviceHeight are DIP, not CSS.
+class BrowserFrameViewport {
+  const BrowserFrameViewport(this.size, {
+    this.zoom = 1, this.scale = 1, this.pixelRatio = 1,
+  });
+
+  final Size size;
+  final double zoom;
+  final double scale;
+  /// Chrome's physical pixels per unpinched CSS pixel, not Flutter's DPR.
+  final double pixelRatio;
+
+  bool get valid => _validSize(size) && zoom.isFinite && zoom > 0 &&
+      scale.isFinite && scale > 0 && pixelRatio.isFinite && pixelRatio > 0;
+
+  bool matches(BrowserFrameViewport other) => size == other.size &&
+      zoom == other.zoom && scale == other.scale && pixelRatio == other.pixelRatio;
+}
+
+/// An encoded capture. For streams [pageSize] supplies full-surface DIP for
+/// conversion to CSS; for screenshots it validates the sampled CSS content
+/// size and the decoded pixel dimensions supply the full surface. Neither is
+/// used directly as pointer coordinates before scale conversion and decoding.
 class BrowserFramePayload {
   const BrowserFramePayload({
     required this.data,
     required this.pageSize,
     required this.stamp,
+    this.viewport,
+    this.pageScale = 1,
   });
 
   final String data;
   final Size pageSize;
   final int stamp;
+  final BrowserFrameViewport? viewport;
+  final double pageScale;
 }
 
 /// Keeps only the newest frame until the next render opportunity.
@@ -97,16 +131,23 @@ class BrowserFrameFlow {
     required Size pageSize,
     required int epoch,
     required int stamp,
+    BrowserFrameViewport? viewport,
+    double pageScale = 1,
   }) {
     if (_disposed ||
         epoch != _epoch ||
         data.isEmpty ||
         !_validSize(pageSize) ||
+        !pageScale.isFinite || pageScale <= 0 ||
+        (viewport != null && !viewport.valid) ||
         (_latestStamp != null && stamp <= _latestStamp!)) {
       return false;
     }
     _latestStamp = stamp;
-    _pending = BrowserFramePayload(data: data, pageSize: pageSize, stamp: stamp);
+    _pending = BrowserFramePayload(
+      data: data, pageSize: pageSize, stamp: stamp, viewport: viewport,
+      pageScale: pageScale,
+    );
     if (!_scheduled) {
       _scheduled = true;
       _schedule(_deliver);

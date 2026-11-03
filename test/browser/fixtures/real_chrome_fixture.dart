@@ -3,6 +3,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:baocode/browser/browser_bridge.dart';
@@ -30,6 +31,10 @@ class RealChromeFixture {
   int detaches = 0;
   bool holdBindings = false;
   bool holdNextEvaluation = false;
+  bool suppressScreencastFrames = false;
+  int forwardedScreencastFrames = 0;
+  int suppressedScreencastFrames = 0;
+  int screenshotReplies = 0;
   Map<String, Object?>? heldEvaluation;
   Socket? _heldEvaluationSocket;
   int? _heldEvaluationGeneration;
@@ -37,15 +42,40 @@ class RealChromeFixture {
   final heldBindings = <Map<String, Object?>>[];
   final events = <Map<String, Object?>>[];
   final commands = <String>[];
+  // Bounded input/capture evidence from this fixture only, never page scripts.
+  final commandDetails = <Map<String, Object?>>[];
   final acknowledgements = <String>[];
   final errors = <String>[];
 
-  Future<void> start(String executable, String version) async {
+  Future<void> start(String executable, String version, {
+    double browserZoom = 1,
+    double? deviceScaleFactor,
+  }) async {
     if (!File(executable).existsSync()) {
       throw StateError('Official Chrome for Testing executable not found.');
     }
-    final profile = Directory(p.join(root.path, 'disposable-chrome-profile'))
-      ..createSync();
+    if (!browserZoom.isFinite || browserZoom < 0.5 || browserZoom > 3 ||
+        (deviceScaleFactor != null && (!deviceScaleFactor.isFinite ||
+            deviceScaleFactor < 0.5 || deviceScaleFactor > 4))) {
+      throw ArgumentError('Fixture zoom/device scale is outside its test range.');
+    }
+    final profile = Directory(p.join(root.path, 'disposable-chrome-profile'));
+    if (profile.existsSync()) {
+      throw StateError('Refusing to reuse an existing Chrome profile.');
+    }
+    profile.createSync();
+    if (browserZoom != 1) {
+      // Chromium ChromeZoomLevelPrefs uses partition key "x" for the default
+      // partition, and Blink converts levels with factor = pow(1.2, level).
+      // This changes real browser zoom, not CSS zoom or pinch emulation. The
+      // widget smoke independently verifies cssVisualViewport.zoom at runtime.
+      final defaults = Directory(p.join(profile.path, 'Default'))..createSync();
+      File(p.join(defaults.path, 'Preferences')).writeAsStringSync(jsonEncode({
+        'partition': {
+          'default_zoom_level': {'x': math.log(browserZoom) / math.log(1.2)},
+        },
+      }));
+    }
     _process = await Process.start(executable, [
       '--user-data-dir=${profile.path}',
       '--remote-debugging-address=127.0.0.1',
@@ -58,6 +88,8 @@ class RealChromeFixture {
       '--disable-sync',
       '--disable-extensions',
       '--window-size=900,700',
+      if (deviceScaleFactor != null)
+        '--force-device-scale-factor=$deviceScaleFactor',
       page.toString(),
     ]);
     // Drain both pipes so a verbose browser cannot deadlock the test.
@@ -180,6 +212,26 @@ class RealChromeFixture {
       'type': 'event', 'event': 'cdp', 'tabId': 1, ...raw,
     };
     events.add(event);
+    if (raw['method'] == 'Page.screencastFrame') {
+      if (suppressScreencastFrames) {
+        suppressedScreencastFrames++;
+        // ACK the actual frame even when the mirror cannot see it, otherwise
+        // Chrome stalls and resuming forwarding would not exercise a stream.
+        final cdp = _cdp;
+        if (cdp != null && !_closed) {
+          late Future<void> pending;
+          pending = cdp.call('Page.screencastFrameAck', {
+            'sessionId': (raw['params'] as Map)['sessionId'],
+          }).then<void>((_) {}, onError: (Object error) {
+            if (!_closed) errors.add('suppressed frame ACK: $error');
+          }).whenComplete(() { _inflight.remove(pending); });
+          _inflight.add(pending);
+          unawaited(pending);
+        }
+        return;
+      }
+      forwardedScreencastFrames++;
+    }
     if (holdBindings && raw['method'] == 'Runtime.bindingCalled') {
       heldBindings.add(event);
     } else {
@@ -279,10 +331,17 @@ class RealChromeFixture {
             throw StateError('Only the local fixture URL is permitted.');
           }
           commands.add(name);
+          if (name == 'Input.dispatchMouseEvent' ||
+              name == 'Page.startScreencast' ||
+              name == 'Page.captureScreenshot') {
+            if (commandDetails.length == 128) commandDetails.removeAt(0);
+            commandDetails.add({'method': name, 'params': Map.of(args)});
+          }
           final cdp = await _attached();
           result = await cdp.call(name, args,
               sessionId: params['sessionId'] as String?);
           acknowledgements.add(name);
+          if (name == 'Page.captureScreenshot') screenshotReplies++;
           if (name == 'Runtime.evaluate' && holdNextEvaluation) {
             holdNextEvaluation = false;
             heldEvaluation = {'id': request['id'], 'result': result};
@@ -317,6 +376,15 @@ class RealChromeFixture {
       errors.add('$method ${params['method'] ?? ''}: $error');
       _sendReply(socket, generation, {'id': request['id'], 'error': '$error'});
     }
+  }
+
+  /// Settle commands dispatched before a test's explicit transport barrier.
+  Future<void> drain() async {
+    await () async {
+      while (_inflight.isNotEmpty) {
+        await Future.wait(_inflight.toList());
+      }
+    }().timeout(const Duration(seconds: 6));
   }
 
   Future<void> close() async {

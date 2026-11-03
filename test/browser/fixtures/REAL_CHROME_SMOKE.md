@@ -91,3 +91,44 @@ Chrome protocol references:
 - https://chromedevtools.github.io/devtools-protocol/tot/Runtime/
 - https://chromedevtools.github.io/devtools-protocol/tot/Page/
 - https://developer.chrome.com/docs/extensions/reference/api/debugger
+
+## Browser panel click regression
+
+`browser_mirror_real_chrome_test.dart` uses the same explicit opt-in and supplied
+official CfT binary. Run it separately from the takeover test:
+
+```powershell
+flutter test test/browser/browser_mirror_real_chrome_test.dart --reporter expanded
+```
+
+This test mounts the production `BrowserMirror` widget. It finds an off-center
+colored target in the **painted Flutter RepaintBoundary pixels**, clicks that
+location with a Flutter mouse gesture, and checks the real page's trusted
+`pointerdown`, `pointerup` and `wheel` target and `clientX`/`clientY`. It never
+uses the production coordinate helpers to choose the click or fabricate CDP
+mouse input. Wheel scaling is checked against the painted target width and its
+independently measured DOM width.
+
+The matrix covers actual Chrome browser zoom 100%, 125%, 150% and 200%; Flutter
+view DPR 1, 1.25, 1.5 and 2; narrow and wide panel layouts; blank margins; explicitly reserved classic
+scrollbars (verified against DOM viewport widths); pinch scale 1.5 plus page
+scrolling and native touch panning with required nonzero visual-viewport offsets; and screenshot fallback followed by stream
+resumption. The fixture writes only its newly created disposable profile's
+zoom preference. Each run must verify the requested real browser zoom through
+`Page.getLayoutMetrics.cssVisualViewport.zoom` and `window.devicePixelRatio`.
+A preference that no longer works fails the test instead of silently testing
+100% zoom. Chrome's own device scale is fixed at 1; the Flutter DPR matrix is
+not proof of native Windows display-scaling behavior.
+
+For fallback, the adapter suppresses only actual screencast-event forwarding
+and ACKs those real frames, so it does not stall Chrome's stream. The mirror
+must obtain a real screenshot and resume real streaming afterward. The test
+keeps bounded input/capture command evidence and checks late protocol errors.
+Touch-scroll CDP is used only to set up the panned viewport; every asserted
+click still goes through Flutter and the production mirror. The setup must
+produce nonzero `visualViewport.offsetLeft` and `offsetTop`, or the test fails.
+The extension/native-host installation limitations above still apply.
+
+These new tests require execution with the repository's pinned Flutter SDK
+and an authorized sandbox-capable runner. Merely adding them, or passing the
+synthetic socket tests, is not evidence that this real rendering test passed.

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/scheduler.dart';
@@ -20,7 +21,6 @@ import 'browser_frame_flow.dart';
 import 'browser_keys.dart';
 import 'browser_panel_controller.dart';
 import 'browser_toolbar.dart';
-import 'browser_tools.dart';
 
 /// A pinned tab of the user's Chrome, shared with BaoCode. Its page is shown as
 /// the browser draws it (its screencast while the tab is in front, which
@@ -32,11 +32,16 @@ class BrowserMirror extends StatefulWidget {
     this.sessionId,
     this.initialTab,
     this.onSelectionChanged,
+    this.frameDecoder,
   });
 
   final String? sessionId;
   final BrowserTab? initialTab;
   final ValueChanged<BrowserTab>? onSelectionChanged;
+
+  /// Test seam for deterministic decode completion, never a browser override.
+  @visibleForTesting
+  final Future<ui.Image> Function(Uint8List)? frameDecoder;
 
   @override
   State<BrowserMirror> createState() => _BrowserMirrorState();
@@ -60,6 +65,7 @@ class _BrowserMirrorState extends State<BrowserMirror>
   BrowserTab? _boundTarget;
   String? _boundSession;
   int _streamGeneration = -1;
+  double? _captureCutoff;
   int _editableQuery = 0;
   int _actionGeneration = 0;
   String? _actionError;
@@ -73,9 +79,14 @@ class _BrowserMirrorState extends State<BrowserMirror>
   BrowserTab? _shown;
   String? _detached;
 
-  /// The last frame, and the page's size it shows (CSS pixels).
-  Uint8List? _frame;
-  Size? _pageSize;
+  /// Decoded pixels and their input geometry are replaced as one value.
+  _MirrorFrame? _frame;
+  _MirrorFrame? _paintedFrame;
+  BrowserFrameViewport? _viewport;
+  _PendingMirrorFrame? _pendingFrame;
+  bool _preparingFrame = false;
+  final _retiredImages = <ui.Image>[];
+  bool _retirementScheduled = false;
   DateTime _lastFrame = DateTime(0);
   DateTime _lastShot = DateTime(0);
   bool _shooting = false;
@@ -99,18 +110,7 @@ class _BrowserMirrorState extends State<BrowserMirror>
     _frames = BrowserFrameFlow(
       schedule: (callback) =>
           SchedulerBinding.instance.scheduleFrameCallback((_) => callback()),
-      onFrame: (payload) {
-        if (!mounted || _disposed || _capturePaused || _detached != null) return;
-        try {
-          final bytes = base64Decode(payload.data);
-          setState(() {
-            _frame = bytes;
-            _pageSize = payload.pageSize;
-          });
-        } on FormatException {
-          // An incomplete frame does not replace the last valid picture.
-        }
-      },
+      onFrame: _queueFrame,
     );
     if (widget.initialTab case final tab?) {
       _selectionExplicit = true;
@@ -175,6 +175,12 @@ class _BrowserMirrorState extends State<BrowserMirror>
     _shown = null;
     _restartStream();
     _frames.dispose();
+    _pendingFrame = null;
+    _frame?.image.dispose();
+    for (final image in _retiredImages) { image.dispose(); }
+    _retiredImages.clear();
+    _frame = null;
+    _paintedFrame = null;
     _focus.dispose();
     super.dispose();
   }
@@ -231,8 +237,10 @@ class _BrowserMirrorState extends State<BrowserMirror>
       _detached = wanted != null && _control.isDetached(wanted)
           ? 'cancelled_by_user'
           : null;
+      if (_frame case final previous?) _retireImage(previous.image);
       _frame = null;
-      _pageSize = null;
+      _paintedFrame = null;
+      _viewport = null;
       _lastFrame = DateTime(0);
       _lastShot = DateTime(0);
       _restartStream();
@@ -241,11 +249,148 @@ class _BrowserMirrorState extends State<BrowserMirror>
     setState(() {});
   }
 
+  Future<BrowserFrameViewport> _readViewport(BrowserTab tab) async {
+    final metrics = await tab.browser.cdp(
+      tab.tabId, 'Page.getLayoutMetrics', const {}, const Duration(seconds: 2),
+    );
+    final css = metrics['cssVisualViewport'] as Map?;
+    final physical = metrics['visualViewport'] as Map?;
+    double number(String name, [double fallback = 0]) =>
+        (css?[name] as num?)?.toDouble() ?? fallback;
+    final viewport = BrowserFrameViewport(
+      Size(number('clientWidth'), number('clientHeight')),
+      zoom: number('zoom', 1), scale: number('scale', 1),
+      pixelRatio: ((physical?['clientWidth'] as num?)?.toDouble() ?? 0) /
+          number('clientWidth'),
+    );
+    if (!viewport.valid) throw const FormatException('Invalid CSS viewport');
+    return viewport;
+  }
+
+  Future<double> _readCaptureClock(BrowserTab tab) async {
+    // The frame timestamp is Chrome's wall clock, not this app's clock: the
+    // extension can be on a different machine. Only this numeric value is read.
+    final response = await tab.browser.cdp(tab.tabId, 'Runtime.evaluate', {
+      'expression': 'Date.now() / 1000',
+      'returnByValue': true,
+    }, const Duration(seconds: 2));
+    final value = ((response['result'] as Map?)?['value'] as num?)?.toDouble();
+    if (value == null || !value.isFinite || value <= 0) {
+      throw const FormatException('Browser capture clock is unavailable');
+    }
+    // Date.now is millisecond-granular; reject the whole sampled millisecond
+    // rather than accept an earlier fractional-ms capture from that bucket.
+    return value + .001;
+  }
+
+  bool _acceptViewport(BrowserFrameViewport viewport) {
+    final previous = _viewport;
+    _viewport = viewport;
+    if (previous != null && !previous.matches(viewport)) {
+      // A stream frame can precede the metrics response. Do not reinterpret
+      // its old pixels using a newly observed browser zoom/pinch/viewport.
+      // Restart capture and wait for a fresh frame before accepting input.
+      _releasePointer();
+      _restartStream();
+      return false;
+    }
+    return true;
+  }
+
+  void _queueFrame(BrowserFramePayload payload) {
+    final tab = _shown;
+    if (tab == null || !mounted || _disposed || _capturePaused ||
+        _detached != null) return;
+    _pendingFrame = _PendingMirrorFrame(payload, tab, _captureGeneration);
+    if (!_preparingFrame) unawaited(_prepareFrames());
+  }
+
+  Future<ui.Image> _decodeFrame(Uint8List bytes) async {
+    if (widget.frameDecoder case final decode?) return decode(bytes);
+    final codec = await ui.instantiateImageCodec(bytes);
+    try {
+      return (await codec.getNextFrame()).image;
+    } finally {
+      codec.dispose();
+    }
+  }
+
+  void _retireImage(ui.Image image) {
+    _retiredImages.add(image);
+    if (_retirementScheduled) return;
+    _retirementScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _retirementScheduled = false;
+      for (final retired in _retiredImages) { retired.dispose(); }
+      _retiredImages.clear();
+    });
+  }
+
+  Future<void> _prepareFrames() async {
+    _preparingFrame = true;
+    try {
+      while (_pendingFrame case final pending?) {
+        _pendingFrame = null;
+        bool current() => mounted && !_disposed && !_capturePaused &&
+            _detached == null && pending.tab == _shown &&
+            pending.generation == _captureGeneration;
+        ui.Image? image;
+        try {
+          final viewport = pending.payload.viewport ??
+              await _readViewport(pending.tab);
+          if (!current() || !_acceptViewport(viewport)) continue;
+          if (pending.payload.viewport == null &&
+              (pending.payload.pageScale - viewport.scale).abs() > .0001) {
+            // A pinch transition's queued frame is not this viewport.
+            _restartStream();
+            continue;
+          }
+          final decoded = await _decodeFrame(base64Decode(pending.payload.data));
+          image = decoded;
+          if (!current()) continue;
+          final after = await _readViewport(pending.tab);
+          if (!current() || !_acceptViewport(after) ||
+              !viewport.matches(after)) continue;
+          final previous = _frame;
+          // clientWidth/Height omit classic scrollbars. Use the full captured
+          // surface, so those pixels are not squeezed into the content area.
+          final Size inputSize;
+          if (pending.payload.viewport != null) {
+            final factor = viewport.pixelRatio * viewport.scale;
+            inputSize = Size(decoded.width / factor, decoded.height / factor);
+          } else {
+            final factor = viewport.zoom * pending.payload.pageScale;
+            inputSize = pending.payload.pageSize / factor;
+          }
+          setState(() {
+            _frame = _MirrorFrame(decoded, inputSize, pending.generation);
+          });
+          image = null; // The displayed frame now owns this handle.
+          // Keep the old widget's owned image alive until replacement is
+          // built/painted. RenderImage also retains its independent clone.
+          if (previous != null) _retireImage(previous.image);
+        } on Object {
+          // Invalid/incomplete images or unavailable metrics never replace the
+          // last complete pixel/geometry pair.
+        } finally {
+          image?.dispose();
+        }
+      }
+    } finally {
+      _preparingFrame = false;
+    }
+  }
+
   /// Serialize stop/start so a late stop cannot kill the next stream.
   /// Each asynchronous transition is tied to the exact tab and generation.
   void _restartStream() {
+    // Release using the last painted frame before its generation is revoked.
+    // Resize/DPR changes can restart capture in the middle of a drag too.
+    _releasePointer();
     final generation = ++_captureGeneration;
+    _pendingFrame = null;
     _streamGeneration = -1;
+    _captureCutoff = null;
     _frames.reset();
     final tab = _shown;
     final width = (_viewSize.width * _ratio).round().clamp(320, 3840);
@@ -265,9 +410,19 @@ class _BrowserMirrorState extends State<BrowserMirror>
           generation != _captureGeneration || tab != _shown) {
         return;
       }
-      _streaming = tab;
-      _streamGeneration = generation;
       try {
+        // Establish geometry before requesting ANY new stream image. A late
+        // encoder callback may carry the new sessionId but its old timestamp.
+        final viewport = await _readViewport(tab);
+        if (_disposed || !mounted || _capturePaused || _detached != null ||
+            generation != _captureGeneration || tab != _shown) return;
+        final cutoff = await _readCaptureClock(tab);
+        if (_disposed || !mounted || _capturePaused || _detached != null ||
+            generation != _captureGeneration || tab != _shown) return;
+        _viewport = viewport;
+        _captureCutoff = cutoff;
+        _streaming = tab;
+        _streamGeneration = generation;
         await tab.browser.cdp(tab.tabId, 'Page.startScreencast', {
           'format': 'jpeg',
           'quality': 70,
@@ -302,7 +457,7 @@ class _BrowserMirrorState extends State<BrowserMirror>
     final epoch = _frames.epoch;
     final stamp = ++_frameStamp;
     try {
-      final view = await BrowserTools.viewport(tab.browser, tab.tabId);
+      final view = await _readViewport(tab);
       // As the screen has it, made small here: a screenshot's own scale
       // has the browser draw the page that small in its window meanwhile.
       if (generation != _captureGeneration || tab != _shown ||
@@ -314,9 +469,13 @@ class _BrowserMirrorState extends State<BrowserMirror>
         'quality': 70,
       });
       if (tab != _shown || !mounted || _disposed || _capturePaused ||
+          generation != _captureGeneration) return;
+      final after = await _readViewport(tab);
+      if (tab != _shown || !mounted || _disposed || _capturePaused ||
           generation != _captureGeneration) {
         return;
       }
+      if (!_acceptViewport(after) || !view.matches(after)) return;
       // A screencast's frame may have come meanwhile: the newer is kept.
       if (DateTime.now().difference(_lastFrame) <
           const Duration(milliseconds: 600)) {
@@ -324,7 +483,8 @@ class _BrowserMirrorState extends State<BrowserMirror>
       }
       _frames.push(
         data: shot['data'] as String,
-        pageSize: view.rect.size,
+        pageSize: view.size,
+        viewport: view,
         epoch: epoch,
         stamp: stamp,
       );
@@ -361,6 +521,10 @@ class _BrowserMirrorState extends State<BrowserMirror>
           return;
         }
         final metadata = (params['metadata'] as Map).cast<String, Object?>();
+        final captured = (metadata['timestamp'] as num?)?.toDouble();
+        final cutoff = _captureCutoff;
+        if (captured == null || !captured.isFinite || cutoff == null ||
+            captured < cutoff) return;
         _lastFrame = DateTime.now();
         _frames.push(
           data: params['data'] as String,
@@ -368,6 +532,7 @@ class _BrowserMirrorState extends State<BrowserMirror>
             (metadata['deviceWidth'] as num).toDouble(),
             (metadata['deviceHeight'] as num).toDouble(),
           ),
+          pageScale: (metadata['pageScaleFactor'] as num?)?.toDouble() ?? 1,
           epoch: _frames.epoch,
           stamp: ++_frameStamp,
         );
@@ -686,14 +851,16 @@ class _BrowserMirrorState extends State<BrowserMirror>
   // --- The pointer, at the page's point (CSS pixels) under it.
 
   /// Where the frame is drawn in [size]: as big as fits, at the top.
-  Rect _frameRect(Size size) =>
-      browserFrameRect(size, _pageSize ?? Size.zero);
+  Rect _frameRect(Size size, _MirrorFrame frame) =>
+      browserFrameRect(size, frame.imageSize);
 
   Offset? _pagePoint(Offset local, {bool clamp = false}) {
-    final page = _pageSize;
+    final frame = _paintedFrame;
     final box = _key.currentContext?.findRenderObject() as RenderBox?;
-    if (page == null || box == null || !box.hasSize) return null;
-    return browserPagePoint(local, box.size, page, clamp: clamp);
+    if (frame == null || frame.generation != _captureGeneration ||
+        box == null || !box.hasSize) return null;
+    return browserPagePoint(local, box.size, frame.pageSize,
+        imageSize: frame.imageSize, clamp: clamp);
   }
 
   int _buttons = 0;
@@ -807,11 +974,12 @@ class _BrowserMirrorState extends State<BrowserMirror>
     if (_capturePaused || _detached != null) return;
     final tab = _shown;
     final point = _pagePoint(local);
-    final page = _pageSize;
+    final frame = _paintedFrame;
     final box = _key.currentContext?.findRenderObject() as RenderBox?;
-    if (tab == null || point == null || page == null || box == null) return;
+    if (tab == null || point == null || frame == null || box == null) return;
     // As far on the page as here: the page under the fingers follows them.
-    final mapped = browserPageDelta(delta, box.size, page);
+    final mapped = browserPageDelta(delta, box.size, frame.pageSize,
+        imageSize: frame.imageSize);
     if (mapped == null) return;
     unawaited(
       tab.browser
@@ -1002,6 +1170,9 @@ class _BrowserMirrorState extends State<BrowserMirror>
     return LayoutBuilder(
       builder: (context, constraints) {
         final size = constraints.biggest;
+        // Only this build's pixels may determine input. An asynchronously
+        // decoded candidate waiting for a frame cannot retarget a click.
+        _paintedFrame = frame;
         if (size != _viewSize || ratioChanged) {
           _viewSize = size;
           // Debounced while the sash moves, using the latest pane size.
@@ -1039,10 +1210,9 @@ class _BrowserMirrorState extends State<BrowserMirror>
               children: [
                 if (frame != null)
                   Positioned.fromRect(
-                    rect: _frameRect(size),
-                    child: Image.memory(
-                      frame,
-                      gaplessPlayback: true,
+                    rect: _frameRect(size, frame),
+                    child: RawImage(
+                      image: frame.image,
                       fit: BoxFit.fill,
                       filterQuality: FilterQuality.medium,
                     ),
@@ -1076,4 +1246,22 @@ class _BrowserMirrorState extends State<BrowserMirror>
       },
     );
   }
+}
+
+class _MirrorFrame {
+  _MirrorFrame(this.image, this.pageSize, this.generation)
+      : imageSize = Size(image.width.toDouble(), image.height.toDouble());
+
+  final ui.Image image;
+  final Size pageSize;
+  final int generation;
+  final Size imageSize;
+}
+
+class _PendingMirrorFrame {
+  const _PendingMirrorFrame(this.payload, this.tab, this.generation);
+
+  final BrowserFramePayload payload;
+  final BrowserTab tab;
+  final int generation;
 }

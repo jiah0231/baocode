@@ -126,7 +126,7 @@ jobs:
             if (-not (Test-Path -LiteralPath $env:BAOCODE_CHROME_FOR_TESTING)) { throw 'Official Chrome for Testing executable missing' }
             # Fresh disposable profile, local pages, loopback CDP, no extension
             # installation/registry changes. Not native-host/extension E2E.
-            flutter test test/browser/browser_takeover_real_chrome_test.dart --reporter expanded --timeout 3m
+            flutter test test/browser/browser_takeover_real_chrome_test.dart test/browser/browser_mirror_real_chrome_test.dart --concurrency=1 --reporter expanded --timeout 3m
             if ($LASTEXITCODE -ne 0) { throw 'Real Chrome takeover smoke failed' }
           } finally {
             # Only the binary/archive directory created by this exact step.

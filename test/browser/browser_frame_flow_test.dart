@@ -5,6 +5,58 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('browser frame geometry', () {
+    test('encoded aspect and CSS input extents remain separate under zoom', () {
+      const view = Size(800, 600);
+      const image = Size(1200, 800);
+      final drawn = browserFrameRect(view, image);
+      final local = Offset(drawn.left + drawn.width * .31,
+          drawn.top + drawn.height * .67);
+      for (final zoom in [1.0, 1.25, 1.5, 2.0]) {
+        for (final pinch in [1.0, 1.5]) {
+          final css = Size(1200 / zoom / pinch, 800 / zoom / pinch);
+          final mapped = browserPagePoint(local, view, css, imageSize: image)!;
+          expect(mapped.dx, closeTo(css.width * .31, 1e-8));
+          expect(mapped.dy, closeTo(css.height * .67, 1e-8));
+          final wheel = browserPageDelta(const Offset(20, -30), view, css,
+              imageSize: image)!;
+          expect(wheel.dx, closeTo(20 * css.width / drawn.width, 1e-8));
+          expect(wheel.dy, closeTo(-30 * css.height / drawn.height, 1e-8));
+          expect(browserPagePoint(const Offset(400, 590), view, css,
+              imageSize: image), isNull);
+        }
+      }
+    });
+
+    test('actual decoded aspect controls paint and both input axes', () {
+      const view = Size(800, 600);
+      const image = Size(400, 800);
+      const css = Size(390, 800);
+      expect(browserFrameRect(view, image), const Rect.fromLTWH(250, 0, 300, 600));
+      final point = browserPagePoint(const Offset(343, 402), view, css,
+          imageSize: image)!;
+      expect(point.dx, closeTo(120.9, 1e-8));
+      expect(point.dy, closeTo(536, 1e-8));
+      final wheel = browserPageDelta(const Offset(30, 30), view, css,
+          imageSize: image)!;
+      expect(wheel.dx, closeTo(39, 1e-8));
+      expect(wheel.dy, closeTo(40, 1e-8));
+    });
+
+    test('viewport signatures include browser zoom and pinch independently', () {
+      const baseline = BrowserFrameViewport(Size(800, 600));
+      expect(baseline.valid, isTrue);
+      expect(baseline.matches(const BrowserFrameViewport(Size(800, 600))), isTrue);
+      expect(baseline.matches(const BrowserFrameViewport(Size(800, 600), zoom: 1.25)), isFalse);
+      expect(baseline.matches(const BrowserFrameViewport(Size(800, 600), scale: 1.5)), isFalse);
+      for (final viewport in [
+        const BrowserFrameViewport(Size.zero),
+        const BrowserFrameViewport(Size(800, 600), zoom: double.nan),
+        const BrowserFrameViewport(Size(800, 600), scale: 0),
+      ]) {
+        expect(viewport.valid, isFalse);
+      }
+    });
+
     test('wide pages leave a bottom margin, not a vertical center gap', () {
       const view = Size(800, 600);
       const page = Size(1600, 800);

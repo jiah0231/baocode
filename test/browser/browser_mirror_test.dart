@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:baocode/browser/browser_agent_control.dart';
 import 'package:baocode/browser/browser_bridge.dart';
@@ -16,12 +17,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
-// Real one-pixel RGBA PNGs. The mirror decodes the image independently of
-// the requested screencast format, so no Chrome or JPEG encoder is needed.
+// Real 800x400 and 400x800 RGBA PNGs preserve full-size screenshots.
+// Stream metadata and zoomed CSS sizes deliberately differ from encoded pixels.
+// No Chrome or JPEG encoder is needed for these synthetic socket tests.
 const _red =
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==';
+    'iVBORw0KGgoAAAANSUhEUgAAAyAAAAGQCAYAAABWJQQ0AAAIUElEQVR4nO3XoQEAIADDsP3/NHxRBBHxtd3ZDgAAQGGvAwAAgH8YEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAzAVfnM3ne3FnMQAAAABJRU5ErkJggg==';
 const _blue =
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYPj/HwADAgH/5ncLrgAAAABJRU5ErkJggg==';
+    'iVBORw0KGgoAAAANSUhEUgAAAZAAAAMgCAYAAAAN6jSQAAAMnElEQVR4nO3OoQ3AQBAEseu/6U8NQauRDMx9d+8BwH/zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABFH3hWzefJVAdZAAAAAElFTkSuQmCC';
 
 void main() {
   // Its socket queue is real asynchronous work, outside widget fake time.
@@ -33,25 +35,392 @@ void main() {
   ) async {
     await _withMirror(tester, (mirror) async {
       await mirror.frames([const _Frame(_red, Size(800, 400))]);
-      await tester.pump();
-      expect(mirror.imageBytes, orderedEquals(base64Decode(_red)));
+      await mirror.render(_red);
 
-      final before = mirror.imageBytes;
+      final before = mirror.image;
       await mirror.frames([
         for (var i = 0; i < 99; i++) const _Frame(_red, Size(800, 400)),
         const _Frame(_blue, Size(400, 800)),
       ]);
       // All 100 frames reached the real listener, but no render was pumped.
-      expect(mirror.imageBytes, same(before));
-      await tester.pump();
-      expect(mirror.imageBytes, orderedEquals(base64Decode(_blue)));
-      expect(find.byType(Image), findsOneWidget);
+      expect(mirror.image, same(before));
+      await mirror.render(_blue);
+      expect(find.byType(RawImage), findsOneWidget);
       final page = tester.getRect(mirror.pageListener);
-      final drawn = tester.getRect(find.byType(Image));
+      final drawn = tester.getRect(find.byType(RawImage));
       expect(drawn.top, page.top);
       expect(drawn.height, closeTo(page.height, 0.001));
       expect(drawn.width, closeTo(page.height / 2, 0.001));
       expect(drawn.center.dx, closeTo(page.center.dx, 0.001));
+    });
+  });
+
+  for (final ratio in [1.0, 1.25, 1.5, 2.0]) {
+    testWidgets('CSS pointer coordinates do not inherit Flutter DPR $ratio',
+        (tester) async {
+      tester.view.devicePixelRatio = ratio;
+      tester.view.physicalSize = const Size(800, 600) * ratio;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      await _withMirror(tester, (mirror) async {
+        mirror.host.holdScreenshots = true;
+        await mirror.pump(ratio: ratio);
+        await tester.pump(const Duration(milliseconds: 200));
+        await mirror.barrier();
+        ui.Image? previous;
+        for (final zoom in [1.0, 1.25, 1.5, 2.0]) {
+          for (final pinch in [1.0, 1.5]) {
+            final css = Size(1200 / (zoom * pinch), 600 / (zoom * pinch));
+            await mirror.frames([_Frame(
+              _red, const Size(1200, 600), cssSize: css,
+              browserZoom: zoom, pageScaleFactor: pinch,
+            )]);
+            await mirror.render(_red, previous: previous);
+            previous = mirror.image;
+            final drawn = tester.getRect(find.byType(RawImage));
+            final point = drawn.topLeft + Offset(drawn.width * .23, drawn.height * .71);
+            mirror.host.calls.clear();
+            final gesture = await tester.startGesture(point, kind: PointerDeviceKind.mouse);
+            await gesture.up();
+            await tester.sendEventToBinding(PointerScrollEvent(
+              position: point, scrollDelta: const Offset(11, -17),
+            ));
+            await mirror.barrier();
+            final reason = 'Flutter DPR=$ratio browser zoom=$zoom pinch=$pinch';
+            for (final type in ['mousePressed', 'mouseReleased', 'mouseWheel']) {
+              final call = mirror.mouseCalls.singleWhere((call) => call.params['type'] == type);
+              expect(call.tabId, 1, reason: reason);
+              expect(call.params['x'], closeTo(css.width * .23, .001), reason: reason);
+              expect(call.params['y'], closeTo(css.height * .71, .001), reason: reason);
+            }
+            final wheel = mirror.mouseCalls.singleWhere((call) => call.params['type'] == 'mouseWheel');
+            expect(wheel.params['deltaX'], closeTo(11 * css.width / drawn.width, .001), reason: reason);
+            expect(wheel.params['deltaY'], closeTo(-17 * css.height / drawn.height, .001), reason: reason);
+          }
+        }
+      });
+    });
+  }
+
+  testWidgets('fallback and stream each use their own decoded picture and CSS viewport',
+      (tester) async {
+    await _withMirror(tester, (mirror) async {
+      mirror.host.viewport = const Size(600, 300);
+      mirror.host.pixelRatio = 4 / 3;
+      mirror.host.screenshotData = _red;
+      await mirror.pump(visible: false);
+      await mirror.barrier();
+      final starts = mirror.host.callsFor('Page.startScreencast').length;
+      await mirror.pump(visible: true);
+      await mirror.until(() => mirror.host.callsFor('Page.startScreencast').length > starts);
+      await tester.pump(const Duration(milliseconds: 200));
+      await mirror.until(() => mirror.host.callsFor('Page.captureScreenshot').isNotEmpty);
+      await mirror.render(_red);
+      final fallback = mirror.image;
+      final drawn = tester.getRect(find.byType(RawImage));
+      await tester.tapAt(drawn.topLeft + Offset(drawn.width * .23, drawn.height * .71));
+      await mirror.barrier();
+      final first = mirror.mouseCalls.singleWhere((call) => call.params['type'] == 'mousePressed');
+      expect(first.params['x'], closeTo(138, .001));
+      expect(first.params['y'], closeTo(213, .001));
+
+      mirror.host.calls.clear();
+      await mirror.frames([const _Frame(
+        _blue, Size(900, 1800), cssSize: Size(300, 600),
+        browserZoom: 1.5, pageScaleFactor: 2,
+      )]);
+      await mirror.render(_blue, previous: fallback);
+      final streamed = tester.getRect(find.byType(RawImage));
+      await tester.tapAt(streamed.topLeft + Offset(streamed.width * .69, streamed.height * .21));
+      await mirror.barrier();
+      final next = mirror.mouseCalls.singleWhere((call) => call.params['type'] == 'mousePressed');
+      expect(next.params['x'], closeTo(207, .001));
+      expect(next.params['y'], closeTo(126, .001));
+    });
+  });
+
+  testWidgets('scrollbar-excluding CSS clients do not squeeze full captured surfaces',
+      (tester) async {
+    await _withMirror(tester, (mirror) async {
+      // At pinch=2, the complete 800x400 surface spans 400x200 CSS pixels.
+      // Classic scrollbars leave a smaller client, not a smaller screenshot.
+      mirror.host.viewport = const Size(388, 188);
+      mirror.host.pageScaleFactor = 2;
+      mirror.host.screenshotData = _red;
+      await mirror.pump(visible: false);
+      await mirror.barrier();
+      final starts = mirror.host.callsFor('Page.startScreencast').length;
+      await mirror.pump(visible: true);
+      await mirror.until(() => mirror.host.callsFor('Page.startScreencast').length > starts);
+      await tester.pump(const Duration(milliseconds: 200));
+      await mirror.until(() => mirror.host.callsFor('Page.captureScreenshot').isNotEmpty);
+      await mirror.render(_red);
+      final screenshot = mirror.image;
+      for (final stream in [false, true]) {
+        if (stream) {
+          await mirror.frames([const _Frame(_red, Size(800, 400),
+              cssSize: Size(388, 188), pageScaleFactor: 2)]);
+          await mirror.render(_red, previous: screenshot);
+        }
+        mirror.host.calls.clear();
+        final drawn = tester.getRect(find.byType(RawImage));
+        await tester.tapAt(drawn.topLeft + Offset(drawn.width * .73, drawn.height * .27));
+        await mirror.barrier();
+        final press = mirror.mouseCalls.singleWhere((call) => call.params['type'] == 'mousePressed');
+        expect(press.params['x'], closeTo(292, .001), reason: stream ? 'stream' : 'screenshot');
+        expect(press.params['y'], closeTo(54, .001), reason: stream ? 'stream' : 'screenshot');
+      }
+    });
+  });
+
+  testWidgets('pending decode and pre-build completion keep input on painted pixels',
+      (tester) async {
+    await _withMirror(tester, (mirror) async {
+      await mirror.frames([const _Frame(_red, Size(800, 400))]);
+      await mirror.render(_red);
+      final before = mirror.image;
+      final oldRect = tester.getRect(find.byType(RawImage));
+      final oldPoint = oldRect.topLeft + Offset(oldRect.width * .85, oldRect.height * .25);
+      final pending = Completer<ui.Image>();
+      var decoding = false;
+      mirror.frameDecoder = (bytes) {
+        expect(base64Encode(bytes), _blue);
+        decoding = true;
+        return pending.future;
+      };
+      await mirror.pump();
+      try {
+        // CSS dimensions stay fixed while the encoded aspect changes. This
+        // isolates decode/display pairing from the separate zoom invalidation.
+        await mirror.frames([const _Frame(
+          _blue, Size(800, 400), cssSize: Size(800, 400),
+        )]);
+        await mirror.until(() => decoding);
+        expect(mirror.image, same(before));
+        expect(tester.getRect(find.byType(RawImage)), oldRect);
+        mirror.host.calls.clear();
+        await tester.tapAt(oldPoint);
+        await mirror.barrier();
+        final held = mirror.mouseCalls.singleWhere((call) => call.params['type'] == 'mousePressed');
+        expect(held.params['x'], closeTo(680, .001));
+        expect(held.params['y'], closeTo(100, .001));
+
+        final metrics = mirror.host.callsFor('Page.getLayoutMetrics').length;
+        await mirror.io(() async {
+          final codec = await ui.instantiateImageCodec(base64Decode(_blue));
+          try {
+            pending.complete((await codec.getNextFrame()).image);
+          } finally {
+            codec.dispose();
+          }
+        });
+        // Process the post-decode CDP metrics, but deliberately do not pump a
+        // Flutter frame. The old rendered picture still defines the hit area.
+        await mirror.untilWithoutRendering(() =>
+            mirror.host.callsFor('Page.getLayoutMetrics').length > metrics);
+        await mirror.barrier();
+        expect(mirror.image, same(before));
+        mirror.host.calls.clear();
+        await tester.tapAt(oldPoint);
+        await mirror.barrier();
+        final beforeBuild = mirror.mouseCalls.singleWhere((call) => call.params['type'] == 'mousePressed');
+        expect(beforeBuild.params['x'], closeTo(680, .001));
+        expect(beforeBuild.params['y'], closeTo(100, .001));
+
+        await mirror.render(_blue, previous: before);
+        final drawn = tester.getRect(find.byType(RawImage));
+        expect(drawn, isNot(oldRect));
+        mirror.host.calls.clear();
+        await tester.tapAt(drawn.topLeft + Offset(drawn.width * .75, drawn.height * .25));
+        await mirror.barrier();
+        final afterBuild = mirror.mouseCalls.singleWhere((call) => call.params['type'] == 'mousePressed');
+        expect(afterBuild.params['x'], closeTo(600, .001));
+        expect(afterBuild.params['y'], closeTo(100, .001));
+      } finally {
+        if (decoding && !pending.isCompleted) {
+          pending.completeError(const FormatException('test ended'));
+        }
+      }
+    });
+  });
+
+  testWidgets('zoom changes block stale-picture input until a fresh stream frame',
+      (tester) async {
+    await _withMirror(tester, (mirror) async {
+      await mirror.frames([const _Frame(_red, Size(800, 400))]);
+      await mirror.render(_red);
+      final before = mirror.image;
+      final oldPoint = tester.getCenter(find.byType(RawImage));
+      final starts = mirror.host.callsFor('Page.startScreencast').length;
+      final oldTimestamp = mirror.host.wallSeconds + .01;
+      const changed = _Frame(_blue, Size(800, 400),
+          cssSize: Size(400, 200), browserZoom: 2);
+      await mirror.frames([changed]);
+      await mirror.until(() => mirror.host.callsFor('Page.startScreencast').length > starts);
+      expect(mirror.image, same(before));
+      final metrics = mirror.host.callsFor('Page.getLayoutMetrics').length;
+      await mirror.frames([_Frame(_red, const Size(800, 400),
+          timestamp: oldTimestamp, updateViewport: false)]);
+      await tester.pump();
+      await mirror.barrier();
+      expect(mirror.image, same(before));
+      expect(mirror.host.callsFor('Page.getLayoutMetrics'), hasLength(metrics),
+          reason: 'An old encoder callback must not enter current-frame preparation.');
+      mirror.host.calls.clear();
+      await tester.tapAt(oldPoint);
+      await tester.sendEventToBinding(PointerScrollEvent(
+        position: oldPoint, scrollDelta: const Offset(0, 20),
+      ));
+      await mirror.barrier();
+      expect(mirror.mouseCalls, isEmpty,
+          reason: 'Old pixels must not act on the newly zoomed browser.');
+
+      await mirror.frames([changed]);
+      await mirror.render(_blue, previous: before);
+      final drawn = tester.getRect(find.byType(RawImage));
+      await tester.tapAt(drawn.topLeft + Offset(drawn.width * .31, drawn.height * .67));
+      await mirror.barrier();
+      final press = mirror.mouseCalls.singleWhere((call) => call.params['type'] == 'mousePressed');
+      expect(press.params['x'], closeTo(124, .001));
+      expect(press.params['y'], closeTo(134, .001));
+    });
+  });
+
+  for (final resizeDpr in [false, true]) {
+    testWidgets('${resizeDpr ? 'DPR' : 'panel'} resize releases an active drag before invalidation',
+        (tester) async {
+      await _withMirror(tester, (mirror) async {
+        await mirror.frames([const _Frame(_red, Size(800, 400))]);
+        await mirror.render(_red);
+        final before = mirror.image;
+        final drawn = tester.getRect(find.byType(RawImage));
+        final point = drawn.topLeft + Offset(drawn.width * .23, drawn.height * .31);
+        mirror.host.calls.clear();
+        final gesture = await tester.startGesture(point, kind: PointerDeviceKind.mouse);
+        await mirror.barrier();
+        await mirror.pump(
+          ratio: resizeDpr ? 2 : 1,
+          panelSize: resizeDpr ? null : const Size(640, 480),
+        );
+        await tester.pump(const Duration(milliseconds: 200));
+        await mirror.until(() => mirror.mouseCalls.any(
+          (call) => call.params['type'] == 'mouseReleased',
+        ));
+        final release = mirror.mouseCalls.singleWhere(
+          (call) => call.params['type'] == 'mouseReleased',
+        );
+        expect(release.tabId, 1);
+        expect(release.params['button'], 'left');
+        expect(release.params['buttons'], 0);
+        // The release belongs to the original captured page, before its
+        // capture generation is invalidated. Exact position is secondary to
+        // releasing Chrome's held button when the Flutter layout has changed.
+        await gesture.up();
+        await mirror.barrier();
+        expect(mirror.mouseCalls.where((call) => call.params['type'] == 'mouseReleased'),
+            hasLength(1));
+        mirror.host.calls.clear();
+        await tester.tapAt(point);
+        await tester.sendEventToBinding(PointerScrollEvent(
+          position: point, scrollDelta: const Offset(0, 20),
+        ));
+        await mirror.barrier();
+        expect(mirror.mouseCalls, isEmpty);
+        await mirror.frames([const _Frame(_red, Size(800, 400))]);
+        await mirror.render(_red, previous: before);
+        await tester.tapAt(tester.getCenter(find.byType(RawImage)));
+        await mirror.barrier();
+        expect(mirror.mouseCalls.where((call) => call.params['type'] == 'mousePressed'),
+            hasLength(1));
+      });
+    });
+  }
+
+  testWidgets('a decoded frame from a stopped capture cannot replace its successor',
+      (tester) async {
+    await _withMirror(tester, (mirror) async {
+      await mirror.frames([const _Frame(_red, Size(800, 400))]);
+      await mirror.render(_red);
+      final before = mirror.image;
+      final pending = Completer<ui.Image>();
+      var decoding = false;
+      mirror.frameDecoder = (_) {
+        decoding = true;
+        return pending.future;
+      };
+      await mirror.pump();
+      try {
+        await mirror.frames([const _Frame(_blue, Size(800, 400))]);
+        await mirror.until(() => decoding);
+        final starts = mirror.host.callsFor('Page.startScreencast').length;
+        await mirror.pump(visible: false);
+        await mirror.pump(visible: true);
+        await mirror.until(() => mirror.host.callsFor('Page.startScreencast').length > starts);
+        await mirror.io(() async {
+          final codec = await ui.instantiateImageCodec(base64Decode(_blue));
+          try {
+            pending.complete((await codec.getNextFrame()).image);
+          } finally {
+            codec.dispose();
+          }
+        });
+        await mirror.barrier();
+        await tester.pump();
+        expect(mirror.image, same(before));
+        mirror.host.calls.clear();
+        await tester.tapAt(tester.getCenter(find.byType(RawImage)));
+        await mirror.barrier();
+        expect(mirror.mouseCalls, isEmpty);
+        mirror.frameDecoder = null;
+        await mirror.pump();
+        await mirror.frames([const _Frame(_red, Size(800, 400))]);
+        await mirror.render(_red, previous: before);
+        await tester.tapAt(tester.getCenter(find.byType(RawImage)));
+        await mirror.barrier();
+        expect(mirror.mouseCalls.where((call) => call.params['type'] == 'mousePressed'),
+            hasLength(1));
+      } finally {
+        if (decoding && !pending.isCompleted) {
+          pending.completeError(const FormatException('test ended'));
+        }
+      }
+    });
+  });
+
+  testWidgets('a failed decode preserves the previous pixel and coordinate pair',
+      (tester) async {
+    await _withMirror(tester, (mirror) async {
+      await mirror.frames([const _Frame(_red, Size(800, 400))]);
+      await mirror.render(_red);
+      final before = mirror.image;
+      final pending = Completer<ui.Image>();
+      var decoding = false;
+      mirror.frameDecoder = (_) {
+        decoding = true;
+        return pending.future;
+      };
+      await mirror.pump();
+      try {
+        await mirror.frames([const _Frame(_blue, Size(800, 400))]);
+        await mirror.until(() => decoding);
+        pending.completeError(const FormatException('deliberately invalid image'));
+        await tester.idle();
+        await tester.pump();
+        expect(mirror.image, same(before));
+        await mirror.expectImage(_red);
+        mirror.host.calls.clear();
+        final drawn = tester.getRect(find.byType(RawImage));
+        await tester.tapAt(drawn.topLeft + Offset(drawn.width * .19, drawn.height * .61));
+        await mirror.barrier();
+        final press = mirror.mouseCalls.singleWhere((call) => call.params['type'] == 'mousePressed');
+        expect(press.params['x'], closeTo(152, .001));
+        expect(press.params['y'], closeTo(244, .001));
+        expect(tester.takeException(), isNull);
+      } finally {
+        if (decoding && !pending.isCompleted) {
+          pending.completeError(const FormatException('test ended'));
+        }
+      }
     });
   });
 
@@ -60,7 +429,7 @@ void main() {
   ) async {
     await _withMirror(tester, (mirror) async {
       await mirror.frames([const _Frame(_red, Size(800, 400))]);
-      await tester.pump();
+      await mirror.render(_red);
       mirror.host.calls.clear();
 
       BrowserTools.lastTab.value = BrowserTab(mirror.connection, 2);
@@ -75,9 +444,37 @@ void main() {
         find.byKey(const ValueKey('browser-panel-address')),
       );
       expect(field.controller!.text, 'https://one.example/');
-      expect(mirror.imageBytes, orderedEquals(base64Decode(_red)));
+      await mirror.expectImage(_red);
       expect(mirror.selected, [BrowserTab(mirror.connection, 1)]);
       expect(mirror.host.calls.where((call) => call.tabId == 2), isEmpty);
+    });
+  });
+
+  testWidgets('pre-cutoff encoded callbacks are ACKed but cannot become the first frame',
+      (tester) async {
+    await _withMirror(tester, (mirror) async {
+      final metrics = mirror.host.callsFor('Page.getLayoutMetrics').length;
+      await mirror.frames([
+        _Frame(_red, const Size(800, 400),
+            timestamp: mirror.host.wallSeconds - 1, updateViewport: false),
+        _Frame(_red, const Size(800, 400),
+            timestamp: mirror.host.wallSeconds + .0005, updateViewport: false),
+      ]);
+      await tester.pump();
+      await mirror.barrier();
+      expect(find.byType(RawImage), findsNothing);
+      expect(mirror.host.callsFor('Page.getLayoutMetrics'), hasLength(metrics),
+          reason: 'The pre-cutoff callback is not a current capture.');
+      // The host always allocates a fresh sessionId when emitting a callback,
+      // including the stale one above. Timestamp, not that ID, proves freshness.
+      await mirror.frames([const _Frame(_blue, Size(400, 800))]);
+      await mirror.render(_blue);
+      mirror.host.calls.clear();
+      await tester.tapAt(tester.getCenter(find.byType(RawImage)));
+      await mirror.barrier();
+      final press = mirror.mouseCalls.singleWhere((call) => call.params['type'] == 'mousePressed');
+      expect(press.params['x'], closeTo(200, .001));
+      expect(press.params['y'], closeTo(400, .001));
     });
   });
 
@@ -90,15 +487,15 @@ void main() {
       await mirror.until(
         () => mirror.host.callsFor('Page.stopScreencast').length > stops,
       );
+      mirror.host.viewport = const Size(800, 400);
       mirror.host.holdNextStart = true;
       await mirror.pump(visible: true);
       await mirror.until(() => mirror.host.pendingStarts.isNotEmpty);
       expect(mirror.host.pendingStarts, hasLength(1));
 
       await mirror.frames([const _Frame(_red, Size(800, 400))]);
-      expect(find.byType(Image), findsNothing);
-      await tester.pump();
-      expect(mirror.imageBytes, orderedEquals(base64Decode(_red)));
+      expect(find.byType(RawImage), findsNothing);
+      await mirror.render(_red);
       expect(
         mirror.host.pendingStarts,
         hasLength(1),
@@ -112,8 +509,7 @@ void main() {
       await tester.idle();
       expect(mirror.host.pendingStarts, isEmpty);
       await mirror.frames([const _Frame(_blue, Size(400, 800))]);
-      await tester.pump();
-      expect(mirror.imageBytes, orderedEquals(base64Decode(_blue)));
+      await mirror.render(_blue);
     });
   });
 
@@ -122,7 +518,7 @@ void main() {
   ) async {
     await _withMirror(tester, (mirror) async {
       await mirror.frames([const _Frame(_blue, Size(400, 800))]);
-      await tester.pump();
+      await mirror.render(_blue);
       final page = tester.getRect(mirror.pageListener);
       final margin = page.topLeft + Offset(2, page.height / 2);
       mirror.host.calls.clear();
@@ -135,7 +531,7 @@ void main() {
       expect(mirror.mouseCalls, isEmpty);
 
       final gesture = await tester.startGesture(
-        tester.getCenter(find.byType(Image)),
+        tester.getCenter(find.byType(RawImage)),
         kind: PointerDeviceKind.mouse,
       );
       await gesture.moveTo(margin);
@@ -192,8 +588,7 @@ void main() {
         () => mirror.host.callsFor('Page.captureScreenshot').isNotEmpty,
       );
       await mirror.barrier();
-      await tester.pump();
-      expect(mirror.imageBytes, orderedEquals(base64Decode(_blue)));
+      await mirror.render(_blue);
     });
   });
 
@@ -213,16 +608,19 @@ void main() {
         () => mirror.host.callsFor('Page.startScreencast').isNotEmpty,
       );
       await mirror.frames([const _Frame(_blue, Size(400, 800))]);
-      await tester.pump();
-      final current = mirror.imageBytes;
+      await mirror.render(_blue);
+      final current = mirror.image;
+      final metrics = mirror.host.callsFor('Page.getLayoutMetrics').length;
 
       await mirror.io(() async {
         mirror.host.completeScreenshots(_red);
       });
       await mirror.barrier();
       await tester.pump();
-      expect(mirror.imageBytes, same(current));
-      expect(mirror.imageBytes, orderedEquals(base64Decode(_blue)));
+      expect(mirror.image, same(current));
+      expect(mirror.host.callsFor('Page.getLayoutMetrics'), hasLength(metrics),
+          reason: 'An obsolete screenshot must not issue follow-on CDP reads.');
+      await mirror.expectImage(_blue);
       expect(tester.takeException(), isNull);
     });
   });
@@ -238,10 +636,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
       await mirror.until(() => mirror.host.pendingScreenshots.isNotEmpty);
       await mirror.frames([const _Frame(_blue, Size(400, 800))]);
-      await tester.pump();
-      final beforeDetach = mirror.imageBytes;
+      await mirror.render(_blue);
+      final beforeDetach = mirror.image;
       final gesture = await tester.startGesture(
-        tester.getCenter(find.byType(Image)),
+        tester.getCenter(find.byType(RawImage)),
         kind: PointerDeviceKind.mouse,
       );
       await mirror.until(
@@ -275,7 +673,7 @@ void main() {
       await mirror.barrier();
       await tester.pump();
       expectNoCdp('detach and stale frame must not release, ACK, or reattach');
-      expect(mirror.imageBytes, same(beforeDetach));
+      expect(mirror.image, same(beforeDetach));
 
       await gesture.cancel();
       await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
@@ -298,7 +696,7 @@ void main() {
       await mirror.barrier();
       await tester.pump();
       expectNoCdp('late screenshot completion and further frames stay inert');
-      expect(mirror.imageBytes, same(beforeDetach));
+      expect(mirror.image, same(beforeDetach));
 
       final reconnect = find.byWidgetPredicate(
         (widget) => widget is IdeActionButton && widget.tooltip == 'Reconnect',
@@ -333,8 +731,7 @@ void main() {
       expect(control.isDetached(target), isFalse);
       expect(control.manualControl, isTrue, reason: 'Reconnect is not Resume');
       await mirror.frames([const _Frame(_red, Size(800, 400))]);
-      await tester.pump();
-      expect(mirror.imageBytes, orderedEquals(base64Decode(_red)));
+      await mirror.render(_red);
     });
   });
 
@@ -453,6 +850,7 @@ class _MirrorHarness {
   final oldDataDirectory = DataDirectory.current;
   final oldLastTab = BrowserTools.lastTab.value;
   final selected = <BrowserTab>[];
+  Future<ui.Image> Function(Uint8List)? frameDecoder;
   Directory? _temporary;
   _SocketHost? _host;
   final _additionalHosts = <_SocketHost>[];
@@ -468,8 +866,44 @@ class _MirrorHarness {
     ),
   );
 
-  Uint8List get imageBytes =>
-      (tester.widget<Image>(find.byType(Image)).image as MemoryImage).bytes;
+  ui.Image get image => tester.widget<RawImage>(find.byType(RawImage)).image!;
+
+  Future<void> render(String data, {ui.Image? previous}) async {
+    final expected = data == _red ? const Size(800, 400) : const Size(400, 800);
+    var starts = host.callsFor('Page.startScreencast').length;
+    for (var attempt = 0; attempt < 100; attempt++) {
+      final found = find.byType(RawImage);
+      if (found.evaluate().length == 1) {
+        final decoded = tester.widget<RawImage>(found).image;
+        if (decoded != null && !identical(decoded, previous) &&
+            Size(decoded.width.toDouble(), decoded.height.toDouble()) == expected) {
+          await expectImage(data);
+          return;
+        }
+      }
+      await tester.pump();
+      await io(() => Future<void>.delayed(const Duration(milliseconds: 5)));
+      final latestStarts = host.callsFor('Page.startScreencast').length;
+      if (latestStarts > starts && host.lastFrame?.data == data) {
+        // Changed CSS metrics invalidate an in-flight capture. Model Chrome's
+        // new post-restart frame, not permission to reinterpret the old one.
+        starts = latestStarts;
+        await frames([host.lastFrame!]);
+      }
+    }
+    fail('The expected decoded frame never became visible.');
+  }
+
+  Future<void> expectImage(String data) async {
+    final decoded = image;
+    final expectedSize = data == _red ? const Size(800, 400) : const Size(400, 800);
+    expect(Size(decoded.width.toDouble(), decoded.height.toDouble()), expectedSize);
+    final rgba = (await tester.runAsync(
+      () => decoded.toByteData(format: ui.ImageByteFormat.rawRgba),
+    ))!;
+    expect(rgba.buffer.asUint8List(rgba.offsetInBytes, 4),
+        data == _red ? [255, 0, 0, 255] : [0, 0, 255, 255]);
+  }
 
   List<_Call> get mouseCalls => host.callsFor('Input.dispatchMouseEvent');
 
@@ -498,11 +932,6 @@ class _MirrorHarness {
     final starts = host.callsFor('Page.startScreencast').length;
     await tester.pump(const Duration(milliseconds: 200));
     await until(() => host.callsFor('Page.startScreencast').length > starts);
-    await io(() async {
-      final context = tester.element(find.byType(BrowserMirror));
-      await precacheImage(MemoryImage(base64Decode(_red)), context);
-      await precacheImage(MemoryImage(base64Decode(_blue)), context);
-    });
   }
 
   Future<(_SocketHost, BrowserConnection)> connectHost(String name) async {
@@ -521,6 +950,7 @@ class _MirrorHarness {
     bool visible = true,
     double ratio = 1,
     BrowserTab? initialTab,
+    Size? panelSize,
   }) => tester.pumpWidget(
     MaterialApp(
       locale: const Locale('en'),
@@ -531,13 +961,18 @@ class _MirrorHarness {
         child: child!,
       ),
       home: Scaffold(
-        body: TickerMode(
-          enabled: visible,
-          child: BrowserMirror(
-            key: const ValueKey('test-browser-mirror'),
-            sessionId: 'mirror-widget-test',
-            initialTab: initialTab ?? BrowserTab(connection, 1),
-            onSelectionChanged: selected.add,
+        body: SizedBox(
+          width: panelSize?.width,
+          height: panelSize?.height,
+          child: TickerMode(
+            enabled: visible,
+            child: BrowserMirror(
+              key: const ValueKey('test-browser-mirror'),
+              sessionId: 'mirror-widget-test',
+              frameDecoder: frameDecoder,
+              initialTab: initialTab ?? BrowserTab(connection, 1),
+              onSelectionChanged: selected.add,
+            ),
           ),
         ),
       ),
@@ -551,6 +986,15 @@ class _MirrorHarness {
     }
     expect(done(), isTrue, reason: 'synthetic browser did not receive the request');
     await tester.pump();
+  }
+
+  Future<void> untilWithoutRendering(bool Function() done) async {
+    for (var attempt = 0; attempt < 100 && !done(); attempt++) {
+      await tester.idle();
+      await io(() => Future<void>.delayed(const Duration(milliseconds: 5)));
+    }
+    await tester.idle();
+    expect(done(), isTrue, reason: 'Asynchronous frame preparation did not settle.');
   }
 
   Future<void> transport(
@@ -707,10 +1151,23 @@ Future<void> _waitUntil(bool Function() done) async {
 }
 
 class _Frame {
-  const _Frame(this.data, this.size);
+  const _Frame(this.data, this.size, {
+    this.cssSize,
+    this.pageScaleFactor = 1,
+    this.offsetTop = 0,
+    this.browserZoom = 1,
+    this.timestamp,
+    this.updateViewport = true,
+  });
 
   final String data;
   final Size size;
+  final Size? cssSize;
+  final double pageScaleFactor;
+  final double offsetTop;
+  final double browserZoom;
+  final double? timestamp;
+  final bool updateViewport;
 }
 
 class _Call {
@@ -739,6 +1196,13 @@ class _SocketHost {
   final pendingStarts = <Map<String, Object?>>[];
   final pendingScreenshots = <Map<String, Object?>>[];
   final _buffer = <int>[];
+  _Frame? lastFrame;
+  var screenshotData = _blue;
+  var viewport = const Size(400, 800);
+  var browserZoom = 1.0;
+  var pixelRatio = 1.0;
+  var pageScaleFactor = 1.0;
+  var wallSeconds = 1000.0;
   var holdScreenshots = false;
   var holdNextStart = false;
   var _frameId = 0;
@@ -784,20 +1248,34 @@ class _SocketHost {
       ..add(body);
   }
 
-  void sendFrame(_Frame frame, {int tabId = 1}) => send({
-    'type': 'event',
-    'event': 'cdp',
-    'tabId': tabId,
-    'method': 'Page.screencastFrame',
-    'params': {
-      'sessionId': ++_frameId,
-      'data': frame.data,
-      'metadata': {
-        'deviceWidth': frame.size.width,
-        'deviceHeight': frame.size.height,
+  void sendFrame(_Frame frame, {int tabId = 1}) {
+    if (tabId == 1 && frame.updateViewport) {
+      lastFrame = frame;
+      viewport = frame.cssSize ?? frame.size;
+      browserZoom = frame.browserZoom;
+      pixelRatio = frame.browserZoom;
+      pageScaleFactor = frame.pageScaleFactor;
+    }
+    send({
+      'type': 'event',
+      'event': 'cdp',
+      'tabId': tabId,
+      'method': 'Page.screencastFrame',
+      'params': {
+        'sessionId': ++_frameId,
+        'data': frame.data,
+        'metadata': {
+          'deviceWidth': frame.size.width,
+          'deviceHeight': frame.size.height,
+          'pageScaleFactor': frame.pageScaleFactor,
+          'offsetTop': frame.offsetTop,
+          'timestamp': frame.timestamp ?? wallSeconds + .01,
+          'scrollOffsetX': 0,
+          'scrollOffsetY': 0,
+        },
       },
-    },
-  });
+    });
+  }
 
   void _read(Uint8List bytes) {
     _buffer.addAll(bytes);
@@ -827,15 +1305,27 @@ class _SocketHost {
           {'tabId': 2, 'title': 'Agent page', 'url': 'https://two.example/'},
         ],
         'Page.getLayoutMetrics' => {
+          'visualViewport': {
+            'clientWidth': viewport.width * pixelRatio,
+            'clientHeight': viewport.height * pixelRatio,
+            'scale': pageScaleFactor,
+          },
           'cssVisualViewport': {
             'pageX': 0,
             'pageY': 0,
-            'clientWidth': 400,
-            'clientHeight': 800,
+            'clientWidth': viewport.width,
+            'clientHeight': viewport.height,
+            'zoom': browserZoom,
+            'scale': pageScaleFactor,
           },
         },
-        'Page.captureScreenshot' => {'data': _blue},
-        'Runtime.evaluate' => {'result': {'value': false}},
+        'Page.captureScreenshot' => {'data': screenshotData},
+        'Runtime.evaluate' => {
+          'result': {
+            'value': call.params['expression'] == 'Date.now() / 1000'
+                ? ++wallSeconds : false,
+          },
+        },
         _ => <String, Object?>{},
       };
       send({'id': request['id'], 'result': result});
