@@ -300,7 +300,9 @@ class _BrowserMirrorState extends State<BrowserMirror>
   void _queueFrame(BrowserFramePayload payload) {
     final tab = _shown;
     if (tab == null || !mounted || _disposed || _capturePaused ||
-        _detached != null) return;
+        _detached != null) {
+      return;
+    }
     _pendingFrame = _PendingMirrorFrame(payload, tab, _captureGeneration);
     if (!_preparingFrame) unawaited(_prepareFrames());
   }
@@ -329,7 +331,8 @@ class _BrowserMirrorState extends State<BrowserMirror>
   Future<void> _prepareFrames() async {
     _preparingFrame = true;
     try {
-      while (_pendingFrame case final pending?) {
+      while (_pendingFrame != null) {
+        final pending = _pendingFrame!;
         _pendingFrame = null;
         bool current() => mounted && !_disposed && !_capturePaused &&
             _detached == null && pending.tab == _shown &&
@@ -350,7 +353,9 @@ class _BrowserMirrorState extends State<BrowserMirror>
           if (!current()) continue;
           final after = await _readViewport(pending.tab);
           if (!current() || !_acceptViewport(after) ||
-              !viewport.matches(after)) continue;
+              !viewport.matches(after)) {
+            continue;
+          }
           final previous = _frame;
           // clientWidth/Height omit classic scrollbars. Use the full captured
           // surface, so those pixels are not squeezed into the content area.
@@ -415,10 +420,14 @@ class _BrowserMirrorState extends State<BrowserMirror>
         // encoder callback may carry the new sessionId but its old timestamp.
         final viewport = await _readViewport(tab);
         if (_disposed || !mounted || _capturePaused || _detached != null ||
-            generation != _captureGeneration || tab != _shown) return;
+            generation != _captureGeneration || tab != _shown) {
+          return;
+        }
         final cutoff = await _readCaptureClock(tab);
         if (_disposed || !mounted || _capturePaused || _detached != null ||
-            generation != _captureGeneration || tab != _shown) return;
+            generation != _captureGeneration || tab != _shown) {
+          return;
+        }
         _viewport = viewport;
         _captureCutoff = cutoff;
         _streaming = tab;
@@ -469,7 +478,9 @@ class _BrowserMirrorState extends State<BrowserMirror>
         'quality': 70,
       });
       if (tab != _shown || !mounted || _disposed || _capturePaused ||
-          generation != _captureGeneration) return;
+          generation != _captureGeneration) {
+        return;
+      }
       final after = await _readViewport(tab);
       if (tab != _shown || !mounted || _disposed || _capturePaused ||
           generation != _captureGeneration) {
@@ -524,7 +535,9 @@ class _BrowserMirrorState extends State<BrowserMirror>
         final captured = (metadata['timestamp'] as num?)?.toDouble();
         final cutoff = _captureCutoff;
         if (captured == null || !captured.isFinite || cutoff == null ||
-            captured < cutoff) return;
+            captured < cutoff) {
+          return;
+        }
         _lastFrame = DateTime.now();
         _frames.push(
           data: params['data'] as String,
@@ -858,7 +871,9 @@ class _BrowserMirrorState extends State<BrowserMirror>
     final frame = _paintedFrame;
     final box = _key.currentContext?.findRenderObject() as RenderBox?;
     if (frame == null || frame.generation != _captureGeneration ||
-        box == null || !box.hasSize) return null;
+        box == null || !box.hasSize) {
+      return null;
+    }
     return browserPagePoint(local, box.size, frame.pageSize,
         imageSize: frame.imageSize, clamp: clamp);
   }

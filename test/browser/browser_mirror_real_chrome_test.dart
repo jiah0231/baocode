@@ -97,7 +97,7 @@ void main() {
         }
       }, _LoopbackHttpOverrides());
     },
-      skip: enabled ? false : 'BAOCODE_REAL_CHROME_SMOKE=1 not set',
+      skip: !enabled,
       timeout: const Timeout(Duration(minutes: 3)),
     );
   }
@@ -270,7 +270,7 @@ class _RealMirror {
     final boundary = boundaryKey.currentContext?.findRenderObject()
         as RenderRepaintBoundary?;
     if (boundary == null || boundary.debugNeedsPaint) return null;
-    return tester.runAsync(() async {
+    return tester.runAsync<Rect?>(() async {
       final image = await boundary.toImage(pixelRatio: 1);
       try {
         final bytes = await image.toByteData(format: ui.ImageByteFormat.rawRgba);

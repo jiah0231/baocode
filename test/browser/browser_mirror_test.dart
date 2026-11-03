@@ -1154,7 +1154,6 @@ class _Frame {
   const _Frame(this.data, this.size, {
     this.cssSize,
     this.pageScaleFactor = 1,
-    this.offsetTop = 0,
     this.browserZoom = 1,
     this.timestamp,
     this.updateViewport = true,
@@ -1164,7 +1163,6 @@ class _Frame {
   final Size size;
   final Size? cssSize;
   final double pageScaleFactor;
-  final double offsetTop;
   final double browserZoom;
   final double? timestamp;
   final bool updateViewport;
@@ -1268,7 +1266,7 @@ class _SocketHost {
           'deviceWidth': frame.size.width,
           'deviceHeight': frame.size.height,
           'pageScaleFactor': frame.pageScaleFactor,
-          'offsetTop': frame.offsetTop,
+          'offsetTop': 0,
           'timestamp': frame.timestamp ?? wallSeconds + .01,
           'scrollOffsetX': 0,
           'scrollOffsetY': 0,
