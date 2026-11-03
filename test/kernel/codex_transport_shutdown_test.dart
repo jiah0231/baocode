@@ -20,7 +20,7 @@ void main() {
     final transport = CodexProcessTransport.forProcess(
       process,
       windows: true,
-      terminateTree: (_, __) async =>
+      terminateTree: (_, _) async =>
           throw StateError('Must not terminate an already exited root PID'),
     );
     var completed = false;
@@ -84,7 +84,7 @@ void main() {
             ? const Duration(seconds: 1)
             : Duration.zero,
         terminationTimeout: Duration.zero,
-        terminateTree: (_, __) async {
+        terminateTree: (_, _) async {
           calls++;
           if (mode == 'timeout') return Completer<ProcessResult>().future;
           if (mode == 'unavailable') throw ProcessException('taskkill', []);

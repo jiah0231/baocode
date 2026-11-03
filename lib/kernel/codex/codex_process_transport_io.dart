@@ -21,12 +21,10 @@ class CodexProcessTransport implements CodexTransport, CodexShutdownDiagnostics 
     this.executable,
     bool? windows,
     Future<ProcessResult> Function(String, List<String>)? terminateTree,
-    Duration shutdownGrace = const Duration(seconds: 1),
-    Duration terminationTimeout = const Duration(seconds: 3),
+    this._shutdownGrace = const Duration(seconds: 1),
+    this._terminationTimeout = const Duration(seconds: 3),
   }) : _windows = windows ?? Platform.isWindows,
-       _terminateTree = terminateTree ?? _runTermination,
-       _shutdownGrace = shutdownGrace,
-       _terminationTimeout = terminationTimeout {
+       _terminateTree = terminateTree ?? _runTermination {
     _live.add(this);
     unawaited(registry.add(_process.pid));
     _process.stdout

@@ -973,7 +973,7 @@ class CodexKernel
       );
       _stopped = transport.exited;
       _shutdownDiagnostics = transport is CodexShutdownDiagnostics
-          ? transport
+          ? transport as CodexShutdownDiagnostics
           : null;
       if (cancelled()) {
         transport.close();
@@ -1011,13 +1011,13 @@ class CodexKernel
       if (_sessionId == null &&
           (_processProxy != null) != (_custom != null)) {
         _teardown();
-        return _open(resume: resume);
+        return await _open(resume: resume);
       }
       // Read-only metadata remains available even when native resume rejects
       // the current provider. Restore the saved route before acquiring a writer.
       if (resume && _sessionId != null && await _alignResumeProvider()) {
         _teardown();
-        return _open(resume: true);
+        return await _open(resume: true);
       }
       // A new chat starts its thread with its first message, so no empty
       // one is kept for a chat the user only looked at.
