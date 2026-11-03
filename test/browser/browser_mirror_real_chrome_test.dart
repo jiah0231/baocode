@@ -168,9 +168,23 @@ class _RealMirror {
       await chromeUntil(() => bridge.browsers.length == 1);
       _browser = bridge.browsers.single;
     }, phase: 'start isolated Chrome and native bridge');
+    chrome.captureNavigation = true;
+    await command('Page.enable');
+    await command('Page.setLifecycleEventsEnabled', {'enabled': true});
+    await command('Network.enable');
+    // Target discovery does not establish document readiness. Wait for the
+    // independently created blank tab before its one explicit navigation.
+    await waitUntil(() async {
+      _documentEvidence = (await evaluate(
+        '({readyState:document.readyState, blank:location.href==="about:blank"})',
+      ))! as Map;
+      return _documentEvidence['readyState'] == 'complete' &&
+          _documentEvidence['blank'] == true;
+    }, 'The separately created blank fixture document did not become ready.');
     final navigation = await command('Page.navigate', {'url': '${chrome.page}'});
     expect(navigation['errorText'], isNull,
-        reason: 'The one explicit localhost navigation failed: $navigation');
+        reason: 'The one explicit localhost navigation failed: $navigation; '
+            'navigation events: ${chrome.navigationEvents}');
     await waitUntil(() async {
       _documentEvidence = (await evaluate(
         '({readyState:document.readyState, origin:location.origin, '
@@ -183,6 +197,9 @@ class _RealMirror {
           _documentEvidence['title'] == 'Disposable mirror marker' &&
           _documentEvidence['markerType'] == 'function';
     }, 'The exact isolated marker document did not commit.');
+    await command('Network.disable');
+    await command('Page.setLifecycleEventsEnabled', {'enabled': false});
+    chrome.captureNavigation = false;
     final metrics = await command('Page.getLayoutMetrics');
     expect((metrics['cssVisualViewport'] as Map)['zoom'], closeTo(zoom, .01),
         reason: 'The disposable profile must apply REAL browser zoom.');
@@ -246,7 +263,7 @@ class _RealMirror {
     }
     final evidence = 'connected=${_browser?.connected}, '
         'last commands=${_chrome?.commands.reversed.take(8).toList()}, '
-        'errors=${_chrome?.errors}';
+        'errors=${_chrome?.errors}, navigation=${_chrome?.navigationEvents}';
     if (!completed) {
       throw TimeoutException('Real mirror phase "$phase" did not settle. $evidence',
           const Duration(seconds: 20));
@@ -280,6 +297,7 @@ class _RealMirror {
     }
     fail('$reason Commands: ${chrome.commands.reversed.take(12).toList()}; '
         'errors: ${chrome.errors}; document: $_documentEvidence; '
+        'navigation: ${chrome.navigationEvents}; '
         'viewport: $viewportEvidence; '
         'input/capture: ${chrome.commandDetails.reversed.take(4).toList()}');
   }

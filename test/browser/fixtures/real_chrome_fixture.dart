@@ -44,6 +44,14 @@ class RealChromeFixture {
   final commands = <String>[];
   // Bounded input/capture evidence from this fixture only, never page scripts.
   final commandDetails = <Map<String, Object?>>[];
+  bool _captureNavigation = false;
+  bool _navigationOnlyNetwork = false;
+  bool get captureNavigation => _captureNavigation;
+  set captureNavigation(bool value) {
+    _captureNavigation = value;
+    if (value) _navigationOnlyNetwork = true;
+  }
+  final navigationEvents = <Map<String, Object?>>[];
   final acknowledgements = <String>[];
   final errors = <String>[];
 
@@ -121,9 +129,7 @@ class RealChromeFixture {
       throw StateError('Chrome version differs from pinned CfT version: '
           '${browser['Browser']} (expected $version).');
     }
-    // Target metadata identifies the requested startup tab, not a committed
-    // document. The mirror starts blank so its one explicit local navigation
-    // cannot race a second startup navigation to the same fixture URL.
+    // Target metadata identifies a startup tab, not a committed document.
     await chromeUntil(() async {
       final targets = (await _json('/json/list')) as List;
       final ours = targets.cast<Map>().where(
@@ -135,6 +141,18 @@ class RealChromeFixture {
       _target = ours.single['id'] as String;
       return true;
     }, reason: 'The requested local fixture target did not appear.');
+    if (initiallyBlank) {
+      // Do not navigate Chrome's startup-owned tab. The DevTools HTTP handler
+      // supports PUT /json/new and creates a separate foreground tab. Keep the
+      // takeover fixture's default startup-target behavior unchanged.
+      final target = (await _json('/json/new?about:blank', createTarget: true)) as Map;
+      final id = target['id'];
+      if (target['type'] != 'page' || target['url'] != 'about:blank' ||
+          id is! String || id.isEmpty || id == _target) {
+        throw StateError('Chrome did not create a distinct blank fixture target.');
+      }
+      _target = id;
+    }
     await connectNative();
   }
 
@@ -172,8 +190,13 @@ class RealChromeFixture {
     _nativeGeneration++;
   }
 
-  Future<Object?> _json(String path) async {
-    final request = await _client.getUrl(_endpoint!.resolve(path));
+  Future<Object?> _json(String path, {bool createTarget = false}) async {
+    if (createTarget && path != '/json/new?about:blank') {
+      throw StateError('Only a new blank fixture target may be created.');
+    }
+    final request = await _client.openUrl(
+      createTarget ? 'PUT' : 'GET', _endpoint!.resolve(path),
+    );
     final response = await request.close();
     if (response.statusCode != 200) {
       throw StateError('Chrome endpoint $path: ${response.statusCode}');
@@ -211,6 +234,16 @@ class RealChromeFixture {
   }
 
   void _event(Map<String, Object?> raw) {
+    if (captureNavigation) {
+      _recordNavigation(raw);
+    }
+    // Network is temporarily enabled only for local startup diagnostics.
+    // Keep filtering after disable too, in case a buffered event arrives late.
+    // The takeover fixture never enables this navigation-only filtering mode.
+    if (_navigationOnlyNetwork &&
+        (raw['method'] as String).startsWith('Network.')) {
+      return;
+    }
     final event = <String, Object?>{
       'type': 'event', 'event': 'cdp', 'tabId': 1, ...raw,
     };
@@ -240,6 +273,42 @@ class RealChromeFixture {
     } else {
       _send(event);
     }
+  }
+
+  void _recordNavigation(Map<String, Object?> raw) {
+    final method = raw['method'];
+    if (!const {
+      'Page.frameStartedLoading', 'Page.frameStoppedLoading',
+      'Page.frameStartedNavigating', 'Page.frameRequestedNavigation',
+      'Page.frameNavigated', 'Page.lifecycleEvent',
+      'Network.requestWillBeSent', 'Network.loadingFailed',
+    }.contains(method)) {
+      return;
+    }
+    final params = (raw['params'] as Map? ?? {}).cast<String, Object?>();
+    final details = <String, Object?>{'method': method, 'targetId': _target};
+    for (final key in const [
+      'frameId', 'loaderId', 'requestId', 'type', 'name', 'timestamp',
+      'reason', 'disposition', 'navigationType', 'errorText', 'canceled',
+      'blockedReason',
+    ]) {
+      if (params.containsKey(key)) details[key] = params[key];
+    }
+    final frame = params['frame'] as Map?;
+    if (frame != null) {
+      details['frameId'] = frame['id'];
+      details['loaderId'] = frame['loaderId'];
+    }
+    final request = params['request'] as Map?;
+    final url = params['url'] ?? frame?['url'] ?? request?['url'];
+    if (url != null) {
+      details['document'] = url == '$page' ? 'fixture'
+          : url == 'about:blank' ? 'blank' : 'other';
+    }
+    final initiator = params['initiator'] as Map?;
+    if (initiator != null) details['initiatorType'] = initiator['type'];
+    if (navigationEvents.length == 32) navigationEvents.removeAt(0);
+    navigationEvents.add(details);
   }
 
   /// Replays only exact events captured from Chrome, never invented payloads.
