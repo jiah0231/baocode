@@ -3020,6 +3020,18 @@ abstract class AppLocalizations {
   /// Native browser UI remains in Chrome.
   String get browserPanelChromeNotice;
 
+  /// Explicit recovery for the current chat after its Chrome connection died.
+  String get browserPanelReconnectAgent;
+
+  /// Explicit recovery for the current chat after its Chrome connection died.
+  String get browserPanelReconnectAgentTooltip;
+
+  /// Shows the current view and its distinct agent connection when needed.
+  String browserPanelBindingNotice(String view, String agent);
+
+  /// Shows the current view and its distinct agent connection when needed.
+  String browserPanelDisconnectedConnection(String browser);
+
   /// No description provided for @browserPanelPreparingControl.
   ///
   /// In en, this message translates to:

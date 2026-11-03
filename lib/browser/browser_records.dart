@@ -11,7 +11,7 @@ import 'browser_agent_control.dart';
 /// opens, the files it downloads.
 class BrowserRecords {
   BrowserRecords._() {
-    Zone.root.run(() => BrowserBridge.instance.events.listen(_received));
+    BrowserAgentControl.withoutAgentLease(() => BrowserBridge.instance.events.listen(_received));
     BrowserAgentControl.instance.addListener(_controlChanged);
     if (BrowserAgentControl.instance.manualControl) _controlChanged();
   }
@@ -23,30 +23,16 @@ class BrowserRecords {
   bool _captureSuspended = true;
 
   void _controlChanged() {
-    if (!BrowserAgentControl.instance.manualControl) return;
-    _captureSuspended = true;
+    final manual = BrowserAgentControl.instance.manualControl;
+    if (manual) _captureSuspended = true;
     for (final records in _tabs.values) {
-      records
-        ..watching = null
-        ..acceptAfter = null
-        ..captureEpoch = -1
-        ..since = null
-        ..openDialog = null
-        ..answer = null
-        ..answerLease = null;
-      records.console.clear();
-      records.clearRequests();
-      records.extraRequest.clear();
-      records.extraResponse.clear();
-      records.dialogs.clear();
-      records.downloads.clear();
-      records.sessions.clear();
-      records.styleSheets.clear();
+      if (manual || records.authority?.valid == false) records.resetCapture();
     }
   }
 
   bool recording(BrowserTab tab) =>
       _tabs[tab]?.captureEpoch == BrowserAgentControl.instance.epoch &&
+      _tabs[tab]?.authority?.valid == true &&
       !BrowserAgentControl.instance.manualControl;
 
   static const _maxConsole = 500;
@@ -98,13 +84,16 @@ class BrowserRecords {
         (_captureSuspended && !explicit && !recording(tab))) {
       throw const BrowserControlError.paused();
     }
-    if (records.captureEpoch != control.epoch) {
-      // Runtime.enable can replay its cached console after a detach. The
-      // cutoff is the explicit rearm, never the earlier takeover/detach.
+    if (records.captureEpoch != control.epoch || records.authority?.valid != true) {
+      final authority = control.captureTab(tab);
+      records.resetCapture();
+      records.authority = authority;
+      // Native revocation can happen without a global takeover. Every rearm
+      // gets a new cutoff, never the earlier capture or detach timestamp.
       records.acceptAfter = DateTime.now();
     }
     records.captureEpoch = control.epoch;
-    records.acceptAfter ??= DateTime.now();
+    final authority = records.authority!;
     if (records.watching != null) return records.watching;
     final watching = control.observe(tab.browser, () async {
       for (final (method, params) in [
@@ -115,6 +104,10 @@ class BrowserRecords {
         ('Performance.enable', const <String, Object?>{}),
       ]) {
         await tab.browser.cdp(tab.tabId, method, params);
+      }
+      authority.check();
+      if (!identical(records.authority, authority)) {
+        throw const BrowserControlError.revoked();
       }
       records.since ??= DateTime.now();
       if (tab.browser.can('cdp.session')) {
@@ -128,8 +121,9 @@ class BrowserRecords {
     records.watching = watching;
     try {
       await watching;
+      authority.check();
     } on Object {
-      records.watching = null;
+      if (identical(records.watching, watching)) records.watching = null;
       rethrow;
     }
   }
@@ -277,6 +271,10 @@ class BrowserRecords {
     String requestId,
   ) async {
     final epoch = BrowserAgentControl.instance.epoch;
+    final authority = records.authority;
+    if (authority == null || !authority.valid) return;
+    bool current() => authority.valid && identical(_tabs[tab], records) &&
+        identical(records.authority, authority) && recording(tab);
     try {
       final result = await BrowserAgentControl.instance.observe(
         tab.browser,
@@ -288,7 +286,7 @@ class BrowserRecords {
           request.sessionId,
         ),
       );
-      if (!BrowserAgentControl.instance.canObserve(epoch) || !recording(tab)) {
+      if (!BrowserAgentControl.instance.canObserve(epoch) || !current()) {
         return;
       }
       final data = result['body'] as String? ?? '';
@@ -301,7 +299,7 @@ class BrowserRecords {
     } on Object {
       // The browser has none (a redirect's, a 204's) or let it go already.
     } finally {
-      if (BrowserAgentControl.instance.canObserve(epoch) && recording(tab)) {
+      if (BrowserAgentControl.instance.canObserve(epoch) && current()) {
         _added.add((tab, request));
       }
     }
@@ -640,6 +638,28 @@ class BrowserRecords {
 }
 
 class _TabRecords {
+  BrowserTabAuthority? authority;
+
+  void resetCapture() {
+    authority = null;
+    watching = null;
+    acceptAfter = null;
+    captureEpoch = -1;
+    since = null;
+    openDialog = null;
+    answer = null;
+    answerLease = null;
+    console.clear();
+    clearRequests();
+    extraRequest.clear();
+    extraResponse.clear();
+    dialogs.clear();
+    downloads.clear();
+    sessions.clear();
+    styleSheets.clear();
+    actors.clear();
+  }
+
   int captureEpoch = -1;
   DateTime? acceptAfter;
   Future<void>? watching;

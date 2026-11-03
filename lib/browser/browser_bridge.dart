@@ -473,12 +473,14 @@ class BrowserTab {
 class BrowserEvent {
   BrowserEvent(this.connection, this.event, this.message)
     : observationEpoch = BrowserAgentControl.instance.epoch,
-      observedWhileManual = BrowserAgentControl.instance.manualControl;
+      observedWhileManual = BrowserAgentControl.instance.manualControl,
+      _authority = BrowserAgentControl.instance.captureConnection(connection);
 
   /// Stamped on receipt, not when an asynchronous subscriber catches up.
   final int observationEpoch;
   final bool observedWhileManual;
-  bool get observable => !observedWhileManual &&
+  final BrowserConnectionAuthority _authority;
+  bool get observable => !observedWhileManual && _authority.valid &&
       BrowserAgentControl.instance.canObserve(observationEpoch);
 
   final BrowserConnection connection;
@@ -552,10 +554,16 @@ class BrowserConnection {
   ]) {
     final lease = BrowserAgentControl.currentLease;
     lease?.check(this);
-    // Every CDP request auto-attaches in the existing extension. A native
-    // cancellation must also block human/background stale continuations.
+    // Every CDP request auto-attaches in the existing extension. Capture a
+    // one-way tab generation for both agent and human/background requests.
+    BrowserRequestAuthority? targetAuthority;
     if ((lease != null || method == 'cdp') && params['tabId'] is int) {
-      BrowserAgentControl.instance.checkTab(BrowserTab(this, params['tabId'] as int));
+      final tab = BrowserTab(this, params['tabId'] as int);
+      targetAuthority = lease?.touch(tab) ??
+          BrowserAgentControl.instance.captureTab(tab);
+    } else if (params['tabId'] is! int) {
+      targetAuthority = lease?.touchConnection(this) ??
+          BrowserAgentControl.instance.captureConnection(this);
     }
     if (_closed) {
       return Future.error(StateError('The browser is no longer connected.'));
@@ -565,6 +573,7 @@ class BrowserConnection {
     _pending[id] = completer;
     // No await between this last authority check and the socket write.
     lease?.check(this);
+    targetAuthority?.check();
     if (lease != null) BrowserAgentControl.instance.track(this, params);
     _write({'id': id, 'method': method, 'params': params});
     final result = completer.future.timeout(
@@ -574,8 +583,10 @@ class BrowserConnection {
         throw TimeoutException('The browser did not answer $method.');
       },
     );
-    if (lease == null) return result;
-    return lease.wait(result).whenComplete(() {
+    if (lease == null && targetAuthority == null) return result;
+    final targetResult = targetAuthority?.wait(result) ?? result;
+    final guarded = lease?.wait(targetResult) ?? targetResult;
+    return guarded.whenComplete(() {
       final pending = _pending.remove(id);
       if (pending != null && !pending.isCompleted) {
         // Settle the abandoned response too, cancelling its timeout timer.
@@ -724,7 +735,9 @@ class BrowserConnection {
           BrowserAgentControl.instance.markDetached(BrowserTab(this, message['tabId'] as int));
         }
         if ((event == 'closed' || event == 'unshared') && message['tabId'] is int) {
-          BrowserAgentControl.instance.forgetTab(BrowserTab(this, message['tabId'] as int));
+          // Revoke before notifying UI or recorders. Re-sharing the same id
+          // cannot make an outstanding request or old agent lease valid again.
+          BrowserAgentControl.instance.markDetached(BrowserTab(this, message['tabId'] as int));
         }
         _bridge._events.add(BrowserEvent(this, event, message));
     }

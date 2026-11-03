@@ -25,6 +25,7 @@ class BrowserWatching extends ChangeNotifier {
   BrowserWatching._(this.tab, this.task, this.started)
     : _epoch = BrowserAgentControl.instance.epoch,
       _lease = BrowserAgentControl.currentLease,
+      _authority = BrowserAgentControl.instance.captureTab(tab),
       _token = '${BrowserAgentControl.recordingNonce}-watch-${++_nextToken}';
 
   static int _nextToken = 0;
@@ -32,8 +33,9 @@ class BrowserWatching extends ChangeNotifier {
   final String _token;
   final int _epoch;
   final BrowserAgentLease? _lease;
+  final BrowserTabAuthority _authority;
   bool get _valid => BrowserAgentControl.instance.canObserve(_epoch) &&
-      !BrowserAgentControl.instance.isDetached(tab) && (_lease?.valid ?? true);
+      _authority.valid && (_lease?.valid ?? true);
 
   void _controlChanged() {
     if (_valid) return;
@@ -79,7 +81,7 @@ class BrowserWatching extends ChangeNotifier {
     // completion uses only this recorder's fixed teardown, outside its lease.
     if (!BrowserAgentControl.instance.manualControl &&
         !BrowserAgentControl.instance.isDetached(tab)) {
-      _cleanup = _cleanup.then((_) => Zone.root.run(_unhook));
+      _cleanup = _cleanup.then((_) => BrowserAgentControl.withoutAgentLease(_unhook));
       unawaited(_cleanup);
     }
     notifyListeners();
@@ -148,7 +150,7 @@ class BrowserWatching extends ChangeNotifier {
 
   Future<void> _unhook() async {
     final browser = tab.browser;
-    if (!browser.connected || BrowserAgentControl.instance.isDetached(tab)) return;
+    if (!_authority.valid) return;
     await _badge(tab, on: false);
     for (final (method, params) in [
       ('Runtime.evaluate', {'expression': 'window.__baoWatch?.stop(true)'}),
@@ -156,7 +158,7 @@ class BrowserWatching extends ChangeNotifier {
       if (_script case final id?)
         ('Page.removeScriptToEvaluateOnNewDocument', {'identifier': id}),
     ]) {
-      if (!browser.connected || BrowserAgentControl.instance.isDetached(tab)) return;
+      if (!_authority.valid) return;
       try {
         await browser.cdp(tab.tabId, method, params);
       } on Object {

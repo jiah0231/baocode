@@ -135,6 +135,7 @@ abstract final class BrowserTools {
                 return tool.run(input, call);
               }
               final tab = BrowserTab(_browser(), tabId);
+              BrowserAgentControl.currentLease?.touch(tab);
               await _watch(tabId);
               _blocked(tool.name, tab);
               final answer = await BrowserRecords.instance.acting(

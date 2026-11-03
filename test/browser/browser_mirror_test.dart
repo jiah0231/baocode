@@ -304,6 +304,96 @@ void main() {
       expect(mirror.imageBytes, orderedEquals(base64Decode(_red)));
     });
   });
+
+  for (final paused in [true, false]) {
+    testWidgets(
+      'Reconnect this chat changes only the dead binding while '
+      '${paused ? 'paused' : 'resumed'}',
+      (tester) async {
+        await _withMirror(tester, (mirror) async {
+          const sessionId = 'mirror-widget-test';
+          final control = BrowserAgentControl.instance;
+          final original = mirror.connection;
+          if (!paused) {
+            await tester.tap(find.text('Resume agent'));
+            await tester.pump();
+          }
+          expect(control.manualControl, paused);
+          expect(control.resolveBrowser(sessionId: sessionId), same(original));
+
+          final (replacementHost, replacement) = await mirror.connectHost(
+            'Replacement Chrome',
+          );
+          final target = BrowserTab(replacement, 1);
+          expect(replacement, isNot(same(original)));
+          await mirror.pump(initialTab: target);
+          await mirror.until(
+            () => replacementHost.callsFor('Page.startScreencast').isNotEmpty,
+          );
+          // Both connections expose tab 1. Viewing the second must not
+          // silently replace this chat's original connection binding.
+          expect(mirror.selected.last, target);
+          expect(control.resolveBrowser(sessionId: sessionId), same(original));
+          expect(find.textContaining('Agent is bound to'), findsOneWidget);
+          expect(find.textContaining('explicitly shared tabs'), findsOneWidget);
+          expect(find.text('Reconnect this chat'), findsNothing);
+
+          await mirror.io(() async {
+            mirror.host.destroy();
+            await _waitUntil(() => !original.connected);
+          });
+          await mirror.until(
+            () => find.text('Reconnect this chat').evaluate().isNotEmpty,
+          );
+          expect(control.canRebindSession(sessionId, target), isTrue);
+          expect(
+            () => control.resolveBrowser(sessionId: sessionId),
+            throwsA(isA<BrowserControlError>()),
+            reason: 'disconnect alone cannot fall back to the visible browser',
+          );
+
+          await tester.tap(find.text('Reconnect this chat'));
+          await mirror.until(() => !control.canRebindSession(sessionId, target));
+          expect(find.text('Reconnect this chat'), findsNothing);
+          expect(find.textContaining('Agent is bound to'), findsNothing);
+          expect(control.resolveBrowser(sessionId: sessionId), same(replacement));
+          expect(control.manualControl, paused);
+
+          BrowserConnection? routed;
+          Future<void> probe() => control.runAgent<void>(
+            sessionId: sessionId,
+            action: () async {
+              final browser = BrowserAgentControl.currentLease!.browser!;
+              routed = browser;
+              await browser.cdp(1, 'Runtime.evaluate', {
+                'expression': '"reconnected-chat-test"',
+              });
+            },
+          );
+
+          if (paused) {
+            await expectLater(probe(), throwsA(isA<BrowserControlError>()));
+            expect(routed, isNull, reason: 'Reconnect this chat is not Resume');
+            await tester.tap(find.text('Resume agent'));
+            await tester.pump();
+          }
+          await mirror.io(probe);
+          expect(routed, same(replacement));
+          final probes = replacementHost.callsFor('Runtime.evaluate').where(
+            (call) => call.params['expression'] == '"reconnected-chat-test"',
+          );
+          expect(probes, hasLength(1));
+          expect(probes.single.tabId, 1);
+          expect(
+            mirror.host.callsFor('Runtime.evaluate').where(
+              (call) => call.params['expression'] == '"reconnected-chat-test"',
+            ),
+            isEmpty,
+          );
+        });
+      },
+    );
+  }
 }
 
 Future<void> _withMirror(
@@ -332,6 +422,7 @@ class _MirrorHarness {
   final selected = <BrowserTab>[];
   Directory? _temporary;
   _SocketHost? _host;
+  final _additionalHosts = <_SocketHost>[];
   _SocketHost get host => _host!;
   late BrowserConnection connection;
 
@@ -381,7 +472,23 @@ class _MirrorHarness {
     });
   }
 
-  Future<void> pump({bool visible = true, double ratio = 1}) => tester.pumpWidget(
+  Future<(_SocketHost, BrowserConnection)> connectHost(String name) async {
+    late _SocketHost added;
+    late BrowserConnection browser;
+    await io(() async {
+      added = await _SocketHost.connect(browserName: name);
+      _additionalHosts.add(added);
+      await _waitUntil(() => bridge.browsers.any((entry) => entry.browser == name));
+      browser = bridge.browsers.singleWhere((entry) => entry.browser == name);
+    });
+    return (added, browser);
+  }
+
+  Future<void> pump({
+    bool visible = true,
+    double ratio = 1,
+    BrowserTab? initialTab,
+  }) => tester.pumpWidget(
     MaterialApp(
       locale: const Locale('en'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -396,7 +503,7 @@ class _MirrorHarness {
           child: BrowserMirror(
             key: const ValueKey('test-browser-mirror'),
             sessionId: 'mirror-widget-test',
-            initialTab: BrowserTab(connection, 1),
+            initialTab: initialTab ?? BrowserTab(connection, 1),
             onSelectionChanged: selected.add,
           ),
         ),
@@ -436,12 +543,17 @@ class _MirrorHarness {
       // Flush the focus/click check timers after disposing the mirror itself.
       await tester.pump(const Duration(milliseconds: 100));
       await io(() async {
+        final hosts = [?_host, ..._additionalHosts];
         try {
-          _host?.completeScreenshots(_red);
-          await _host?.flush();
+          for (final host in hosts) {
+            host.completeScreenshots(_red);
+            await host.flush();
+          }
         } finally {
           await bridge.stop();
-          _host?.destroy();
+          for (final host in hosts) {
+            host.destroy();
+          }
         }
       });
       // Let completed CDP futures cancel their request timeout timers.
@@ -500,8 +612,11 @@ class _SocketHost {
   final _buffer = <int>[];
   var holdScreenshots = false;
   var _frameId = 0;
+  var _destroyed = false;
 
-  static Future<_SocketHost> connect() async {
+  static Future<_SocketHost> connect({
+    String browserName = 'Synthetic Chrome',
+  }) async {
     final [port, token] = File(BrowserBridge.portPath)
         .readAsStringSync()
         .split(' ');
@@ -515,7 +630,7 @@ class _SocketHost {
     });
     host.send({
       'type': 'hello',
-      'browser': 'Synthetic Chrome',
+      'browser': browserName,
       'protocol': BrowserBridge.protocol,
     });
     await host.flush();
@@ -568,7 +683,7 @@ class _SocketHost {
         pendingScreenshots.add(request);
         continue;
       }
-      final Object? result = switch (call.method) {
+      final Object result = switch (call.method) {
         'tabs.list' => [
           {'tabId': 1, 'title': 'Human page', 'url': 'https://one.example/'},
           {'tabId': 2, 'title': 'Agent page', 'url': 'https://two.example/'},
@@ -596,7 +711,12 @@ class _SocketHost {
     pendingScreenshots.clear();
   }
 
-  Future<void> flush() => socket.flush();
+  Future<void> flush() async {
+    if (!_destroyed) await socket.flush();
+  }
 
-  void destroy() => socket.destroy();
+  void destroy() {
+    _destroyed = true;
+    socket.destroy();
+  }
 }

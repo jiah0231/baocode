@@ -135,7 +135,7 @@ class _BrowserMirrorState extends State<BrowserMirror>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final visible = TickerMode.of(context);
+    final visible = TickerMode.valuesOf(context).enabled;
     if (visible != _tickerVisible) {
       _tickerVisible = visible;
       if (!visible) {
@@ -205,7 +205,9 @@ class _BrowserMirrorState extends State<BrowserMirror>
   void _bindSelection() {
     final tab = _panel.selected;
     if (tab == null || !_panel.connected ||
-        (_boundTarget == tab && _boundSession == widget.sessionId)) return;
+        (_boundTarget == tab && _boundSession == widget.sessionId)) {
+      return;
+    }
     _boundTarget = tab;
     _boundSession = widget.sessionId;
     _control.selectTarget(tab);
@@ -260,7 +262,9 @@ class _BrowserMirrorState extends State<BrowserMirror>
       }
       if (_disposed || !mounted || _capturePaused || _detached != null ||
           tab == null || _control.isDetached(tab) ||
-          generation != _captureGeneration || tab != _shown) return;
+          generation != _captureGeneration || tab != _shown) {
+        return;
+      }
       _streaming = tab;
       _streamGeneration = generation;
       try {
@@ -284,7 +288,9 @@ class _BrowserMirrorState extends State<BrowserMirror>
   Future<void> _poll() async {
     final tab = _shown;
     if (tab == null || _shooting || _detached != null ||
-        _capturePaused || _disposed) return;
+        _capturePaused || _disposed) {
+      return;
+    }
     final now = DateTime.now();
     if (now.difference(_lastFrame) < const Duration(milliseconds: 600) ||
         now.difference(_lastShot) < const Duration(seconds: 1)) {
@@ -300,13 +306,17 @@ class _BrowserMirrorState extends State<BrowserMirror>
       // As the screen has it, made small here: a screenshot's own scale
       // has the browser draw the page that small in its window meanwhile.
       if (generation != _captureGeneration || tab != _shown ||
-          _disposed || _capturePaused) return;
+          _disposed || _capturePaused) {
+        return;
+      }
       final shot = await tab.browser.cdp(tab.tabId, 'Page.captureScreenshot', {
         'format': 'jpeg',
         'quality': 70,
       });
       if (tab != _shown || !mounted || _disposed || _capturePaused ||
-          generation != _captureGeneration) return;
+          generation != _captureGeneration) {
+        return;
+      }
       // A screencast's frame may have come meanwhile: the newer is kept.
       if (DateTime.now().difference(_lastFrame) <
           const Duration(milliseconds: 600)) {
@@ -335,7 +345,9 @@ class _BrowserMirrorState extends State<BrowserMirror>
             event.message['method'] != 'Page.screencastFrame') {
           return;
         }
-        if (_detached != null || _control.isDetached(tab)) return;
+        if (_detached != null || _control.isDetached(tab)) {
+          return;
+        }
         final params = (event.message['params'] as Map).cast<String, Object?>();
         unawaited(
           tab.browser
@@ -345,7 +357,9 @@ class _BrowserMirrorState extends State<BrowserMirror>
               .then((_) {}, onError: (Object _) {}),
         );
         if (_capturePaused || _disposed || _streaming != tab ||
-            _streamGeneration != _captureGeneration) return;
+            _streamGeneration != _captureGeneration) {
+          return;
+        }
         final metadata = (params['metadata'] as Map).cast<String, Object?>();
         _lastFrame = DateTime.now();
         _frames.push(
@@ -407,7 +421,9 @@ class _BrowserMirrorState extends State<BrowserMirror>
     try {
       await _control.ready;
       if (!mounted || _disposed || selected != _panel.selected ||
-          generation != _actionGeneration) return;
+          generation != _actionGeneration) {
+        return;
+      }
       if (_control.cleanupError != null) {
         setState(() => _actionError = _control.cleanupError);
         return;
@@ -498,7 +514,9 @@ class _BrowserMirrorState extends State<BrowserMirror>
 
   void _ime(String text, {required bool commit, TextRange? selection}) {
     final tab = _shown;
-    if (tab == null || _detached != null || _control.isDetached(tab)) return;
+    if (tab == null || _detached != null || _control.isDetached(tab)) {
+      return;
+    }
     final call = commit
         ? tab.browser.cdp(tab.tabId, 'Input.insertText', {'text': text})
         : tab.browser.cdp(tab.tabId, 'Input.imeSetComposition', {
@@ -584,7 +602,9 @@ class _BrowserMirrorState extends State<BrowserMirror>
   }) {
     final tab = _shown;
     if (tab == null) return;
-    if (_detached != null || _control.isDetached(tab)) return;
+    if (_detached != null || _control.isDetached(tab)) {
+      return;
+    }
     final name = browserKeyName(event.physicalKey);
     final label = event.logicalKey.keyLabel;
     unawaited(
@@ -699,7 +719,9 @@ class _BrowserMirrorState extends State<BrowserMirror>
     final tab = _shown;
     final point = _pagePoint(local, clamp: clamp);
     if (tab == null || point == null || _detached != null ||
-        _control.isDetached(tab)) return;
+        _control.isDetached(tab)) {
+      return;
+    }
     _lastPointer = local;
     unawaited(
       tab.browser
@@ -727,7 +749,9 @@ class _BrowserMirrorState extends State<BrowserMirror>
 
   void _down(PointerDownEvent event) {
     if (_capturePaused || _detached != null ||
-        _pagePoint(event.localPosition) == null) return;
+        _pagePoint(event.localPosition) == null) {
+      return;
+    }
     _focus.requestFocus();
     final again =
         _lastDownAt != null &&
@@ -857,6 +881,7 @@ class _BrowserMirrorState extends State<BrowserMirror>
           url: _panel.url,
           connected: _panel.connected && _detached == null,
           browserName: tab?.browser.browser,
+          bindingNotice: _bindingNotice(context),
           manualControl: _control.manualControl,
           error: _control.cleaningUp
               ? l10n.browserPanelPreparingControl
@@ -884,6 +909,7 @@ class _BrowserMirrorState extends State<BrowserMirror>
               : null,
           onClose: () => unawaited(_act(_panel.closeTab)),
           onShow: () => unawaited(_act(_panel.showInChrome)),
+          onReconnectAgent: _canReconnectAgent ? _reconnectAgent : null,
           onTakeOver: _control.takeOver,
           onResume: _control.resume,
         ),
@@ -918,6 +944,46 @@ class _BrowserMirrorState extends State<BrowserMirror>
         ),
       ],
     );
+  }
+
+  String _connectionLabel(BuildContext context, BrowserConnection browser) {
+    final name = browser.browser ?? 'Chrome';
+    if (!browser.connected) {
+      return context.l10n.browserPanelDisconnectedConnection(name);
+    }
+    final index = _bridge.browsers.indexOf(browser);
+    return index < 0 ? name : '$name #${index + 1}';
+  }
+
+  String? _bindingNotice(BuildContext context) {
+    final sessionId = widget.sessionId;
+    final selected = _panel.selected;
+    if (sessionId == null || selected == null) return null;
+    final bound = _control.boundBrowserForSession(sessionId);
+    if (bound == null || identical(bound, selected.browser)) return null;
+    return context.l10n.browserPanelBindingNotice(
+      _connectionLabel(context, selected.browser),
+      _connectionLabel(context, bound),
+    );
+  }
+
+  void _reconnectAgent() {
+    final sessionId = widget.sessionId;
+    final selected = _panel.selected;
+    if (sessionId == null || selected == null || !_panel.connected) return;
+    try {
+      _control.rebindSession(sessionId, selected);
+      setState(() => _actionError = null);
+    } on Object catch (error) {
+      setState(() => _actionError = '$error');
+    }
+  }
+
+  bool get _canReconnectAgent {
+    final sessionId = widget.sessionId;
+    final selected = _panel.selected;
+    return sessionId != null && selected != null && _panel.connected &&
+        _control.canRebindSession(sessionId, selected);
   }
 
   bool get _canCreateTab {

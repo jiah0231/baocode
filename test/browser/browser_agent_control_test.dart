@@ -380,6 +380,312 @@ void main() {
     expect(control.cleanupError, isNull);
   });
 
+  test('a lease waiting before its first dispatch cannot cross reconnect', () async {
+    final peer = await connect('First');
+    final tab = BrowserTab(peer.browser, 7);
+    final gate = Completer<void>();
+    final waiting = Completer<void>();
+    var denied = false;
+    final run = control.runAgent(action: () async {
+      waiting.complete();
+      await gate.future;
+      try {
+        await peer.browser.cdp(7, 'Page.navigate', {'url': 'https://should-not-run.invalid'});
+      } on BrowserControlError {
+        denied = true;
+        rethrow;
+      }
+    });
+    final failed = expectLater(run, throwsA(isA<BrowserControlError>()));
+    await waiting.future;
+    peer.send({'type': 'event', 'event': 'detached', 'tabId': 7});
+    await _until(() => control.isDetached(tab));
+    await failed;
+    control.reconnectTab(tab);
+    gate.complete();
+    await _until(() => denied);
+    expect(peer.commands('Page.navigate'), isEmpty);
+  });
+
+  test('queued observations retain their old connection generation', () async {
+    final peer = await connect('First');
+    final tab = BrowserTab(peer.browser, 7);
+    final oldEvent = BrowserEvent(peer.browser, 'cdp', {
+      'tabId': 7, 'method': 'Runtime.consoleAPICalled',
+      'params': {'timestamp': DateTime.now().millisecondsSinceEpoch,
+        'args': [{'type': 'string', 'value': 'PRIVATE QUEUED EVENT'}]},
+    });
+    expect(oldEvent.observable, isTrue);
+    peer.send({'type': 'event', 'event': 'unshared', 'tabId': 7});
+    await _until(() => control.isDetached(tab));
+    expect(oldEvent.observable, isFalse);
+    // Lifecycle-event construction itself must not throw for a blocked tab.
+    expect(BrowserEvent(peer.browser, 'unshared', {'tabId': 7}).observable, isTrue);
+    control.reconnectTab(tab);
+    expect(oldEvent.observable, isFalse);
+    expect(BrowserEvent(peer.browser, 'tab', {'tabId': 7}).observable, isTrue);
+  });
+
+  test('native rearm gets a fresh recording cutoff and drops old body metadata', () async {
+    final peer = await connect('First');
+    final tab = BrowserTab(peer.browser, 7);
+    final records = BrowserRecords.instance;
+    await records.watch(tab, explicit: true);
+    final added = <Object>[];
+    final subscription = records.added.listen((entry) => added.add(entry.$2));
+    addTearDown(subscription.cancel);
+    peer.heldMethods.add('Network.getResponseBody');
+    peer.event('Network.requestWillBeSent', {
+      'requestId': 'revoked-body', 'type': 'Fetch', 'timestamp': 1,
+      'wallTime': DateTime.now().millisecondsSinceEpoch / 1000,
+      'request': {'url': 'https://PRIVATE-OLD.invalid', 'method': 'GET', 'headers': {}},
+    });
+    peer.event('Network.loadingFinished', {
+      'requestId': 'revoked-body', 'timestamp': 2, 'encodedDataLength': 10,
+    });
+    await _until(() => peer.commands('Network.getResponseBody').isNotEmpty);
+    final epoch = control.epoch;
+    peer.send({'type': 'event', 'event': 'detached', 'tabId': 7});
+    await _until(() => control.isDetached(tab));
+    expect(records.recording(tab), isFalse);
+    final privateAt = DateTime.now().millisecondsSinceEpoch;
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    control.reconnectTab(tab);
+    await records.watch(tab, explicit: true);
+    expect(control.epoch, epoch, reason: 'Native revocation is not a global takeover');
+    peer.reply(peer.commands('Network.getResponseBody').single, {'body': 'PRIVATE OLD BODY'});
+    peer.event('Runtime.consoleAPICalled', {
+      'type': 'error', 'timestamp': privateAt,
+      'args': [{'type': 'string', 'value': 'PRIVATE REPLAY'}],
+    });
+    peer.event('Runtime.consoleAPICalled', {
+      'type': 'log', 'timestamp': DateTime.now().millisecondsSinceEpoch + 1,
+      'args': [{'type': 'string', 'value': 'fresh after native rearm'}],
+    });
+    await _until(() => records.console(tab).isNotEmpty);
+    expect(records.console(tab).map((entry) => entry.text), ['fresh after native rearm']);
+    expect(records.requests(tab), isEmpty);
+    expect(added.whereType<NetworkRequest>().where((r) => r.id == 'revoked-body'), isEmpty);
+  });
+
+  test('clearing only agent authority preserves the surrounding zone', () async {
+    await connect('First');
+    final marker = Object();
+    await runZoned(() => control.runAgent(action: () async {
+      expect(BrowserAgentControl.currentLease, isNotNull);
+      await BrowserAgentControl.withoutAgentLease(() async {
+        expect(BrowserAgentControl.currentLease, isNull);
+        expect(Zone.current[#browserTestMarker], same(marker));
+        await Future<void>.value();
+        expect(Zone.current[#browserTestMarker], same(marker));
+      });
+      expect(BrowserAgentControl.currentLease, isNotNull);
+    }), zoneValues: {#browserTestMarker: marker});
+  });
+
+  test('late cleanup cannot mutate state or dispatch after a test reset', () async {
+    final peer = await connect('First');
+    await control.runAgent(action: () => peer.browser.cdp(7, 'DOM.getDocument'));
+    peer.heldMethods.add('Runtime.evaluate');
+    control.takeOver();
+    final oldCleanup = control.ready;
+    await _until(() => peer.commands('Runtime.evaluate').isNotEmpty);
+    final pending = peer.commands('Runtime.evaluate').single;
+    control.resetForTesting();
+    control.resume();
+    var notifications = 0;
+    void changed() => notifications++;
+    control.addListener(changed);
+    peer.reply(pending, <String, Object?>{});
+    await oldCleanup;
+    control.removeListener(changed);
+    expect(notifications, 0);
+    expect(control.manualControl, isFalse);
+    expect(control.cleaningUp, isFalse);
+    expect(control.cleanupError, isNull);
+    expect(peer.commands('Runtime.removeBinding'), isEmpty);
+  });
+
+  for (final revokedBy in ['detached', 'unshared', 'closed']) {
+    test('$revokedBy permanently suppresses a pending read despite reconnect', () async {
+      final peer = await connect('First');
+      final tab = BrowserTab(peer.browser, 7);
+      peer.heldMethods.add('DOM.getDocument');
+      final run = control.runAgent(action: () async {
+        final result = await peer.browser.cdp(7, 'DOM.getDocument');
+        await peer.browser.cdp(7, 'Page.navigate', {'url': 'https://should-not-run.invalid'});
+        return result;
+      });
+      final failed = expectLater(run, throwsA(isA<BrowserControlError>()));
+      await _until(() => peer.commands('DOM.getDocument').isNotEmpty);
+      final pending = peer.commands('DOM.getDocument').single;
+      peer.send({'type': 'event', 'event': revokedBy, 'tabId': 7});
+      await _until(() => control.isDetached(tab));
+      peer.send({'type': 'event', 'event': 'tab', 'tab': {
+        'tabId': 7, 'url': 'https://example.invalid/reshared', 'title': 'Shared again',
+      }});
+      control.reconnectTab(tab);
+      peer.reply(pending, {'root': 'PRIVATE LATE RESULT'});
+      await failed;
+      expect(peer.commands('Page.navigate'), isEmpty);
+      peer.heldMethods.clear();
+      await control.runAgent(action: () => peer.browser.cdp(7, 'DOM.getDocument'));
+      expect(peer.commands('DOM.getDocument'), hasLength(2));
+    });
+
+    test('$revokedBy cancels a between-request continuation without reviving it', () async {
+      final peer = await connect('First');
+      final tab = BrowserTab(peer.browser, 7);
+      final resumeOldWork = Completer<void>();
+      final waiting = Completer<void>();
+      var denied = false;
+      final run = control.runAgent(action: () async {
+        await peer.browser.cdp(7, 'DOM.getDocument');
+        waiting.complete();
+        await resumeOldWork.future;
+        try {
+          await peer.browser.cdp(7, 'Page.navigate', {'url': 'https://should-not-run.invalid'});
+        } on BrowserControlError {
+          denied = true;
+          rethrow;
+        }
+      });
+      final failed = expectLater(run, throwsA(isA<BrowserControlError>()));
+      await waiting.future;
+      peer.send({'type': 'event', 'event': revokedBy, 'tabId': 7});
+      await _until(() => control.isDetached(tab));
+      await failed; // Revocation settles the call even before old work wakes.
+      control.reconnectTab(tab);
+      resumeOldWork.complete();
+      await _until(() => denied);
+      expect(peer.commands('Page.navigate'), isEmpty);
+    });
+  }
+
+  test('pending human capture is fenced across unshare and explicit reconnect', () async {
+    final peer = await connect('First');
+    final tab = BrowserTab(peer.browser, 7);
+    peer.heldMethods.add('Page.captureScreenshot');
+    final capture = peer.browser.cdp(7, 'Page.captureScreenshot');
+    final failed = expectLater(capture, throwsA(isA<BrowserControlError>()));
+    await _until(() => peer.commands('Page.captureScreenshot').isNotEmpty);
+    peer.send({'type': 'event', 'event': 'unshared', 'tabId': 7});
+    await _until(() => control.isDetached(tab));
+    await expectLater(Future.sync(() => peer.browser.cdp(7, 'DOM.getDocument')),
+        throwsA(isA<BrowserControlError>()));
+    control.reconnectTab(tab);
+    peer.reply(peer.commands('Page.captureScreenshot').single, {'data': 'PRIVATE OLD FRAME'});
+    await failed;
+    peer.heldMethods.clear();
+    await peer.browser.cdp(7, 'Page.captureScreenshot');
+    expect(peer.commands('Page.captureScreenshot'), hasLength(2));
+  });
+
+  for (final method in ['tabs.list', 'call']) {
+    test('tabless $method is revoked when any target tab becomes unavailable', () async {
+      final peer = await connect('First');
+      final tab = BrowserTab(peer.browser, 7);
+      peer.heldMethods.add(method);
+      final run = control.runAgent(action: () => peer.browser.request(method,
+        method == 'call' ? {'api': 'tabs.query', 'args': [{}]} : {},
+      ));
+      final failed = expectLater(run, throwsA(isA<BrowserControlError>()));
+      await _until(() => peer.requests.isNotEmpty);
+      final pending = peer.requests.single;
+      peer.send({'type': 'event', 'event': 'unshared', 'tabId': 7});
+      await _until(() => control.isDetached(tab));
+      control.reconnectTab(tab);
+      peer.reply(pending, [{'tabId': 7, 'url': 'https://PRIVATE-OLD.invalid'}]);
+      await failed;
+      peer.heldMethods.clear();
+      await control.runAgent(action: () => peer.browser.request('tabs.list'));
+    });
+  }
+
+  test('tabless lease cannot continue after revocation even on another tab', () async {
+    final peer = await connect('First');
+    final tab = BrowserTab(peer.browser, 7);
+    final gate = Completer<void>();
+    final listed = Completer<void>();
+    var denied = false;
+    final run = control.runAgent(action: () async {
+      await peer.browser.request('tabs.list');
+      listed.complete();
+      await gate.future;
+      try {
+        await peer.browser.cdp(99, 'Page.navigate', {'url': 'https://should-not-run.invalid'});
+      } on BrowserControlError {
+        denied = true;
+        rethrow;
+      }
+    });
+    final failed = expectLater(run, throwsA(isA<BrowserControlError>()));
+    await listed.future;
+    peer.send({'type': 'event', 'event': 'closed', 'tabId': 7});
+    await _until(() => control.isDetached(tab));
+    await failed;
+    control.reconnectTab(tab);
+    gate.complete();
+    await _until(() => denied);
+    expect(peer.commands('Page.navigate'), isEmpty);
+  });
+
+  test('explicit dead-binding recovery revokes old runs and preserves manual state', () async {
+    final first = await connect('First');
+    final second = await connect('Second');
+    final target = BrowserTab(second.browser, 7);
+    control.bindSession('recover', BrowserTab(first.browser, 7));
+    expect(control.boundBrowserForSession('recover'), same(first.browser));
+    expect(control.boundBrowserForSession('unknown'), isNull);
+    expect(control.canRebindSession('recover', target), isFalse);
+    expect(() => control.rebindSession('recover', target), throwsA(isA<BrowserControlError>()));
+    final gate = Completer<void>();
+    final waiting = Completer<void>();
+    final oldRun = control.runAgent(sessionId: 'recover', action: () async {
+      await first.browser.request('tabs.list');
+      waiting.complete();
+      await gate.future;
+      return 'PRIVATE OLD SESSION RESULT';
+    });
+    final failed = expectLater(oldRun, throwsA(isA<BrowserControlError>()));
+    await waiting.future;
+    first.socket.destroy();
+    await _until(() => !first.browser.connected);
+    control.selectTarget(target);
+    control.bindSession('recover', target); // Passive binding is still sticky.
+    expect(control.boundBrowserForSession('recover'), same(first.browser));
+    expect(control.canRebindSession('recover', target), isTrue);
+    var notifications = 0;
+    void changed() => notifications++;
+    control.addListener(changed);
+    control.rebindSession('recover', target);
+    control.removeListener(changed);
+    expect(notifications, 1);
+    expect(control.manualControl, isFalse);
+    expect(control.boundBrowserForSession('recover'), same(second.browser));
+    await failed;
+    gate.complete();
+    await control.runAgent(sessionId: 'recover', action: () =>
+      BrowserAgentControl.currentLease!.browser!.request('tabs.list'));
+    expect(second.requests.where((r) => r['method'] == 'tabs.list'), hasLength(1));
+
+    // The recovery action itself never grants Resume after a takeover.
+    final third = await connect('Third');
+    second.socket.destroy();
+    await _until(() => !second.browser.connected);
+    control.takeOver();
+    await control.ready;
+    control.rebindSession('recover', BrowserTab(third.browser, 7));
+    expect(control.manualControl, isTrue);
+    expect(control.boundBrowserForSession('recover'), same(third.browser));
+    await expectLater(control.runAgent(sessionId: 'recover', action: () async => 'blocked'),
+        throwsA(isA<BrowserControlError>()));
+    await resume();
+    await control.runAgent(sessionId: 'recover', action: () =>
+      BrowserAgentControl.currentLease!.browser!.request('tabs.list'));
+    expect(third.requests.where((r) => r['method'] == 'tabs.list'), hasLength(1));
+  });
+
   test('native debugger cancellation stops later cleanup stages and reattach', () async {
     final peer = await connect('First');
     final tab = BrowserTab(peer.browser, 7);

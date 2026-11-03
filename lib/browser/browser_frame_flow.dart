@@ -65,10 +65,9 @@ class BrowserFramePayload {
 /// Decode the payload in [onFrame], so superseded images are never decoded.
 class BrowserFrameFlow {
   BrowserFrameFlow({
-    required void Function(void Function()) schedule,
-    required void Function(BrowserFramePayload) onFrame,
-  }) : _schedule = schedule,
-       _onFrame = onFrame;
+    required this._schedule,
+    required this._onFrame,
+  });
 
   final void Function(void Function()) _schedule;
   final void Function(BrowserFramePayload) _onFrame;

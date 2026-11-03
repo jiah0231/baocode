@@ -32,10 +32,12 @@ class BrowserPanelToolbar extends StatefulWidget {
     this.onShow,
     this.onTakeOver,
     this.onResume,
+    this.onReconnectAgent,
     required this.onNavigate,
     required this.manualControl,
     this.connected = true,
     this.browserName,
+    this.bindingNotice,
     this.error,
   });
 
@@ -50,12 +52,20 @@ class BrowserPanelToolbar extends StatefulWidget {
   final VoidCallback? onShow;
   final VoidCallback? onTakeOver;
   final VoidCallback? onResume;
+
+  /// Offered only when the caller can recover this chat's dead connection.
+  /// Reconnecting does not change the global agent pause state.
+  final VoidCallback? onReconnectAgent;
   final ValueChanged<String> onNavigate;
   final bool manualControl;
 
   /// Whether the selected page is usable, not whether every bridge is offline.
   final bool connected;
   final String? browserName;
+
+  /// Localized explanation of the viewed and agent-bound connections.
+  /// The caller owns connection selection and recovery; this is display-only.
+  final String? bindingNotice;
   final String? error;
 
   @override
@@ -226,6 +236,20 @@ class _BrowserPanelToolbarState extends State<BrowserPanelToolbar> {
                     l10n.browserShowInBrowser,
                     widget.onShow,
                   ),
+                  if (widget.onReconnectAgent case final reconnect?)
+                    IdeHover(
+                      message: l10n.browserPanelReconnectAgentTooltip,
+                      child: IdeButton(
+                        label: l10n.browserPanelReconnectAgent,
+                        icon: Codicons.plug,
+                        secondary: true,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 3,
+                        ),
+                        onPressed: reconnect,
+                      ),
+                    ),
                   IdeHover(
                     message: controlTooltip,
                     child: IdeButton(
@@ -319,6 +343,16 @@ class _BrowserPanelToolbarState extends State<BrowserPanelToolbar> {
                 ),
               ],
             ),
+            if (widget.bindingNotice case final notice?
+                when notice.trim().isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 5),
+                child: Text(
+                  notice,
+                  key: const ValueKey('browser-panel-binding-notice'),
+                  style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+                ),
+              ),
             Padding(
               padding: const EdgeInsets.only(top: 5),
               child: Text(

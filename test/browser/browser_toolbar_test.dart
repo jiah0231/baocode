@@ -13,6 +13,7 @@ BrowserPanelToolbar _toolbar({
   String title = 'Example',
   String url = 'https://example.com/',
   String? browserName,
+  String? bindingNotice,
   bool connected = true,
   bool manualControl = false,
   ValueChanged<String>? onNavigate,
@@ -24,12 +25,14 @@ BrowserPanelToolbar _toolbar({
   VoidCallback? onShow,
   VoidCallback? onTakeOver,
   VoidCallback? onResume,
+  VoidCallback? onReconnectAgent,
   List<IdeMenuEntry> Function()? tabs,
   String? error,
 }) => BrowserPanelToolbar(
   title: title,
   url: url,
   browserName: browserName,
+  bindingNotice: bindingNotice,
   connected: connected,
   manualControl: manualControl,
   onNavigate: onNavigate ?? (_) {},
@@ -42,6 +45,7 @@ BrowserPanelToolbar _toolbar({
   onShow: onShow,
   onTakeOver: onTakeOver,
   onResume: onResume,
+  onReconnectAgent: onReconnectAgent,
   error: error,
 );
 
@@ -345,6 +349,103 @@ void main() {
     expect(find.text('所选标签页不可用'), findsOneWidget);
   });
 
+  testWidgets('chat reconnect is explicit, localized and preserves agent pause', (
+    tester,
+  ) async {
+    for (final locale in [const Locale('en'), const Locale('zh')]) {
+      final chinese = locale.languageCode == 'zh';
+      final label = chinese ? '重新连接此会话' : 'Reconnect this chat';
+      final resume = chinese ? '继续 Agent' : 'Resume agent';
+      final tooltip = chinese
+          ? '将此会话重新连接到所选 Chrome。旧浏览器任务作废，Agent 暂停状态不变。'
+          : 'Use the selected Chrome connection for this chat. '
+                'Old browser work is cancelled; agent pause stays unchanged.';
+      var reconnected = 0;
+      var resumed = 0;
+
+      await _pump(tester, _toolbar(), locale: locale);
+      expect(find.text(label), findsNothing);
+
+      await _pump(
+        tester,
+        _toolbar(
+          manualControl: true,
+          onResume: () => resumed++,
+          onReconnectAgent: () => reconnected++,
+        ),
+        locale: locale,
+      );
+      expect(find.text(label), findsOneWidget);
+      expect(find.text(resume), findsOneWidget);
+      expect(
+        find.byWidgetPredicate(
+          (widget) => widget is IdeHover && widget.message == tooltip,
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.text(label));
+      await tester.pump();
+      expect(reconnected, 1);
+      expect(resumed, 0);
+      expect(
+        tester.widget<BrowserPanelToolbar>(
+          find.byType(BrowserPanelToolbar),
+        ).manualControl,
+        isTrue,
+      );
+      expect(find.text(resume), findsOneWidget);
+
+      await _pump(
+        tester,
+        _toolbar(manualControl: true),
+        locale: locale,
+      );
+      expect(find.text(label), findsNothing);
+      expect(find.text(resume), findsOneWidget);
+    }
+  });
+
+  testWidgets('binding notices only update display and preserve callbacks', (
+    tester,
+  ) async {
+    const noticeKey = ValueKey('browser-panel-binding-notice');
+    const first = 'This panel and this chat are using different connections.';
+    const second = '此面板与当前会话使用不同的连接。';
+    var calls = 0;
+    void navigate(String _) => calls++;
+    void reconnect() => calls++;
+    void resume() => calls++;
+
+    for (final notice in [null, first, second, '', ' ']) {
+      await _pump(
+        tester,
+        _toolbar(
+          bindingNotice: notice,
+          manualControl: true,
+          onNavigate: navigate,
+          onReconnectAgent: reconnect,
+          onResume: resume,
+        ),
+      );
+      if (notice == null || notice.trim().isEmpty) {
+        expect(find.byKey(noticeKey), findsNothing);
+      } else {
+        final text = tester.widget<Text>(find.byKey(noticeKey));
+        expect(text.data, notice);
+        expect(text.maxLines, isNull);
+        expect(find.text(notice == first ? second : first), findsNothing);
+      }
+      final toolbar = tester.widget<BrowserPanelToolbar>(
+        find.byType(BrowserPanelToolbar),
+      );
+      expect(toolbar.onNavigate, same(navigate));
+      expect(toolbar.onReconnectAgent, same(reconnect));
+      expect(toolbar.onResume, same(resume));
+      expect(toolbar.manualControl, isTrue);
+      expect(calls, 0);
+    }
+  });
+
   testWidgets('unavailable history actions stay disabled while connected', (
     tester,
   ) async {
@@ -369,6 +470,8 @@ void main() {
             title:
                 'A very long page title that should not overflow the sidebar',
             manualControl: true,
+            bindingNotice:
+                'This panel and this chat are using different connections.',
             error: error,
           ),
           locale: locale,

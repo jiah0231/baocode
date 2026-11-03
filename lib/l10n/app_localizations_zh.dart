@@ -1505,6 +1505,20 @@ class AppLocalizationsZh extends AppLocalizations {
   String get browserPanelChromeNotice => '原生对话框、权限提示和下载请在 Chrome 中处理。';
 
   @override
+  String get browserPanelReconnectAgent => '重新连接此会话';
+
+  @override
+  String get browserPanelReconnectAgentTooltip => '将此会话重新连接到所选 Chrome。旧浏览器任务作废，Agent 暂停状态不变。';
+
+  @override
+  String browserPanelBindingNotice(String view, String agent) =>
+      '当前查看：${view}。Agent 仍连接：${agent}，可使用该连接中明确共享的标签页。';
+
+  @override
+  String browserPanelDisconnectedConnection(String browser) =>
+      '${browser}（已断开）';
+
+  @override
   String get browserPanelPreparingControl => '正在准备手动操作…';
 
   @override

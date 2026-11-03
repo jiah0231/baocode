@@ -29,10 +29,14 @@ class BrowserAgentControl extends ChangeNotifier {
   int _epoch = 0;
   Completer<void> _revoked = Completer<void>();
   final Map<String, BrowserConnection> _sessions = {};
+  final Map<String, _BrowserAuthority> _sessionAuthorities = {};
+  final Map<BrowserTab, _BrowserAuthority> _tabAuthorities = {};
+  final Map<BrowserConnection, _BrowserAuthority> _connectionAuthorities = {};
   final Set<BrowserTab> _agentTabs = {};
   final Map<BrowserTab, Set<String>> _features = {};
   final Set<BrowserTab> _detached = {};
   Future<void>? _cleanup;
+  int _cleanupGeneration = 0;
   bool _resumeRequested = false;
   String? _cleanupError;
   String? _stateError;
@@ -47,6 +51,11 @@ class BrowserAgentControl extends ChangeNotifier {
   static BrowserAgentLease? get currentLease =>
       Zone.current[_leaseKey] as BrowserAgentLease?;
 
+  /// Teardown/background work must not inherit agent authority, but must keep
+  /// the caller's error handling, test zone, and other execution context.
+  static T withoutAgentLease<T>(T Function() action) =>
+      runZoned(action, zoneValues: {_leaseKey: null});
+
   /// Explicit human selection only. A session's existing binding wins.
   void selectTarget(BrowserTab target) {
     _selected = target;
@@ -56,8 +65,42 @@ class BrowserAgentControl extends ChangeNotifier {
     _sessions.putIfAbsent(sessionId, () => target.browser);
   }
 
+  /// Inspect an existing binding without resolving or creating one.
+  BrowserConnection? boundBrowserForSession(String sessionId) =>
+      _sessions[sessionId];
+
   /// Only for an explicit safe reset, never for a connection disappearing.
-  void unbindSession(String sessionId) => _sessions.remove(sessionId);
+  void unbindSession(String sessionId) {
+    _sessionAuthority(sessionId).revoke();
+    _sessions.remove(sessionId);
+  }
+
+  /// Recovery is a distinct human action. A live binding is never overwritten
+  /// by a picker change, and a cancelled target first needs explicit reconnect.
+  bool canRebindSession(String sessionId, BrowserTab target) {
+    final previous = _sessions[sessionId];
+    return previous != null && !previous.connected &&
+        !identical(previous, target.browser) && target.browser.connected &&
+        target.browser.compatible && !isDetached(target) &&
+        BrowserBridge.instance.browsers.contains(target.browser);
+  }
+
+  void rebindSession(String sessionId, BrowserTab target) {
+    if (!canRebindSession(sessionId, target)) {
+      throw const BrowserControlError(
+        'Browser recovery requires a disconnected original browser and a '
+        'live selected browser. A live conversation binding cannot be changed.',
+      );
+    }
+    // Invalidate before reassigning, even for calls which only listed tabs or
+    // were between browser requests. Reconnect never revives their authority.
+    _sessionAuthority(sessionId).revoke();
+    _sessions[sessionId] = target.browser;
+    notifyListeners();
+  }
+
+  _BrowserAuthority _sessionAuthority(String sessionId) =>
+      _sessionAuthorities.putIfAbsent(sessionId, _BrowserAuthority.new);
 
   void takeOver() {
     _ensureState();
@@ -70,8 +113,7 @@ class BrowserAgentControl extends ChangeNotifier {
     // The only requests allowed here are hard-coded teardown, never a tool's
     // continuation. Acknowledged domain shutdown covers half-finished setup;
     // recorder generation tokens also reject any old script emissions.
-    _cleaningUp = true;
-    _cleanup = Zone.root.run(() => _cleanTabs([..._agentTabs]));
+    _cleanup = _startCleanup();
     notifyListeners();
   }
 
@@ -81,13 +123,15 @@ class BrowserAgentControl extends ChangeNotifier {
     _resumeRequested = true;
     if (_cleanupError != null) {
       _cleanupError = null;
-      _cleaningUp = true;
-      _cleanup = Zone.root.run(() => _cleanTabs([..._agentTabs]));
+      _cleanup = _startCleanup();
     }
     final cleanup = _cleanup;
     if (cleanup != null) {
       unawaited(cleanup.then((_) {
-        if (_resumeRequested && _cleanupError == null) _resumeNow();
+        if (identical(_cleanup, cleanup) &&
+            _resumeRequested && _cleanupError == null) {
+          _resumeNow();
+        }
       }));
     } else {
       _resumeNow();
@@ -126,8 +170,29 @@ class BrowserAgentControl extends ChangeNotifier {
 
   void markDetached(BrowserTab tab) {
     _detached.add(tab);
+    _tabAuthorities.putIfAbsent(tab, _BrowserAuthority.new).revoke();
+    _connectionAuthorities.putIfAbsent(tab.browser, _BrowserAuthority.new).revoke();
     forgetTab(tab);
+    notifyListeners();
   }
+
+  /// Captured once per request/lease. Its generation remains revoked even if
+  /// the user later shares, selects, or explicitly reconnects the same tab.
+  BrowserTabAuthority captureTab(BrowserTab tab) {
+    checkTab(tab);
+    return BrowserTabAuthority._(
+      this, tab,
+      _tabAuthorities.putIfAbsent(tab, _BrowserAuthority.new).capture(),
+    );
+  }
+
+  /// Tabless requests (tabs.list, chrome.tabs.* arguments, and similar) can
+  /// include any shared tab. Losing one tab invalidates their whole snapshot.
+  BrowserConnectionAuthority captureConnection(BrowserConnection browser) =>
+      BrowserConnectionAuthority._(
+        browser,
+        _connectionAuthorities.putIfAbsent(browser, _BrowserAuthority.new).capture(),
+      );
 
   void checkTab(BrowserTab tab) {
     if (_detached.contains(tab)) {
@@ -146,18 +211,28 @@ class BrowserAgentControl extends ChangeNotifier {
     _features.remove(tab);
   }
 
-  Future<void> _cleanTabs(List<BrowserTab> tabs) async {
+  Future<void> _startCleanup() {
+    final generation = ++_cleanupGeneration;
+    _cleaningUp = true;
+    return withoutAgentLease(() => _cleanTabs([..._agentTabs], generation));
+  }
+
+  Future<void> _cleanTabs(List<BrowserTab> tabs, int generation) async {
+    bool current() => generation == _cleanupGeneration;
     await Future.wait(tabs.map((tab) async {
+      if (!current()) return;
       if (!tab.browser.connected || isDetached(tab)) {
         forgetTab(tab);
         return;
       }
+      final authority = captureTab(tab);
+      bool authorized() => current() && authority.valid;
       var clean = true;
       Future<void> disable(
         String method, [
         Map<String, Object?> params = const {},
       ]) async {
-        if (isDetached(tab) || !tab.browser.connected) return;
+        if (!authorized()) return;
         try {
           await tab.browser.cdp(
             tab.tabId, method, params, const Duration(seconds: 2),
@@ -167,7 +242,7 @@ class BrowserAgentControl extends ChangeNotifier {
               '$error'.contains('Tracing is not started')) {
             return;
           }
-          if (tab.browser.connected) {
+          if (authorized()) {
             clean = false;
             _cleanupError = 'Browser cleanup did not finish ($method). '
                 'Automation stays paused. Resume retries cleanup.';
@@ -175,13 +250,15 @@ class BrowserAgentControl extends ChangeNotifier {
         }
       }
       Future<void> finishTrace() async {
-        if (isDetached(tab) || !tab.browser.connected) return;
+        if (!authorized()) return;
         final complete = Completer<void>();
         final subscription = BrowserBridge.instance.events.listen((event) {
           if (identical(event.connection, tab.browser) &&
               event.tabId == tab.tabId &&
               event.message['method'] == 'Tracing.tracingComplete' &&
-              !complete.isCompleted) complete.complete();
+              !complete.isCompleted) {
+            complete.complete();
+          }
         });
         try {
           await Future.wait<void>([
@@ -194,7 +271,7 @@ class BrowserAgentControl extends ChangeNotifier {
             complete.future,
           ]).timeout(const Duration(seconds: 2));
         } on Object {
-          if (tab.browser.connected && !isDetached(tab)) {
+          if (authorized()) {
             clean = false;
             _cleanupError = 'Browser trace cleanup has not completed. '
                 'Automation stays paused. Resume retries cleanup.';
@@ -215,7 +292,7 @@ class BrowserAgentControl extends ChangeNotifier {
         if (features.contains('Page.setInterceptFileChooserDialog'))
           disable('Page.setInterceptFileChooserDialog', {'enabled': false}),
       ]);
-      if (isDetached(tab) || !tab.browser.connected) return;
+      if (!authorized()) return;
       try {
         await tab.browser.cdp(tab.tabId, 'Runtime.evaluate', {
           'expression': 'window.__baoWatch?.stop(true); '
@@ -225,7 +302,7 @@ class BrowserAgentControl extends ChangeNotifier {
         // A modal dialog can prevent evaluation. Binding removal below and
         // recorder generation checks still discard every old emission.
       }
-      if (isDetached(tab) || !tab.browser.connected) return;
+      if (!authorized()) return;
       await Future.wait([
         for (final name in ['__baoWatchStep', '__baoHistoryStep'])
           disable('Runtime.removeBinding', {'name': name}),
@@ -240,15 +317,16 @@ class BrowserAgentControl extends ChangeNotifier {
       ]);
       // Existing extensions swallow detach errors. Do not use its response as
       // proof of privacy cleanup: the acknowledged CDP disables above are it.
-      if (isDetached(tab) || !tab.browser.connected) return;
+      if (!authorized()) return;
       await Future.wait([
         tab.browser.request('detach', {'tabId': tab.tabId},
             const Duration(seconds: 2)).then<void>((_) {}, onError: (Object _) {}),
         tab.browser.request('watch', {'tabId': null},
             const Duration(seconds: 2)).then<void>((_) {}, onError: (Object _) {}),
       ]);
-      if (clean) forgetTab(tab);
+      if (clean && authorized()) forgetTab(tab);
     }));
+    if (!current()) return;
     _cleaningUp = false;
     notifyListeners();
   }
@@ -273,8 +351,9 @@ class BrowserAgentControl extends ChangeNotifier {
     if (target != null) {
       if (!target.connected || !target.compatible) {
         throw const BrowserControlError(
-          'The selected browser disconnected. Select a connected browser '
-          'explicitly before continuing; another profile was not substituted.',
+          'The bound browser disconnected. Select the intended connected '
+          'browser in the panel, then use Reconnect this chat. This '
+          'conversation has not switched profiles.',
         );
       }
       if (sessionId == null) {
@@ -321,6 +400,7 @@ class BrowserAgentControl extends ChangeNotifier {
       _revoked.future,
       requireBrowser ? resolveBrowser(sessionId: sessionId) : null,
       sessionId,
+      sessionId == null ? null : _sessionAuthority(sessionId).capture(),
     );
     if (cancelled != null) {
       unawaited(cancelled.then((_) => lease.cancel()));
@@ -347,7 +427,7 @@ class BrowserAgentControl extends ChangeNotifier {
       return existing.wait(Future<T>.sync(action));
     }
     final lease = BrowserAgentLease._(
-      this, _epoch, _revoked.future, browser, null,
+      this, _epoch, _revoked.future, browser, null, null,
     );
     lease.check(browser);
     return runZoned(
@@ -358,10 +438,23 @@ class BrowserAgentControl extends ChangeNotifier {
 
   @visibleForTesting
   void resetForTesting() {
+    _cleanupGeneration++;
     _invalidate();
     _manualControl = true;
     _statePath = null;
     _stateError = null;
+    for (final authority in _sessionAuthorities.values) {
+      authority.revoke();
+    }
+    for (final authority in _tabAuthorities.values) {
+      authority.revoke();
+    }
+    for (final authority in _connectionAuthorities.values) {
+      authority.revoke();
+    }
+    _sessionAuthorities.clear();
+    _tabAuthorities.clear();
+    _connectionAuthorities.clear();
     _sessions.clear();
     _agentTabs.clear();
     _features.clear();
@@ -436,7 +529,16 @@ class BrowserAgentControl extends ChangeNotifier {
 class BrowserAgentLease {
   BrowserAgentLease._(
     this._control, this.epoch, this._revoked, this.browser, this.sessionId,
-  );
+    this._sessionAuthority,
+  ) {
+    if (browser case final connection?) {
+      final authority = _control.captureConnection(connection);
+      _connectionAuthority = authority;
+      unawaited(authority.revoked.then((_) {
+        if (!_tabRevoked.isCompleted) _tabRevoked.complete();
+      }));
+    }
+  }
 
   final String? sessionId;
 
@@ -444,10 +546,47 @@ class BrowserAgentLease {
   final int epoch;
   final BrowserConnection? browser;
   final Future<void> _revoked;
+  final _BrowserAuthorityStamp? _sessionAuthority;
   final Completer<void> _cancelled = Completer<void>();
+  final Completer<void> _tabRevoked = Completer<void>();
+  final Map<BrowserTab, BrowserTabAuthority> _tabs = {};
+  BrowserConnectionAuthority? _connectionAuthority;
 
   bool get valid =>
-      !_cancelled.isCompleted && _control.canObserve(epoch);
+      !_cancelled.isCompleted && _control.canObserve(epoch) &&
+      (_sessionAuthority?.valid ?? true) &&
+      (_connectionAuthority?.valid ?? true) &&
+      _tabs.values.every((authority) => authority.valid);
+
+  BrowserTabAuthority touch(BrowserTab tab) {
+    check(tab.browser);
+    final existing = _tabs[tab];
+    if (existing != null) {
+      existing.check();
+      return existing;
+    }
+    final authority = _control.captureTab(tab);
+    _tabs[tab] = authority;
+    unawaited(authority.revoked.then((_) {
+      if (!_tabRevoked.isCompleted) _tabRevoked.complete();
+    }));
+    return authority;
+  }
+
+  BrowserConnectionAuthority touchConnection(BrowserConnection connection) {
+    check(connection);
+    final existing = _connectionAuthority;
+    if (existing != null) {
+      existing.check();
+      return existing;
+    }
+    final authority = _control.captureConnection(connection);
+    _connectionAuthority = authority;
+    unawaited(authority.revoked.then((_) {
+      if (!_tabRevoked.isCompleted) _tabRevoked.complete();
+    }));
+    return authority;
+  }
 
   void cancel() {
     if (!_cancelled.isCompleted) _cancelled.complete();
@@ -479,6 +618,13 @@ class BrowserAgentLease {
       final value = await Future.any<T>([
         result,
         _revoked.then<T>((_) => throw const BrowserControlError.paused()),
+        _tabRevoked.future.then<T>(
+          (_) => throw const BrowserControlError.revoked(),
+        ),
+        if (_sessionAuthority case final authority?)
+          authority.revoked.then<T>(
+            (_) => throw const BrowserControlError.revoked(),
+          ),
         _cancelled.future.then<T>(
           (_) => throw const BrowserControlError.paused(),
         ),
@@ -493,11 +639,92 @@ class BrowserAgentLease {
   }
 }
 
+/// A monotonically increasing, one-way authority generation. Old stamps retain
+/// their own revocation future; replacing the current future never revives one.
+class _BrowserAuthority {
+  int generation = 0;
+  Completer<void> _revoked = Completer<void>();
+
+  _BrowserAuthorityStamp capture() =>
+      _BrowserAuthorityStamp(this, generation, _revoked.future);
+
+  void revoke() {
+    generation++;
+    _revoked.complete();
+    _revoked = Completer<void>();
+  }
+}
+
+class _BrowserAuthorityStamp {
+  const _BrowserAuthorityStamp(this._authority, this._generation, this.revoked);
+  final _BrowserAuthority _authority;
+  final int _generation;
+  final Future<void> revoked;
+  bool get valid => _authority.generation == _generation;
+}
+
+/// A tab request fence also used by the human mirror. It only revokes on that
+/// tab's loss of authority, not on agent takeover, so normal manual input works.
+class BrowserTabAuthority extends BrowserRequestAuthority {
+  const BrowserTabAuthority._(this._control, this.tab, this._stamp);
+  final BrowserAgentControl _control;
+  final BrowserTab tab;
+  final _BrowserAuthorityStamp _stamp;
+
+  @override
+  Future<void> get revoked => _stamp.revoked;
+  @override
+  bool get valid => _stamp.valid && tab.browser.connected &&
+      !_control.isDetached(tab);
+
+}
+
+class BrowserConnectionAuthority extends BrowserRequestAuthority {
+  const BrowserConnectionAuthority._(this.browser, this._stamp);
+  final BrowserConnection browser;
+  final _BrowserAuthorityStamp _stamp;
+
+  @override
+  Future<void> get revoked => _stamp.revoked;
+  @override
+  bool get valid => _stamp.valid && browser.connected;
+}
+
+/// Shared response suppression for a tab-specific or browser-wide request.
+abstract class BrowserRequestAuthority {
+  const BrowserRequestAuthority();
+  Future<void> get revoked;
+  bool get valid;
+
+  void check() {
+    if (!valid) throw const BrowserControlError.revoked();
+  }
+
+  Future<T> wait<T>(Future<T> result) async {
+    try {
+      final value = await Future.any<T>([
+        result,
+        revoked.then<T>((_) => throw const BrowserControlError.revoked()),
+      ]);
+      check();
+      return value;
+    } on Object {
+      check();
+      rethrow;
+    }
+  }
+}
+
 class BrowserControlError implements Exception {
   const BrowserControlError(this.message);
   const BrowserControlError.paused()
     : message = 'Browser automation was paused or cancelled. The user is in '
           'control. Resume and issue a new browser call to continue.';
+
+  const BrowserControlError.revoked()
+    : message = 'Browser authority changed: the tab was detached, unshared, '
+          'closed, or the conversation was rebound. Start a new browser call '
+          'after explicit reconnect; the old call cannot resume.';
 
   final String message;
   @override

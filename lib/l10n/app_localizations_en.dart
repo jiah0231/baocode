@@ -1543,6 +1543,20 @@ class AppLocalizationsEn extends AppLocalizations {
   String get browserPanelChromeNotice => 'Use Chrome for native dialogs, permission prompts and downloads.';
 
   @override
+  String get browserPanelReconnectAgent => 'Reconnect this chat';
+
+  @override
+  String get browserPanelReconnectAgentTooltip => 'Use the selected Chrome connection for this chat. Old browser work is cancelled; agent pause stays unchanged.';
+
+  @override
+  String browserPanelBindingNotice(String view, String agent) =>
+      'Viewing $view. Agent is bound to $agent, with access to its explicitly shared tabs.';
+
+  @override
+  String browserPanelDisconnectedConnection(String browser) =>
+      '$browser (disconnected)';
+
+  @override
   String get browserPanelPreparingControl => 'Preparing manual control…';
 
   @override
