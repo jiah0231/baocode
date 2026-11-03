@@ -112,7 +112,15 @@ class RealChromeFixture {
         if (!portFile.existsSync()) {
           return false;
         }
-        final lines = portFile.readAsLinesSync();
+        final List<String> lines;
+        try {
+          lines = portFile.readAsLinesSync();
+        } on FileSystemException catch (error) {
+          if (Platform.isWindows && error.osError?.errorCode == 32) {
+            return false;
+          }
+          rethrow;
+        }
         if (lines.length < 2) {
           return false;
         }
