@@ -82,6 +82,10 @@ const alwaysShownSections = [
 class SidePanelTabs {
   SidePanelSection section = SidePanelSection.changes;
 
+  /// Human-selected Chrome tab, pinned to its original connection. Retained
+  /// while the page is hidden; never resolved by a tab id in another profile.
+  BrowserTab? browserSelection;
+
   /// The plan the agent wrote, on the plan page: none until it writes one.
   SidePanelTab? plan;
 

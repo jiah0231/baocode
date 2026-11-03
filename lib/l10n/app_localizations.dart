@@ -3008,6 +3008,90 @@ abstract class AppLocalizations {
   /// **'Show in Side Panel'**
   String get browserShowInPanel;
 
+  /// No description provided for @browserPanelConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected to {browser}'**
+  String browserPanelConnected(String browser);
+
+  /// Agent browser control is paused until explicitly resumed for this run.
+  String get browserPanelPausedNotice;
+
+  /// Native browser UI remains in Chrome.
+  String get browserPanelChromeNotice;
+
+  /// No description provided for @browserPanelPreparingControl.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing manual control…'**
+  String get browserPanelPreparingControl;
+
+  /// No description provided for @browserPanelUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Selected tab unavailable'**
+  String get browserPanelUnavailable;
+
+  /// No description provided for @browserPanelBack.
+  ///
+  /// In en, this message translates to:
+  /// **'Back'**
+  String get browserPanelBack;
+
+  /// No description provided for @browserPanelForward.
+  ///
+  /// In en, this message translates to:
+  /// **'Forward'**
+  String get browserPanelForward;
+
+  /// No description provided for @browserPanelNewTab.
+  ///
+  /// In en, this message translates to:
+  /// **'New tab'**
+  String get browserPanelNewTab;
+
+  /// No description provided for @browserPanelCloseTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Close current tab'**
+  String get browserPanelCloseTab;
+
+  /// No description provided for @browserPanelAddress.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter website address'**
+  String get browserPanelAddress;
+
+  /// No description provided for @browserPanelGo.
+  ///
+  /// In en, this message translates to:
+  /// **'Go to website'**
+  String get browserPanelGo;
+
+  /// No description provided for @browserPanelTakeOver.
+  ///
+  /// In en, this message translates to:
+  /// **'Take over'**
+  String get browserPanelTakeOver;
+
+  /// No description provided for @browserPanelResume.
+  ///
+  /// In en, this message translates to:
+  /// **'Resume agent'**
+  String get browserPanelResume;
+
+  /// No description provided for @browserPanelTakeOverTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Pause all future agent browser observations and actions. Commands already sent may finish.'**
+  String get browserPanelTakeOverTooltip;
+
+  /// No description provided for @browserPanelResumeTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow all agent browser observations and actions again.'**
+  String get browserPanelResumeTooltip;
+
   /// The card in the conversation while an agent watches the user do something in their browser (browser_watch), recording it.
   ///
   /// In en, this message translates to:

@@ -1494,6 +1494,53 @@ class AppLocalizationsZh extends AppLocalizations {
   String get browserShowInPanel => '在侧边栏查看';
 
   @override
+  String browserPanelConnected(String browser) {
+    return '已连接 $browser';
+  }
+
+  @override
+  String get browserPanelPausedNotice => 'Agent 的浏览器观察和操作已暂停。点“继续”才会恢复；每次重启 BaoCode 后都会重新暂停。';
+
+  @override
+  String get browserPanelChromeNotice => '原生对话框、权限提示和下载请在 Chrome 中处理。';
+
+  @override
+  String get browserPanelPreparingControl => '正在准备手动操作…';
+
+  @override
+  String get browserPanelUnavailable => '所选标签页不可用';
+
+  @override
+  String get browserPanelBack => '后退';
+
+  @override
+  String get browserPanelForward => '前进';
+
+  @override
+  String get browserPanelNewTab => '新建标签页';
+
+  @override
+  String get browserPanelCloseTab => '关闭当前标签页';
+
+  @override
+  String get browserPanelAddress => '输入网站地址';
+
+  @override
+  String get browserPanelGo => '前往网站';
+
+  @override
+  String get browserPanelTakeOver => '我来接管';
+
+  @override
+  String get browserPanelResume => '继续 Agent';
+
+  @override
+  String get browserPanelTakeOverTooltip => '暂停所有 Agent 后续浏览器观察和操作。已发出的操作可能仍会完成。';
+
+  @override
+  String get browserPanelResumeTooltip => '恢复所有 Agent 的浏览器观察和操作。';
+
+  @override
   String get browserWatchTitle => '正在看你在浏览器里操作';
 
   @override

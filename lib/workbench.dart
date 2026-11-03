@@ -4161,7 +4161,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       showBrowserTab: embedded
           ? null
           : (tabId) {
-              BrowserTools.show(tabId);
+              final target = BrowserTools.shownTarget(
+                tabId, sessionId: thread.session.sessionId,
+              );
+              if (target != null) {
+                _sidePanel.tabsOf(thread.session).browserSelection = target;
+              }
               _sidePanel.showSection(thread.session, SidePanelSection.browser);
             },
       openFolder: embedded

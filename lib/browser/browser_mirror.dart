@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/gestures.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
@@ -13,31 +14,60 @@ import '../l10n/l10n.dart';
 import '../settings/settings_dialog.dart' show SettingsOpener, SettingsSection;
 import '../theme/app_theme.dart';
 import '../theme/codicons.dart';
+import 'browser_agent_control.dart';
 import 'browser_bridge.dart';
+import 'browser_frame_flow.dart';
 import 'browser_keys.dart';
+import 'browser_panel_controller.dart';
+import 'browser_toolbar.dart';
 import 'browser_tools.dart';
 
-/// A tab of the user's browser shared with BaoCode, as it is now: the one
-/// an agent last used, or one picked from the shared. Its page is shown as
+/// A pinned tab of the user's Chrome, shared with BaoCode. Its page is shown as
 /// the browser draws it (its screencast while the tab is in front, which
 /// stops behind another; screenshots then), and what the user does here is
 /// sent to it: the pointer's, the keyboard's, an input method's.
 class BrowserMirror extends StatefulWidget {
-  const BrowserMirror({super.key});
+  const BrowserMirror({
+    super.key,
+    this.sessionId,
+    this.initialTab,
+    this.onSelectionChanged,
+  });
+
+  final String? sessionId;
+  final BrowserTab? initialTab;
+  final ValueChanged<BrowserTab>? onSelectionChanged;
 
   @override
   State<BrowserMirror> createState() => _BrowserMirrorState();
 }
 
-class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
+class _BrowserMirrorState extends State<BrowserMirror>
+    with TextInputClient, WidgetsBindingObserver {
   BrowserBridge get _bridge => BrowserBridge.instance;
 
-  /// Picked by the user, over the agent's last.
-  BrowserTab? _picked;
-
-  /// The shared tabs of the browser shown, by id: their title and URL.
-  final Map<int, Map> _tabs = {};
-  BrowserConnection? _tabsOf;
+  late final BrowserPanelController _panel;
+  final _control = BrowserAgentControl.instance;
+  late final BrowserFrameFlow _frames;
+  bool _selectionExplicit = false;
+  bool _disposed = false;
+  bool _suspended = false;
+  bool _tickerVisible = true;
+  bool get _capturePaused =>
+      _suspended || !_tickerVisible || _control.cleaningUp;
+  bool _handingOver = false;
+  bool _userDetachedDuringHandover = false;
+  BrowserTab? _boundTarget;
+  String? _boundSession;
+  int _streamGeneration = -1;
+  int _editableQuery = 0;
+  int _actionGeneration = 0;
+  String? _actionError;
+  int _captureGeneration = 0;
+  int _frameStamp = 0;
+  BrowserTab? _streaming;
+  Future<void> _streamQueue = Future.value();
+  Timer? _resize;
 
   /// The tab shown, its screencast started.
   BrowserTab? _shown;
@@ -51,7 +81,6 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
   bool _shooting = false;
   Timer? _watch;
   StreamSubscription<BrowserEvent>? _events;
-  StreamSubscription<BrowserTab>? _asked;
 
   /// The view's size and pixels, for the frames' size.
   Size _viewSize = Size.zero;
@@ -63,109 +92,190 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
   @override
   void initState() {
     super.initState();
-    _bridge.addListener(_sync);
-    BrowserTools.lastTab.addListener(_agentMoved);
+    WidgetsBinding.instance.addObserver(this);
+    _panel = BrowserPanelController()..addListener(_sync);
+    _control.addListener(_controlChanged);
+    _handingOver = _control.cleaningUp;
+    _frames = BrowserFrameFlow(
+      schedule: (callback) =>
+          SchedulerBinding.instance.scheduleFrameCallback((_) => callback()),
+      onFrame: (payload) {
+        if (!mounted || _disposed || _capturePaused || _detached != null) return;
+        try {
+          final bytes = base64Decode(payload.data);
+          setState(() {
+            _frame = bytes;
+            _pageSize = payload.pageSize;
+          });
+        } on FormatException {
+          // An incomplete frame does not replace the last valid picture.
+        }
+      },
+    );
+    if (widget.initialTab case final tab?) {
+      _selectionExplicit = true;
+      _panel.select(tab);
+    }
     _events = _bridge.events.listen(_received);
-    // A step of the conversation's tab, asked for: over the user's pick.
-    _asked = BrowserTools.shown.listen((_) => _agentMoved());
     _watch = Timer.periodic(const Duration(milliseconds: 300), (_) => _poll());
-    WidgetsBinding.instance.addPostFrameCallback((_) => _sync());
+  }
+
+  @override
+  void didUpdateWidget(BrowserMirror oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialTab != oldWidget.initialTab &&
+        widget.initialTab != null && widget.initialTab != _panel.selected) {
+      _pick(widget.initialTab!);
+    }
+    if (oldWidget.sessionId != widget.sessionId && _selectionExplicit) {
+      _bindSelection();
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final visible = TickerMode.of(context);
+    if (visible != _tickerVisible) {
+      _tickerVisible = visible;
+      if (!visible) {
+        _releasePointer();
+        _closeInput();
+      }
+      _restartStream();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final suspended = state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached;
+    if (_suspended == suspended) return;
+    _suspended = suspended;
+    if (suspended) {
+      _releasePointer();
+      _closeInput();
+    }
+    _restartStream();
   }
 
   @override
   void dispose() {
-    _bridge.removeListener(_sync);
-    BrowserTools.lastTab.removeListener(_agentMoved);
+    _disposed = true;
+    WidgetsBinding.instance.removeObserver(this);
+    _panel.removeListener(_sync);
+    _panel.dispose();
+    _control.removeListener(_controlChanged);
     unawaited(_events?.cancel());
-    unawaited(_asked?.cancel());
     _watch?.cancel();
-    _stop();
+    _resize?.cancel();
+    _releasePointer();
     _closeInput();
+    _shown = null;
+    _restartStream();
+    _frames.dispose();
     _focus.dispose();
     super.dispose();
   }
 
-  void _agentMoved() {
-    // The agent's move shows: the user's pick gives way.
-    _picked = null;
-    _sync();
-  }
-
-  /// The tab to show: picked, else the agent's last, else the first shared.
-  BrowserTab? get _wanted {
-    final browsers = _bridge.browsers;
-    bool live(BrowserTab? tab) =>
-        tab != null &&
-        browsers.any((b) => identical(b, tab.browser)) &&
-        (!identical(tab.browser, _tabsOf) || _tabs.containsKey(tab.tabId));
-    if (live(_picked)) return _picked;
-    final last = BrowserTools.lastTab.value;
-    if (live(last)) return last;
-    if (browsers.isEmpty) return null;
-    final browser = browsers.first;
-    if (!identical(browser, _tabsOf) || _tabs.isEmpty) return null;
-    return BrowserTab(browser, _tabs.keys.first);
-  }
-
-  Future<void> _sync() async {
-    if (!mounted) return;
-    final browsers = _bridge.browsers;
-    final browser = _wanted?.browser ?? browsers.firstOrNull;
-    if (!identical(browser, _tabsOf)) {
-      _tabsOf = browser;
-      _tabs.clear();
-      if (browser != null) await _listTabs();
+  void _controlChanged() {
+    if (!mounted || _disposed) return;
+    if (_control.cleaningUp && !_handingOver) {
+      _handingOver = true;
+      _actionGeneration++;
+      _userDetachedDuringHandover = false;
+      _editableQuery++;
+      _releasePointer();
+      _closeInput();
+      _restartStream();
+    } else if (!_control.cleaningUp && _handingOver) {
+      _handingOver = false;
+      // Only this explicit handover transition automatically restarts a
+      // human view. A later user-cancelled debugger stays disconnected.
+      if (_control.cleanupError == null && !_userDetachedDuringHandover &&
+          (_shown == null || !_control.isDetached(_shown!))) {
+        _detached = null;
+        _restartStream();
+      }
     }
-    final wanted = _wanted;
+    setState(() {});
+  }
+
+  void _bindSelection() {
+    final tab = _panel.selected;
+    if (tab == null || !_panel.connected ||
+        (_boundTarget == tab && _boundSession == widget.sessionId)) return;
+    _boundTarget = tab;
+    _boundSession = widget.sessionId;
+    _control.selectTarget(tab);
+    if (widget.sessionId case final id?) _control.bindSession(id, tab);
+    widget.onSelectionChanged?.call(tab);
+  }
+
+  void _sync() {
+    if (!mounted || _disposed) return;
+    final wanted = _panel.connected ? _panel.selected : null;
     if (wanted != _shown) {
-      _stop();
+      _actionGeneration++;
+      // End input in its original tab before assigning another one.
+      _releasePointer();
+      _closeInput();
+      _editableQuery++;
+      _editable = false;
+      _buttons = 0;
+      _focus.unfocus();
       _shown = wanted;
-      _detached = null;
+      _detached = wanted != null && _control.isDetached(wanted)
+          ? 'cancelled_by_user'
+          : null;
       _frame = null;
       _pageSize = null;
-      if (wanted != null) unawaited(_start(wanted));
+      _lastFrame = DateTime(0);
+      _lastShot = DateTime(0);
+      _restartStream();
     }
-    if (mounted) setState(() {});
+    if (_selectionExplicit) _bindSelection();
+    setState(() {});
   }
 
-  Future<void> _listTabs() async {
-    final browser = _tabsOf;
-    if (browser == null) return;
-    try {
-      final tabs = await browser.request('tabs.list') as List? ?? const [];
-      if (!identical(browser, _tabsOf)) return;
-      _tabs
-        ..clear()
-        ..addEntries([
-          for (final tab in tabs.cast<Map>())
-            MapEntry(tab['tabId'] as int, tab),
-        ]);
-    } on Object {
-      // Gone: the bridge says so.
-    }
-  }
-
-  Future<void> _start(BrowserTab tab) async {
-    try {
-      await tab.browser.cdp(tab.tabId, 'Page.startScreencast', {
-        'format': 'jpeg',
-        'quality': 70,
-        'maxWidth': (_viewSize.width * _ratio).round().clamp(320, 3840),
-        'maxHeight': (_viewSize.height * _ratio).round().clamp(240, 3840),
-      });
-    } on Object catch (error) {
-      if (tab == _shown && mounted) setState(() => _detached = '$error');
-    }
-  }
-
-  void _stop() {
+  /// Serialize stop/start so a late stop cannot kill the next stream.
+  /// Each asynchronous transition is tied to the exact tab and generation.
+  void _restartStream() {
+    final generation = ++_captureGeneration;
+    _streamGeneration = -1;
+    _frames.reset();
     final tab = _shown;
-    if (tab == null) return;
-    unawaited(
-      tab.browser
-          .cdp(tab.tabId, 'Page.stopScreencast')
-          .then((_) {}, onError: (Object _) {}),
-    );
+    final width = (_viewSize.width * _ratio).round().clamp(320, 3840);
+    final height = (_viewSize.height * _ratio).round().clamp(240, 3840);
+    _streamQueue = _streamQueue.then((_) async {
+      final previous = _streaming;
+      _streaming = null;
+      if (previous != null && !_control.isDetached(previous)) {
+        try {
+          await previous.browser.cdp(previous.tabId, 'Page.stopScreencast');
+        } on Object {
+          // The browser may have closed or stopped sharing this tab.
+        }
+      }
+      if (_disposed || !mounted || _capturePaused || _detached != null ||
+          tab == null || _control.isDetached(tab) ||
+          generation != _captureGeneration || tab != _shown) return;
+      _streaming = tab;
+      _streamGeneration = generation;
+      try {
+        await tab.browser.cdp(tab.tabId, 'Page.startScreencast', {
+          'format': 'jpeg',
+          'quality': 70,
+          'maxWidth': width,
+          'maxHeight': height,
+        });
+      } on Object catch (error) {
+        if (generation == _captureGeneration && mounted && !_disposed) {
+          setState(() => _detached = '$error');
+        }
+      }
+    });
   }
 
   /// A screenshot where the screencast has stopped (the tab behind
@@ -173,7 +283,8 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
   /// a second apart at most.
   Future<void> _poll() async {
     final tab = _shown;
-    if (tab == null || _shooting || _detached != null) return;
+    if (tab == null || _shooting || _detached != null ||
+        _capturePaused || _disposed) return;
     final now = DateTime.now();
     if (now.difference(_lastFrame) < const Duration(milliseconds: 600) ||
         now.difference(_lastShot) < const Duration(seconds: 1)) {
@@ -181,24 +292,32 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
     }
     _shooting = true;
     _lastShot = now;
+    final generation = _captureGeneration;
+    final epoch = _frames.epoch;
+    final stamp = ++_frameStamp;
     try {
       final view = await BrowserTools.viewport(tab.browser, tab.tabId);
       // As the screen has it, made small here: a screenshot's own scale
       // has the browser draw the page that small in its window meanwhile.
+      if (generation != _captureGeneration || tab != _shown ||
+          _disposed || _capturePaused) return;
       final shot = await tab.browser.cdp(tab.tabId, 'Page.captureScreenshot', {
         'format': 'jpeg',
         'quality': 70,
       });
-      if (tab != _shown || !mounted) return;
+      if (tab != _shown || !mounted || _disposed || _capturePaused ||
+          generation != _captureGeneration) return;
       // A screencast's frame may have come meanwhile: the newer is kept.
       if (DateTime.now().difference(_lastFrame) <
           const Duration(milliseconds: 600)) {
         return;
       }
-      setState(() {
-        _frame = base64Decode(shot['data'] as String);
-        _pageSize = view.rect.size;
-      });
+      _frames.push(
+        data: shot['data'] as String,
+        pageSize: view.rect.size,
+        epoch: epoch,
+        stamp: stamp,
+      );
     } on Object {
       // Between pages, or gone.
     } finally {
@@ -216,6 +335,7 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
             event.message['method'] != 'Page.screencastFrame') {
           return;
         }
+        if (_detached != null || _control.isDetached(tab)) return;
         final params = (event.message['params'] as Map).cast<String, Object?>();
         unawaited(
           tab.browser
@@ -224,43 +344,83 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
               })
               .then((_) {}, onError: (Object _) {}),
         );
+        if (_capturePaused || _disposed || _streaming != tab ||
+            _streamGeneration != _captureGeneration) return;
         final metadata = (params['metadata'] as Map).cast<String, Object?>();
         _lastFrame = DateTime.now();
-        setState(() {
-          _frame = base64Decode(params['data'] as String);
-          _pageSize = Size(
+        _frames.push(
+          data: params['data'] as String,
+          pageSize: Size(
             (metadata['deviceWidth'] as num).toDouble(),
             (metadata['deviceHeight'] as num).toDouble(),
-          );
-        });
-      case 'tab':
-        if (!identical(event.connection, _tabsOf)) return;
-        final info = event.message['tab'] as Map;
-        setState(() => _tabs[info['tabId'] as int] = info);
-      case 'closed' || 'unshared':
-        if (!identical(event.connection, _tabsOf)) return;
-        _tabs.remove(event.tabId);
-        unawaited(_sync());
+          ),
+          epoch: _frames.epoch,
+          stamp: ++_frameStamp,
+        );
       case 'detached':
         if (tab == null ||
             !identical(event.connection, tab.browser) ||
             event.tabId != tab.tabId) {
           return;
         }
+        // chrome.debugger.detach does not send this event. It is an
+        // external detach, including a user cancellation, even during cleanup.
+        if (_handingOver) _userDetachedDuringHandover = true;
+        _captureGeneration++;
+        _streamGeneration = -1;
+        _streaming = null;
+        _editableQuery++;
+        _editable = false;
+        _buttons = 0;
+        _lastPointer = null;
+        _composing = false;
+        _value = TextEditingValue.empty;
+        _input?.close();
+        _input = null;
+        _frames.reset();
         setState(() => _detached = '${event.message['reason']}');
     }
   }
 
   void _retry() {
     final tab = _shown;
-    if (tab == null) return;
+    if (tab == null || _control.cleaningUp || _control.cleanupError != null) return;
+    _control.reconnectTab(tab);
+    _control.selectTarget(tab);
     setState(() => _detached = null);
-    unawaited(_start(tab));
+    _restartStream();
   }
 
   void _pick(BrowserTab tab) {
-    _picked = tab;
-    unawaited(_sync());
+    _actionGeneration++;
+    _control.reconnectTab(tab);
+    _selectionExplicit = true;
+    _panel.select(tab);
+    _bindSelection();
+    if (tab == _shown && _detached != null) _retry();
+  }
+
+  Future<void> _act(Future<void> Function() action, {bool select = false}) async {
+    if (mounted) setState(() => _actionError = null);
+    final selected = _panel.selected;
+    final generation = ++_actionGeneration;
+    try {
+      await _control.ready;
+      if (!mounted || _disposed || selected != _panel.selected ||
+          generation != _actionGeneration) return;
+      if (_control.cleanupError != null) {
+        setState(() => _actionError = _control.cleanupError);
+        return;
+      }
+      await action();
+      if (!mounted || _disposed) return;
+      if (select) {
+        _selectionExplicit = true;
+        _bindSelection();
+      }
+    } on Object catch (error) {
+      if (mounted && !_disposed) setState(() => _actionError = '$error');
+    }
   }
 
   // --- The input method: there while the page has the focus and what has
@@ -273,7 +433,8 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
 
   Future<void> _checkEditable() async {
     final tab = _shown;
-    if (tab == null) return;
+    if (tab == null || _capturePaused || _disposed || _detached != null) return;
+    final query = ++_editableQuery;
     try {
       final result = await tab.browser.cdp(tab.tabId, 'Runtime.evaluate', {
         'expression':
@@ -284,15 +445,18 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
             ' (e.tagName === "INPUT" && !/^(button|checkbox|radio|submit|reset|file|image|range|color)\$/i.test(e.type))); })()',
         'returnByValue': true,
       });
+      if (tab != _shown || !mounted || _disposed || query != _editableQuery) return;
       _editable = (result['result'] as Map?)?['value'] == true;
     } on Object {
+      if (tab != _shown || !mounted || _disposed || query != _editableQuery) return;
       _editable = false;
     }
     _syncInput();
   }
 
   void _syncInput() {
-    final wanted = _focus.hasFocus && _editable && _shown != null;
+    final wanted = !_disposed && !_capturePaused && _detached == null &&
+        _focus.hasFocus && _editable && _shown != null;
     if (wanted && _input == null) {
       _value = TextEditingValue.empty;
       _input = TextInput.attach(
@@ -334,7 +498,7 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
 
   void _ime(String text, {required bool commit, TextRange? selection}) {
     final tab = _shown;
-    if (tab == null) return;
+    if (tab == null || _detached != null || _control.isDetached(tab)) return;
     final call = commit
         ? tab.browser.cdp(tab.tabId, 'Input.insertText', {'text': text})
         : tab.browser.cdp(tab.tabId, 'Input.imeSetComposition', {
@@ -353,6 +517,7 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
 
   @override
   void updateEditingValue(TextEditingValue value) {
+    if (_disposed || _capturePaused || _detached != null || _input == null) return;
     _value = value;
     final composing = value.composing;
     if (composing.isValid && !composing.isCollapsed) {
@@ -419,6 +584,7 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
   }) {
     final tab = _shown;
     if (tab == null) return;
+    if (_detached != null || _control.isDetached(tab)) return;
     final name = browserKeyName(event.physicalKey);
     final label = event.logicalKey.keyLabel;
     unawaited(
@@ -442,6 +608,7 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (_shown == null) return KeyEventResult.ignored;
+    if (_capturePaused || _detached != null) return KeyEventResult.handled;
     final keys = HardwareKeyboard.instance;
     final down = event is! KeyUpEvent;
     final mac = ideUsesMacKeys;
@@ -499,29 +666,14 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
   // --- The pointer, at the page's point (CSS pixels) under it.
 
   /// Where the frame is drawn in [size]: as big as fits, at the top.
-  Rect _frameRect(Size size) {
-    final page = _pageSize;
-    if (page == null || page.isEmpty) return Offset.zero & size;
-    final scale = (size.width / page.width).clamp(
-      0.0,
-      size.height / page.height,
-    );
-    final width = page.width * scale;
-    return Rect.fromLTWH(
-      (size.width - width) / 2,
-      0,
-      width,
-      page.height * scale,
-    );
-  }
+  Rect _frameRect(Size size) =>
+      browserFrameRect(size, _pageSize ?? Size.zero);
 
-  Offset? _pagePoint(Offset local) {
+  Offset? _pagePoint(Offset local, {bool clamp = false}) {
     final page = _pageSize;
     final box = _key.currentContext?.findRenderObject() as RenderBox?;
     if (page == null || box == null || !box.hasSize) return null;
-    final rect = _frameRect(box.size);
-    if (rect.isEmpty) return null;
-    return (local - rect.topLeft) * (page.width / rect.width);
+    return browserPagePoint(local, box.size, page, clamp: clamp);
   }
 
   int _buttons = 0;
@@ -529,6 +681,7 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
   Duration? _lastDown;
   Offset? _lastDownAt;
   DateTime _lastMove = DateTime(0);
+  Offset? _lastPointer;
 
   static String _button(int buttons) => switch (buttons) {
     kSecondaryButton => 'right',
@@ -541,10 +694,13 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
     Offset local, {
     String button = 'none',
     int clicks = 0,
+    bool clamp = false,
   }) {
     final tab = _shown;
-    final point = _pagePoint(local);
-    if (tab == null || point == null) return;
+    final point = _pagePoint(local, clamp: clamp);
+    if (tab == null || point == null || _detached != null ||
+        _control.isDetached(tab)) return;
+    _lastPointer = local;
     unawaited(
       tab.browser
           .cdp(tab.tabId, 'Input.dispatchMouseEvent', {
@@ -560,7 +716,18 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
     );
   }
 
+  void _releasePointer() {
+    final at = _lastPointer;
+    final held = _buttons;
+    _buttons = 0;
+    if (held != 0 && at != null) {
+      _mouse('mouseReleased', at, button: _button(held), clamp: true);
+    }
+  }
+
   void _down(PointerDownEvent event) {
+    if (_capturePaused || _detached != null ||
+        _pagePoint(event.localPosition) == null) return;
     _focus.requestFocus();
     final again =
         _lastDownAt != null &&
@@ -580,6 +747,7 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
   }
 
   void _up(PointerUpEvent event) {
+    if (_buttons == 0) return;
     final button = _button(_buttons);
     _buttons = 0;
     _mouse(
@@ -587,6 +755,7 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
       event.localPosition,
       button: button,
       clicks: _clicks,
+      clamp: true,
     );
     unawaited(
       Future<void>.delayed(const Duration(milliseconds: 80), _checkEditable),
@@ -595,6 +764,7 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
 
   /// Moves, fewer while no button is down: enough for hovers.
   void _move(PointerEvent event) {
+    if (_capturePaused || _detached != null) return;
     final now = DateTime.now();
     if (_buttons == 0 &&
         now.difference(_lastMove) < const Duration(milliseconds: 50)) {
@@ -605,25 +775,28 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
       'mouseMoved',
       event.localPosition,
       button: _buttons == 0 ? 'none' : _button(_buttons),
+      clamp: _buttons != 0,
     );
   }
 
   void _wheel(Offset local, Offset delta) {
+    if (_capturePaused || _detached != null) return;
     final tab = _shown;
     final point = _pagePoint(local);
     final page = _pageSize;
     final box = _key.currentContext?.findRenderObject() as RenderBox?;
     if (tab == null || point == null || page == null || box == null) return;
     // As far on the page as here: the page under the fingers follows them.
-    final scale = page.width / _frameRect(box.size).width;
+    final mapped = browserPageDelta(delta, box.size, page);
+    if (mapped == null) return;
     unawaited(
       tab.browser
           .cdp(tab.tabId, 'Input.dispatchMouseEvent', {
             'type': 'mouseWheel',
             'x': point.dx,
             'y': point.dy,
-            'deltaX': delta.dx * scale,
-            'deltaY': delta.dy * scale,
+            'deltaX': mapped.dx,
+            'deltaY': mapped.dy,
             'modifiers': BrowserModifiers.keyboard,
           })
           .then((_) {}, onError: (Object _) {}),
@@ -641,13 +814,14 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
       message = l10n.browserOtherApp;
     } else if (_bridge.browsers.isEmpty) {
       message = l10n.browserNotConnected;
-    } else if (_shown == null) {
+    } else if (_panel.selected == null) {
       settings = false;
       message = l10n.browserNoSharedTab;
     } else {
       message = null;
     }
-    if (message != null) {
+    if (message != null && _panel.selected == null &&
+        _bridge.browsers.isEmpty && !_control.manualControl) {
       final open = settings ? SettingsOpener.maybeOf(context) : null;
       return Center(
         child: Padding(
@@ -674,68 +848,117 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
         ),
       );
     }
-    final tab = _shown!;
-    final info = identical(tab.browser, _tabsOf) ? _tabs[tab.tabId] : null;
+    final tab = _panel.selected;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _TabBar(
-          title: '${info?['title'] ?? ''}',
-          url: '${info?['url'] ?? ''}',
+        BrowserPanelToolbar(
+          title: _panel.title,
+          url: _panel.url,
+          connected: _panel.connected && _detached == null,
+          browserName: tab?.browser.browser,
+          manualControl: _control.manualControl,
+          error: _control.cleaningUp
+              ? l10n.browserPanelPreparingControl
+              : (_control.cleanupError ?? _actionError ?? _panel.error),
           tabs: () async {
-            await _listTabs();
+            await _panel.refresh();
             return [
-              for (final MapEntry(key: id, value: other) in _tabs.entries)
+              for (final entry in _panel.tabs)
                 IdeMenuAction(
-                  '${other['title'] ?? other['url']}',
-                  checked: id == tab.tabId,
-                  onSelected: () => _pick(BrowserTab(tab.browser, id)),
+                  '${entry.target.browser.browser ?? 'Chrome'} '
+                  '#${_bridge.browsers.indexOf(entry.target.browser) + 1} '
+                  '· ${entry.target.tabId}: '
+                  '${entry.title.isEmpty ? entry.url : entry.title}',
+                  checked: entry.target == tab,
+                  onSelected: () => _pick(entry.target),
                 ),
             ];
           },
-          onReload: () => unawaited(
-            tab.browser
-                .cdp(tab.tabId, 'Page.reload')
-                .then((_) {}, onError: (Object _) {}),
-          ),
-          onShow: () => unawaited(
-            tab.browser
-                .request('tabs.activate', {'tabId': tab.tabId})
-                .then((_) {}, onError: (Object _) {}),
-          ),
+          onNavigate: (url) => unawaited(_act(() => _panel.navigate(url))),
+          onBack: () => unawaited(_act(_panel.back)),
+          onForward: () => unawaited(_act(_panel.forward)),
+          onReload: () => unawaited(_act(_panel.reload)),
+          onNew: _canCreateTab
+              ? () => unawaited(_act(_panel.newTab, select: true))
+              : null,
+          onClose: () => unawaited(_act(_panel.closeTab)),
+          onShow: () => unawaited(_act(_panel.showInChrome)),
+          onTakeOver: _control.takeOver,
+          onResume: _control.resume,
         ),
-        Expanded(child: _page(context)),
+        Expanded(
+          child: _shown == null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _panel.error ?? message ?? l10n.browserNoSharedTab,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: AppColors.textMuted),
+                        ),
+                        if (settings && SettingsOpener.maybeOf(context) != null) ...[
+                          const SizedBox(height: 12),
+                          IdeButton(
+                            label: l10n.browserSettingsOpen,
+                            icon: Codicons.settingsGear,
+                            secondary: true,
+                            onPressed: () => SettingsOpener.maybeOf(context)
+                                ?.call(SettingsSection.browser),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                )
+              : _page(context),
+        ),
       ],
     );
   }
 
+  bool get _canCreateTab {
+    final browser = _panel.selected?.browser;
+    return browser == null
+        ? _bridge.browsers.length == 1
+        : _bridge.browsers.any((other) => identical(other, browser));
+  }
+
   Widget _page(BuildContext context) {
-    _ratio = MediaQuery.devicePixelRatioOf(context);
+    final ratio = MediaQuery.devicePixelRatioOf(context);
+    final ratioChanged = ratio != _ratio;
+    _ratio = ratio;
     final frame = _frame;
     final detached = _detached;
     return LayoutBuilder(
       builder: (context, constraints) {
         final size = constraints.biggest;
-        if (size != _viewSize) {
-          final first = _viewSize == Size.zero;
+        if (size != _viewSize || ratioChanged) {
           _viewSize = size;
-          // Frames as big as shown: asked anew once the view is laid out.
-          final tab = _shown;
-          if (first && tab != null) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              _stop();
-              unawaited(_start(tab));
-            });
-          }
+          // Debounced while the sash moves, using the latest pane size.
+          _resize?.cancel();
+          _resize = Timer(const Duration(milliseconds: 150), () {
+            if (mounted && !_disposed) {
+              _restartStream();
+              _placeInput();
+            }
+          });
         }
         return Focus(
           focusNode: _focus,
           onKeyEvent: _onKey,
-          onFocusChange: (_) => _syncInput(),
+          onFocusChange: (focused) {
+            if (!focused) _releasePointer();
+            _syncInput();
+          },
           child: Listener(
             key: _key,
             onPointerDown: _down,
             onPointerUp: _up,
+            onPointerCancel: (_) => _releasePointer(),
             onPointerMove: _move,
             onPointerHover: _move,
             onPointerSignal: (event) {
@@ -785,71 +1008,6 @@ class _BrowserMirrorState extends State<BrowserMirror> with TextInputClient {
           ),
         );
       },
-    );
-  }
-}
-
-/// The tab's title and URL, its shared tabs' menu, and its actions.
-class _TabBar extends StatelessWidget {
-  const _TabBar({
-    required this.title,
-    required this.url,
-    required this.tabs,
-    required this.onReload,
-    required this.onShow,
-  });
-
-  final String title;
-  final String url;
-  final FutureOr<List<IdeMenuEntry>> Function() tabs;
-  final VoidCallback onReload;
-  final VoidCallback onShow;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = context.l10n;
-    return Container(
-      height: 34,
-      padding: const EdgeInsets.only(left: 10, right: 6),
-      decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: AppColors.partBorder)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text.rich(
-              TextSpan(
-                children: [
-                  TextSpan(text: title.isEmpty ? url : title),
-                  if (title.isNotEmpty && url.isNotEmpty)
-                    TextSpan(
-                      text: '  $url',
-                      style: TextStyle(color: AppColors.textMuted),
-                    ),
-                ],
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 12),
-            ),
-          ),
-          IdeMenuButton(
-            icon: Codicons.listFlat,
-            tooltip: l10n.browserSharedTabs,
-            entries: tabs,
-          ),
-          IdeActionButton(
-            icon: Codicons.refresh,
-            tooltip: l10n.browserReload,
-            onPressed: onReload,
-          ),
-          IdeActionButton(
-            icon: Codicons.linkExternal,
-            tooltip: l10n.browserShowInBrowser,
-            onPressed: onShow,
-          ),
-        ],
-      ),
     );
   }
 }

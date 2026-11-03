@@ -1532,6 +1532,53 @@ class AppLocalizationsEn extends AppLocalizations {
   String get browserShowInPanel => 'Show in Side Panel';
 
   @override
+  String browserPanelConnected(String browser) {
+    return 'Connected to $browser';
+  }
+
+  @override
+  String get browserPanelPausedNotice => 'Agent browser access is paused. Click Resume to allow it. Restarting BaoCode pauses it again.';
+
+  @override
+  String get browserPanelChromeNotice => 'Use Chrome for native dialogs, permission prompts and downloads.';
+
+  @override
+  String get browserPanelPreparingControl => 'Preparing manual control…';
+
+  @override
+  String get browserPanelUnavailable => 'Selected tab unavailable';
+
+  @override
+  String get browserPanelBack => 'Back';
+
+  @override
+  String get browserPanelForward => 'Forward';
+
+  @override
+  String get browserPanelNewTab => 'New tab';
+
+  @override
+  String get browserPanelCloseTab => 'Close current tab';
+
+  @override
+  String get browserPanelAddress => 'Enter website address';
+
+  @override
+  String get browserPanelGo => 'Go to website';
+
+  @override
+  String get browserPanelTakeOver => 'Take over';
+
+  @override
+  String get browserPanelResume => 'Resume agent';
+
+  @override
+  String get browserPanelTakeOverTooltip => 'Pause all future agent browser observations and actions. Commands already sent may finish.';
+
+  @override
+  String get browserPanelResumeTooltip => 'Allow all agent browser observations and actions again.';
+
+  @override
   String get browserWatchTitle => 'Watching you in the browser';
 
   @override

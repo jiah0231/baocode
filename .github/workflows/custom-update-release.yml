@@ -56,6 +56,16 @@ jobs:
       - run: flutter pub get
       - run: flutter gen-l10n
       - run: flutter analyze --no-pub
+      - name: Test browser recorder privacy scripts
+        run: node --test test/browser/browser_recorder_script_test.mjs
+      - name: Test browser panel navigation and human takeover early
+        run: >-
+          flutter test
+          test/browser/browser_panel_controller_test.dart
+          test/browser/browser_toolbar_test.dart
+          test/browser/browser_frame_flow_test.dart
+          test/browser/browser_agent_control_test.dart
+          test/browser/browser_mirror_test.dart
       - name: Test Codex approval and edit-review UI early
         run: flutter test test/kernel_ui_test.dart --plain-name "a Codex agent asks leave, and its work can be undone"
       - name: Test selected cross-kernel session retrieval
@@ -178,13 +188,14 @@ jobs:
       - name: Fetch permanent pinned release for isolated upgrade test
         shell: pwsh
         run: |
-          # Public immutable-version URL + verified hash; no expiring Actions artifact.
-          # Source: 73762cbd1f899b6bd1995eac75d5712a8be1693e, signed release run 41424276352.
+          # Public versioned URL + verified hash and size; no expiring Actions artifact.
+          # Source: c5e0be914dcb4c43b8d91c01bb1afb39b4bbe94a, release custom-v1.8.0+27.
           $baseline = Join-Path $env:RUNNER_TEMP 'baseline-installer'
           New-Item -ItemType Directory -Force $baseline | Out-Null
-          $setup = Join-Path $baseline 'BaoCode-1.7.3-setup.exe'
-          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.7.3%2B26/BaoCode-1.7.3-setup.exe' -OutFile $setup
-          if ((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() -ne 'fc2f8e693955d5166d55cbd646a7b685daa116bdba6901fe684c1a9ae79f3c16') { throw 'Pinned release Setup checksum mismatch' }
+          $setup = Join-Path $baseline 'BaoCode-1.8.0-setup.exe'
+          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.8.0%2B27/BaoCode-1.8.0-setup.exe' -OutFile $setup
+          if ((Get-Item $setup).Length -ne 25664878) { throw 'Pinned release Setup size mismatch' }
+          if ((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() -ne '8c8b528d4b7baecec19d442135b7a858c0e836a9efda779951c0d244019fccbe') { throw 'Pinned release Setup checksum mismatch' }
       - name: Install pinned release then replace in isolated per-user directory
         shell: pwsh
         run: |
@@ -192,7 +203,7 @@ jobs:
           $new = @(Get-ChildItem build/installers -Filter '*-setup.exe')
           if ($new.Count -ne 1) { throw 'Expected one new Setup' }
           $version = (Select-String -Path pubspec.yaml -Pattern '^version: (.+)$').Matches[0].Groups[1].Value
-          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.7.3+26
+          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.8.0+27
       - uses: actions/upload-artifact@v6
         with:
           name: custom-installer

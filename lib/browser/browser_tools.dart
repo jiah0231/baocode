@@ -13,6 +13,7 @@ import '../chat/chat_models.dart' show ToolKind;
 import '../kernel/claude_code/claude_sdk_tools.dart';
 import '../platform/data_dir.dart';
 import 'browser_analysis.dart';
+import 'browser_agent_control.dart';
 import 'browser_bridge.dart';
 import 'browser_records.dart';
 import 'browser_steps.dart';
@@ -36,6 +37,8 @@ abstract final class BrowserTools {
   /// The tab an agent last used: the side panel's page shows it.
   static final lastTab = ValueNotifier<BrowserTab?>(null);
 
+  static final Map<(String, int), BrowserTab?> _shownTargets = {};
+
   static final _shown = StreamController<BrowserTab>.broadcast();
 
   /// The tabs asked to show in the side panel ([show]), for the panel to
@@ -44,10 +47,15 @@ abstract final class BrowserTools {
 
   /// Shows [tabId] in the side panel (a step of the conversation clicked):
   /// as the tab an agent used last, over the one the user picked there.
-  static void show(int tabId) {
-    final browsers = BrowserBridge.instance.browsers;
-    if (browsers.isEmpty) return;
-    final tab = BrowserTab(browsers.first, tabId);
+  static BrowserTab? shownTarget(int tabId, {String? sessionId}) {
+    if (sessionId == null) return null;
+    final tab = _shownTargets[(sessionId, tabId)];
+    return tab != null && tab.browser.connected ? tab : null;
+  }
+
+  static void show(int tabId, {String? sessionId}) {
+    final tab = shownTarget(tabId, sessionId: sessionId);
+    if (tab == null) return;
     lastTab.value = tab;
     _shown.add(tab);
   }
@@ -83,16 +91,23 @@ abstract final class BrowserTools {
   static void unregister() {
     if (!_registered) return;
     _registered = false;
+    BrowserAgentControl.instance.removeListener(_controlChanged);
     for (final tool in _all) {
       ClaudeSdkTools.unregister(tool.name);
     }
     ClaudeSdkTools.instruct('browser', null);
   }
 
+  static void _controlChanged() {
+    if (!BrowserAgentControl.instance.manualControl) return;
+    _covering.clear();
+  }
+
   /// Gives the agents the tools.
   static void register() {
     if (_registered) return;
     _registered = true;
+    BrowserAgentControl.instance.addListener(_controlChanged);
     ClaudeSdkTools.instruct('browser', rules);
     for (final tool in _all) {
       ClaudeSdkTools.register(
@@ -109,23 +124,28 @@ abstract final class BrowserTools {
           kind: ToolKind.browser,
           summary: (input, output) =>
               browserStepSummary(tool.name, input, output),
-          run: (raw, call) async {
-            final input = numbersAsSchemaSays(tool.inputSchema, raw);
-            final tabId = input['tabId'];
-            if (tabId is! int) return tool.run(input, call);
-            // What the page logs and loads, kept from now on.
-            await _watch(tabId);
-            final tab = BrowserTab(_browser(), tabId);
-            _blocked(tool.name, tab);
-            // The dialogs its page opens meanwhile answered (see
-            // BrowserRecords.acting).
-            final answer = await BrowserRecords.instance.acting(
-              tab,
-              () => tool.run(input, call),
-            );
-            if (tool.name != 'browser_close') _used(tabId);
-            return answer;
-          },
+          run: (raw, call) => BrowserAgentControl.instance.runAgent(
+            sessionId: call.sessionId,
+            cancelled: call.cancelled,
+            requireBrowser: tool.name != 'browser_history',
+            action: () async {
+              final input = numbersAsSchemaSays(tool.inputSchema, raw);
+              final tabId = input['tabId'];
+              if (tabId is! int || tool.name == 'browser_history') {
+                return tool.run(input, call);
+              }
+              final tab = BrowserTab(_browser(), tabId);
+              await _watch(tabId);
+              _blocked(tool.name, tab);
+              final answer = await BrowserRecords.instance.acting(
+                tab,
+                () => tool.run(input, call),
+              );
+              BrowserAgentControl.currentLease?.check();
+              if (tool.name != 'browser_close') _used(tabId);
+              return answer;
+            },
+          ),
         ),
       );
     }
@@ -166,10 +186,13 @@ abstract final class BrowserTools {
   }
 
   static Future<void> _watch(int tabId) async {
-    final browsers = BrowserBridge.instance.browsers;
-    if (browsers.isEmpty) return;
     try {
-      await BrowserRecords.instance.watch(BrowserTab(browsers.first, tabId));
+      await BrowserRecords.instance.watch(
+        BrowserTab(_browser(), tabId),
+        explicit: true,
+      );
+    } on BrowserControlError {
+      rethrow;
     } on Object {
       // Not shared, or gone: the tool says so.
     }
@@ -205,9 +228,18 @@ abstract final class BrowserTools {
   }
 
   static void _used(int tabId) {
-    final browsers = BrowserBridge.instance.browsers;
-    if (browsers.isEmpty) return;
-    lastTab.value = BrowserTab(browsers.first, tabId);
+    BrowserAgentControl.currentLease?.check();
+    final tab = BrowserTab(_browser(), tabId);
+    final sessionId = BrowserAgentControl.currentLease?.sessionId;
+    if (sessionId != null) {
+      final key = (sessionId, tabId);
+      if (!_shownTargets.containsKey(key)) {
+        _shownTargets[key] = tab;
+      } else if (_shownTargets[key] != tab) {
+        _shownTargets[key] = null; // This session's id-only links are ambiguous.
+      }
+    }
+    lastTab.value = tab;
   }
 
   /// What the agent must not do with the tools, in its system prompt while
@@ -348,30 +380,19 @@ Do not use the browser tools to scrape or bulk-collect data from government, hea
     ),
   ];
 
-  /// The browser to use: the last connected.
+  /// The immutable connection selected for this call, never the newest host.
   static BrowserConnection _browser() {
-    final bridge = BrowserBridge.instance;
-    final browsers = bridge.browsers;
-    if (browsers.isNotEmpty) return browsers.first;
-    if (bridge.otherApp) {
-      throw StateError(
-        'Another BaoCode is connected to the browser: quit it first.',
-      );
+    final lease = BrowserAgentControl.currentLease;
+    if (lease != null) {
+      lease.check();
+      final browser = lease.browser;
+      if (browser == null) {
+        throw const BrowserControlError('No browser is bound to this call.');
+      }
+      lease.check(browser);
+      return browser;
     }
-    if (bridge.mismatched case [final browser, ...]) {
-      throw StateError(
-        browser.protocol < BrowserBridge.protocol
-            ? "BaoCode's extension in ${browser.browser} is too old for "
-                  'this BaoCode: the user needs to update it (Settings → '
-                  'Browser says how).'
-            : "BaoCode's extension in ${browser.browser} is newer than "
-                  'this BaoCode: the user needs to update BaoCode.',
-      );
-    }
-    throw StateError(
-      "No browser is connected: the user needs BaoCode's extension in "
-      'Chrome (or Edge, Brave, Arc), with the browser running.',
-    );
+    return BrowserAgentControl.instance.resolveBrowser()!;
   }
 
   /// A picture of what [tabId]'s page shows, for an agent: in CSS pixels,

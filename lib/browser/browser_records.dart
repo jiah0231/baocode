@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'browser_bridge.dart';
+import 'browser_agent_control.dart';
 
 /// What the shared tabs' pages log and load, kept from the first time
 /// BaoCode uses each (its console's and network's domains enabled then),
@@ -10,10 +11,43 @@ import 'browser_bridge.dart';
 /// opens, the files it downloads.
 class BrowserRecords {
   BrowserRecords._() {
-    BrowserBridge.instance.events.listen(_received);
+    Zone.root.run(() => BrowserBridge.instance.events.listen(_received));
+    BrowserAgentControl.instance.addListener(_controlChanged);
+    if (BrowserAgentControl.instance.manualControl) _controlChanged();
   }
 
   static final instance = BrowserRecords._();
+
+  // Every application start is a protected interval, even if this singleton
+  // first materializes only after the user has pressed Resume.
+  bool _captureSuspended = true;
+
+  void _controlChanged() {
+    if (!BrowserAgentControl.instance.manualControl) return;
+    _captureSuspended = true;
+    for (final records in _tabs.values) {
+      records
+        ..watching = null
+        ..acceptAfter = null
+        ..captureEpoch = -1
+        ..since = null
+        ..openDialog = null
+        ..answer = null
+        ..answerLease = null;
+      records.console.clear();
+      records.clearRequests();
+      records.extraRequest.clear();
+      records.extraResponse.clear();
+      records.dialogs.clear();
+      records.downloads.clear();
+      records.sessions.clear();
+      records.styleSheets.clear();
+    }
+  }
+
+  bool recording(BrowserTab tab) =>
+      _tabs[tab]?.captureEpoch == BrowserAgentControl.instance.epoch &&
+      !BrowserAgentControl.instance.manualControl;
 
   static const _maxConsole = 500;
   static const _maxRequests = 1000;
@@ -53,13 +87,26 @@ class BrowserRecords {
   bool watching(BrowserTab tab) => _tabs[tab]?.watching != null;
 
   /// Whether an agent acts in [tab] now (see [acting]).
-  bool isActing(BrowserTab tab) => (_tabs[tab]?.acting ?? 0) > 0;
+  bool isActing(BrowserTab tab) =>
+      _tabs[tab]?.actors.any((lease) => lease.valid) ?? false;
 
   /// Starts keeping [tab]'s, if not yet: before what an agent does there.
-  Future<void> watch(BrowserTab tab) async {
+  Future<void> watch(BrowserTab tab, {bool explicit = false}) async {
+    final control = BrowserAgentControl.instance;
     final records = _tabs.putIfAbsent(tab, _TabRecords.new);
+    if (control.manualControl ||
+        (_captureSuspended && !explicit && !recording(tab))) {
+      throw const BrowserControlError.paused();
+    }
+    if (records.captureEpoch != control.epoch) {
+      // Runtime.enable can replay its cached console after a detach. The
+      // cutoff is the explicit rearm, never the earlier takeover/detach.
+      records.acceptAfter = DateTime.now();
+    }
+    records.captureEpoch = control.epoch;
+    records.acceptAfter ??= DateTime.now();
     if (records.watching != null) return records.watching;
-    final watching = () async {
+    final watching = control.observe(tab.browser, () async {
       for (final (method, params) in [
         ('Network.enable', {'maxPostDataSize': 65536}),
         ('Runtime.enable', const <String, Object?>{}),
@@ -77,12 +124,11 @@ class BrowserRecords {
           // The page's own alone.
         }
       }
-    }();
+    });
     records.watching = watching;
     try {
       await watching;
     } on Object {
-      // Asked again next time.
       records.watching = null;
       rethrow;
     }
@@ -126,11 +172,12 @@ class BrowserRecords {
   /// meanwhile are answered (see [answerDialogs]), not left for the user.
   Future<T> acting<T>(BrowserTab tab, Future<T> Function() action) async {
     final records = _tabs.putIfAbsent(tab, _TabRecords.new);
-    records.acting++;
+    final lease = BrowserAgentControl.currentLease;
+    if (lease != null) records.actors.add(lease);
     try {
       return await action();
     } finally {
-      records.acting--;
+      if (lease != null) records.actors.remove(lease);
     }
   }
 
@@ -144,7 +191,9 @@ class BrowserRecords {
     String? text,
     bool always = false,
   }) {
-    _tabs.putIfAbsent(tab, _TabRecords.new).answer = (
+    final records = _tabs.putIfAbsent(tab, _TabRecords.new);
+    records.answerLease = BrowserAgentControl.currentLease;
+    records.answer = (
       accept: accept,
       text: text,
       always: always,
@@ -175,6 +224,8 @@ class BrowserRecords {
     BrowserTab tab,
     NetworkRequest request,
   ) async {
+    final epoch = BrowserAgentControl.instance.epoch;
+    if (!recording(tab)) return null;
     if (request.body case final body?) {
       return (data: body, base64: request.bodyBase64);
     }
@@ -186,6 +237,7 @@ class BrowserRecords {
         const Duration(seconds: 30),
         request.sessionId,
       );
+      if (!BrowserAgentControl.instance.canObserve(epoch)) return null;
       return (
         data: result['body'] as String? ?? '',
         base64: result['base64Encoded'] == true,
@@ -198,6 +250,8 @@ class BrowserRecords {
   /// [request]'s body (a POST's): as it was sent, else asked of the browser
   /// (a large one); null if it had none, or the browser no longer has it.
   Future<String?> requestBody(BrowserTab tab, NetworkRequest request) async {
+    final epoch = BrowserAgentControl.instance.epoch;
+    if (!recording(tab)) return null;
     if (!request.hasPostData || request.postData != null) {
       return request.postData;
     }
@@ -209,6 +263,7 @@ class BrowserRecords {
         const Duration(seconds: 30),
         request.sessionId,
       );
+      if (!BrowserAgentControl.instance.canObserve(epoch)) return null;
       return result['postData'] as String?;
     } on Object {
       return null;
@@ -221,14 +276,21 @@ class BrowserRecords {
     NetworkRequest request,
     String requestId,
   ) async {
+    final epoch = BrowserAgentControl.instance.epoch;
     try {
-      final result = await tab.browser.cdp(
-        tab.tabId,
-        'Network.getResponseBody',
-        {'requestId': requestId},
-        const Duration(seconds: 30),
-        request.sessionId,
+      final result = await BrowserAgentControl.instance.observe(
+        tab.browser,
+        () => tab.browser.cdp(
+          tab.tabId,
+          'Network.getResponseBody',
+          {'requestId': requestId},
+          const Duration(seconds: 30),
+          request.sessionId,
+        ),
       );
+      if (!BrowserAgentControl.instance.canObserve(epoch) || !recording(tab)) {
+        return;
+      }
       final data = result['body'] as String? ?? '';
       if (data.length > _maxBody) return;
       records.keep(
@@ -239,7 +301,9 @@ class BrowserRecords {
     } on Object {
       // The browser has none (a redirect's, a 204's) or let it go already.
     } finally {
-      _added.add((tab, request));
+      if (BrowserAgentControl.instance.canObserve(epoch) && recording(tab)) {
+        _added.add((tab, request));
+      }
     }
   }
 
@@ -281,18 +345,25 @@ class BrowserRecords {
         _tabs[tab]
           ?..watching = null
           ..sessions.clear()
-          ..openDialog = null;
+          ..openDialog = null
+          ..captureEpoch = -1
+          ..acceptAfter = null;
         return;
       case 'cdp':
         break;
       default:
         return;
     }
+    if (!event.observable || !recording(tab)) return;
     final records = _tabs[tab];
     if (records == null) return;
     final session = event.message['sessionId'] as String?;
     final params =
         (event.message['params'] as Map?)?.cast<String, Object?>() ?? {};
+    bool fresh(Object? timestamp, {int scale = 1}) =>
+        timestamp is num && timestamp.isFinite &&
+        (records.acceptAfter == null ||
+          timestamp * scale >= records.acceptAfter!.millisecondsSinceEpoch);
     switch (event.message['method']) {
       case 'Target.attachedToTarget':
         final id = params['sessionId'] as String?;
@@ -300,28 +371,34 @@ class BrowserRecords {
         final type = info['type'] as String? ?? '';
         if (id == null) return;
         records.sessions[id] = (type: type, url: info['url'] as String? ?? '');
-        unawaited(_attached(tab, id, type));
+        unawaited(BrowserAgentControl.instance.observe(
+          tab.browser, () => _attached(tab, id, type),
+        ).catchError((Object _) {}));
       case 'Target.detachedFromTarget':
         records.sessions.remove(params['sessionId']);
       case 'Runtime.consoleAPICalled':
+        if (!fresh(params['timestamp'])) return;
         _log(
           tab,
           records,
           ConsoleEntry.fromConsole(params, records.where(session)),
         );
       case 'Runtime.exceptionThrown':
+        if (!fresh(params['timestamp'])) return;
         _log(
           tab,
           records,
           ConsoleEntry.fromException(params, records.where(session)),
         );
       case 'Log.entryAdded':
+        if (!fresh((params['entry'] as Map?)?['timestamp'])) return;
         _log(
           tab,
           records,
           ConsoleEntry.fromLog(params, records.where(session)),
         );
       case 'Network.requestWillBeSent':
+        if (!fresh(params['wallTime'], scale: 1000)) return;
         final id = params['requestId'] as String;
         final redirected = records.requests[id];
         if (redirected != null && params['redirectResponse'] is Map) {
@@ -350,7 +427,7 @@ class BrowserRecords {
             .cast<String, Object?>();
         if (records.requests[id] case final request?) {
           request.wireRequestHeaders = headers;
-        } else {
+        } else if (!_captureSuspended) {
           records.early(records.extraRequest, id, headers);
         }
       case 'Network.responseReceivedExtraInfo':
@@ -359,7 +436,7 @@ class BrowserRecords {
             .cast<String, Object?>();
         if (records.requests[id] case final request?) {
           request.wireResponseHeaders = headers;
-        } else {
+        } else if (!_captureSuspended) {
           records.early(records.extraResponse, id, headers);
         }
       case 'Network.responseReceived':
@@ -395,6 +472,8 @@ class BrowserRecords {
               : params['errorText'] as String? ?? 'failed';
         _added.add((tab, request));
       case 'Network.webSocketCreated':
+        // No creation timestamp: after handover its URL has no safe provenance.
+        if (_captureSuspended) return;
         records.add(
           NetworkRequest.socket(
             params['requestId'] as String,
@@ -404,7 +483,12 @@ class BrowserRecords {
           ),
         );
       case 'Network.webSocketWillSendHandshakeRequest':
-        final request = records.requests[params['requestId']];
+        if (!fresh(params['wallTime'], scale: 1000)) return;
+        final id = params['requestId'] as String;
+        if (_captureSuspended && !records.requests.containsKey(id)) {
+          records.add(NetworkRequest.socket(id, '(URL not kept across handover)', null, session));
+        }
+        final request = records.requests[id];
         if (request == null) return;
         request
           ..start = (params['timestamp'] as num?)?.toDouble() ?? request.start
@@ -455,6 +539,9 @@ class BrowserRecords {
           ),
         );
       case 'Page.javascriptDialogOpening' when session == null:
+        // This event has no timestamp or recorder generation. A new call's
+        // timing does not prove an old notification is fresh.
+        if (_captureSuspended) return;
         _dialogOpened(tab, records, params);
       case 'Page.javascriptDialogClosed' when session == null:
         records.openDialog
@@ -462,6 +549,7 @@ class BrowserRecords {
           ..by = 'the user';
         records.openDialog = null;
       case 'Page.downloadWillBegin':
+        if (_captureSuspended) return; // Untimestamped download metadata.
         records.downloads.add(
           BrowserDownload(
             params['guid'] as String? ?? '',
@@ -489,6 +577,11 @@ class BrowserRecords {
   }
 
   void _log(BrowserTab tab, _TabRecords records, ConsoleEntry entry) {
+    if (!recording(tab) ||
+        (records.acceptAfter != null &&
+            entry.time.isBefore(records.acceptAfter!))) {
+      return;
+    }
     records.log(entry);
     _added.add((tab, entry));
   }
@@ -507,12 +600,15 @@ class BrowserRecords {
     records.dialogs.add(dialog);
     if (records.dialogs.length > 50) records.dialogs.removeAt(0);
     _added.add((tab, dialog));
-    final asked = records.answer;
+    final asked = records.answerLease?.valid == false ? null : records.answer;
+    final authority = asked != null
+        ? records.answerLease
+        : records.actors.where((lease) => lease.valid).firstOrNull;
     if (asked != null && !asked.always) records.answer = null;
     // Asked how, else while an agent acts; else the user's to answer.
     final accept =
         asked?.accept ??
-        (records.acting > 0
+        (authority != null
             ? dialog.type == 'alert' || dialog.type == 'beforeunload'
             : null);
     if (accept == null) {
@@ -522,25 +618,30 @@ class BrowserRecords {
     dialog
       ..answer = accept ? 'accepted' : 'dismissed'
       ..by = asked == null ? 'BaoCode' : 'browser_dialog';
-    unawaited(
-      tab.browser
-          .cdp(tab.tabId, 'Page.handleJavaScriptDialog', {
-            'accept': accept,
-            if (accept && dialog.type == 'prompt')
-              'promptText': asked?.text ?? dialog.defaultPrompt ?? '',
-          })
-          .then<void>(
-            (_) {},
-            onError: (Object _) {
-              dialog.answer = null;
-              records.openDialog = dialog;
-            },
-          ),
-    );
+    final epoch = BrowserAgentControl.instance.epoch;
+    Future<Map<String, Object?>> answer() =>
+        tab.browser.cdp(tab.tabId, 'Page.handleJavaScriptDialog', {
+          'accept': accept,
+          if (accept && dialog.type == 'prompt')
+            'promptText': asked?.text ?? dialog.defaultPrompt ?? '',
+        });
+    final handling = authority == null
+        ? BrowserAgentControl.instance.observe(tab.browser, answer)
+        : authority.run(answer);
+    unawaited(handling.then<void>(
+      (_) {},
+      onError: (Object _) {
+        if (!BrowserAgentControl.instance.canObserve(epoch)) return;
+        dialog.answer = null;
+        records.openDialog = dialog;
+      },
+    ));
   }
 }
 
 class _TabRecords {
+  int captureEpoch = -1;
+  DateTime? acceptAfter;
   Future<void>? watching;
   DateTime? since;
   final List<ConsoleEntry> console = [];
@@ -556,7 +657,8 @@ class _TabRecords {
   final List<BrowserDialog> dialogs = [];
   BrowserDialog? openDialog;
   ({bool accept, String? text, bool always})? answer;
-  int acting = 0;
+  BrowserAgentLease? answerLease;
+  final Set<BrowserAgentLease> actors = {};
   final List<BrowserDownload> downloads = [];
 
   /// The requests whose response bodies are kept, oldest first, and their

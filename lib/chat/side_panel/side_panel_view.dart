@@ -589,8 +589,11 @@ class AgentSidePanelView extends StatelessWidget {
                 key: ValueKey(('page', SidePanelSection.usage, session)),
                 session: session,
               ),
-              SidePanelSection.browser => const BrowserMirror(
-                key: ValueKey(('page', SidePanelSection.browser)),
+              SidePanelSection.browser => BrowserMirror(
+                key: ValueKey(('page', SidePanelSection.browser, session)),
+                sessionId: session.sessionId,
+                initialTab: tabs.browserSelection,
+                onSelectionChanged: (tab) => tabs.browserSelection = tab,
               ),
               SidePanelSection.plan => _planPage(context, tabs.plan!),
             },
