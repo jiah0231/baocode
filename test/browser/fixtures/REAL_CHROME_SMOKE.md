@@ -112,19 +112,21 @@ independently measured DOM width.
 The matrix covers actual Chrome browser zoom 100%, 125%, 150% and 200%; Flutter
 view DPR 1, 1.25, 1.5 and 2; narrow and wide panel layouts; blank margins; explicitly reserved classic
 scrollbars (verified against DOM viewport widths); pinch scale 1.5 plus page
-scrolling and native touch panning with required nonzero visual-viewport offsets; and screenshot fallback followed by stream
+scrolling and an off-center native touchpad pinch with required nonzero visual-viewport offsets; and screenshot fallback followed by stream
 resumption. The fixture writes only its newly created disposable profile's
 zoom preference. Each run must verify the requested real browser zoom through
 `Page.getLayoutMetrics.cssVisualViewport.zoom` and `window.devicePixelRatio`.
 A preference that no longer works fails the test instead of silently testing
-100% zoom. Chrome's own device scale is fixed at 1; the Flutter DPR matrix is
-not proof of native Windows display-scaling behavior.
+100% zoom. Chrome's own device scale is 1.25 in the 200% browser-zoom case
+and 1 in the others, independently checked through devicePixelRatio. This
+controlled flag plus the Flutter DPR matrix is not proof of the user's native
+Windows display-scaling settings.
 
 For fallback, the adapter suppresses only actual screencast-event forwarding
 and ACKs those real frames, so it does not stall Chrome's stream. The mirror
 must obtain a real screenshot and resume real streaming afterward. The test
 keeps bounded input/capture command evidence and checks late protocol errors.
-Touch-scroll CDP is used only to set up the panned viewport; every asserted
+Native touchpad pinch CDP is used only to set up the panned viewport; every asserted
 click still goes through Flutter and the production mirror. The setup must
 produce nonzero `visualViewport.offsetLeft` and `offsetTop`, or the test fails.
 The extension/native-host installation limitations above still apply.
@@ -132,3 +134,20 @@ The extension/native-host installation limitations above still apply.
 These new tests require execution with the repository's pinned Flutter SDK
 and an authorized sandbox-capable runner. Merely adding them, or passing the
 synthetic socket tests, is not evidence that this real rendering test passed.
+
+### Wheel compatibility boundary
+
+Chrome 156 and verified 157 source forward CDP wheel deltas as surface DIPs,
+whereas mouse positions are CSS pixels. The upstream correction is present in
+tagged 158.0.8111.0. The mirror reads only a parsed Chromium major through an
+existing Runtime command and keeps it in memory for the capture generation.
+It does not collect the full user agent, profile data or fullVersionList, use
+the unavailable Browser domain, or send calibration input to a user page.
+Recognized majors up to 157 use legacy DIP wheel mapping. Newer, malformed or
+unavailable versions use the standard CSS contract. Synthetic tests exercise
+both branches and read failure; the real DOM oracle remains independent.
+This is a bounded compatibility heuristic, not a guarantee for early 158
+builds, vendor backports, forks, or overridden user-agent values. Native Chrome
+158+ has not been runtime-tested by this pinned 156 fixture.
+
+Source correction: https://github.com/chromium/chromium/commit/b6291517908abb64a348cfdcc140dbd5ec16a867

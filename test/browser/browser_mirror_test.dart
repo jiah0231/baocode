@@ -6,6 +6,7 @@ import 'dart:ui' as ui;
 
 import 'package:baocode/browser/browser_agent_control.dart';
 import 'package:baocode/browser/browser_bridge.dart';
+import 'package:baocode/browser/browser_frame_flow.dart';
 import 'package:baocode/browser/browser_mirror.dart';
 import 'package:baocode/browser/browser_tools.dart';
 import 'package:baocode/ide/ide_hover.dart';
@@ -94,10 +95,37 @@ void main() {
               expect(call.params['y'], closeTo(css.height * .71, .001), reason: reason);
             }
             final wheel = mirror.mouseCalls.singleWhere((call) => call.params['type'] == 'mouseWheel');
-            expect(wheel.params['deltaX'], closeTo(11 * css.width / drawn.width, .001), reason: reason);
-            expect(wheel.params['deltaY'], closeTo(-17 * css.height / drawn.height, .001), reason: reason);
+            // Chrome 156 accepts unscaled surface DIPs for wheel deltas,
+            // unlike the CSS position in the same CDP command.
+            expect(wheel.params['deltaX'], closeTo(11 * 1200 / drawn.width, .001), reason: reason);
+            expect(wheel.params['deltaY'], closeTo(-17 * 600 / drawn.height, .001), reason: reason);
           }
         }
+      });
+    });
+  }
+
+  for (final major in [158, 0, '156', null, 'read rejected']) {
+    testWidgets('new or unrecognized Chromium version $major uses CSS wheel deltas',
+        (tester) async {
+      await _withMirror(tester, (mirror) async {
+        mirror.host.chromiumMajor = major;
+        mirror.host.holdScreenshots = true;
+        await mirror.frames([const _Frame(_red, Size(1200, 600),
+            cssSize: Size(400, 200), browserZoom: 2, pageScaleFactor: 1.5)]);
+        await mirror.render(_red);
+        final drawn = tester.getRect(find.byType(RawImage));
+        final point = drawn.topLeft + Offset(drawn.width * .23, drawn.height * .71);
+        mirror.host.calls.clear();
+        await tester.sendEventToBinding(PointerScrollEvent(
+          position: point, scrollDelta: const Offset(11, -17),
+        ));
+        await mirror.barrier();
+        final wheel = mirror.mouseCalls.singleWhere((call) => call.params['type'] == 'mouseWheel');
+        expect(wheel.params['x'], closeTo(92, .001));
+        expect(wheel.params['y'], closeTo(142, .001));
+        expect(wheel.params['deltaX'], closeTo(11 * 400 / drawn.width, .001));
+        expect(wheel.params['deltaY'], closeTo(-17 * 200 / drawn.height, .001));
       });
     });
   }
@@ -118,8 +146,16 @@ void main() {
       await mirror.render(_red);
       final fallback = mirror.image;
       final drawn = tester.getRect(find.byType(RawImage));
-      await tester.tapAt(drawn.topLeft + Offset(drawn.width * .23, drawn.height * .71));
+      final fallbackPoint = drawn.topLeft + Offset(drawn.width * .23, drawn.height * .71);
+      await tester.tapAt(fallbackPoint);
+      await tester.sendEventToBinding(PointerScrollEvent(
+        position: fallbackPoint, scrollDelta: const Offset(11, -17),
+      ));
       await mirror.barrier();
+      final fallbackWheel = mirror.mouseCalls.singleWhere((call) => call.params['type'] == 'mouseWheel');
+      // Encoded pixels / Chrome physical-to-DIP ratio, not Flutter DPR.
+      expect(fallbackWheel.params['deltaX'], closeTo(11 * 600 / drawn.width, .001));
+      expect(fallbackWheel.params['deltaY'], closeTo(-17 * 300 / drawn.height, .001));
       final first = mirror.mouseCalls.singleWhere((call) => call.params['type'] == 'mousePressed');
       expect(first.params['x'], closeTo(138, .001));
       expect(first.params['y'], closeTo(213, .001));
@@ -131,8 +167,15 @@ void main() {
       )]);
       await mirror.render(_blue, previous: fallback);
       final streamed = tester.getRect(find.byType(RawImage));
-      await tester.tapAt(streamed.topLeft + Offset(streamed.width * .69, streamed.height * .21));
+      final streamPoint = streamed.topLeft + Offset(streamed.width * .69, streamed.height * .21);
+      await tester.tapAt(streamPoint);
+      await tester.sendEventToBinding(PointerScrollEvent(
+        position: streamPoint, scrollDelta: const Offset(11, -17),
+      ));
       await mirror.barrier();
+      final streamWheel = mirror.mouseCalls.singleWhere((call) => call.params['type'] == 'mouseWheel');
+      expect(streamWheel.params['deltaX'], closeTo(11 * 900 / streamed.width, .001));
+      expect(streamWheel.params['deltaY'], closeTo(-17 * 1800 / streamed.height, .001));
       final next = mirror.mouseCalls.singleWhere((call) => call.params['type'] == 'mousePressed');
       expect(next.params['x'], closeTo(207, .001));
       expect(next.params['y'], closeTo(126, .001));
@@ -1201,6 +1244,7 @@ class _SocketHost {
   var pixelRatio = 1.0;
   var pageScaleFactor = 1.0;
   var wallSeconds = 1000.0;
+  Object? chromiumMajor = 156;
   var holdScreenshots = false;
   var holdNextStart = false;
   var _frameId = 0;
@@ -1297,6 +1341,12 @@ class _SocketHost {
         pendingScreenshots.add(request);
         continue;
       }
+      if (call.method == 'Runtime.evaluate' &&
+          call.params['expression'] == browserChromiumMajorExpression &&
+          chromiumMajor == 'read rejected') {
+        send({'id': request['id'], 'error': 'Fixture version read unavailable'});
+        continue;
+      }
       final Object result = switch (call.method) {
         'tabs.list' => [
           {'tabId': 1, 'title': 'Human page', 'url': 'https://one.example/'},
@@ -1320,8 +1370,11 @@ class _SocketHost {
         'Page.captureScreenshot' => {'data': screenshotData},
         'Runtime.evaluate' => {
           'result': {
-            'value': call.params['expression'] == 'Date.now() / 1000'
-                ? ++wallSeconds : false,
+            'value': switch (call.params['expression']) {
+              'Date.now() / 1000' => ++wallSeconds,
+              browserChromiumMajorExpression => chromiumMajor,
+              _ => false,
+            },
           },
         },
         _ => <String, Object?>{},

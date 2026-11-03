@@ -50,6 +50,7 @@ class RealChromeFixture {
   Future<void> start(String executable, String version, {
     double browserZoom = 1,
     double? deviceScaleFactor,
+    bool initiallyBlank = false,
   }) async {
     if (!File(executable).existsSync()) {
       throw StateError('Official Chrome for Testing executable not found.');
@@ -76,6 +77,7 @@ class RealChromeFixture {
         },
       }));
     }
+    final initialPage = initiallyBlank ? Uri.parse('about:blank') : page;
     _process = await Process.start(executable, [
       '--user-data-dir=${profile.path}',
       '--remote-debugging-address=127.0.0.1',
@@ -90,7 +92,7 @@ class RealChromeFixture {
       '--window-size=900,700',
       if (deviceScaleFactor != null)
         '--force-device-scale-factor=$deviceScaleFactor',
-      page.toString(),
+      initialPage.toString(),
     ]);
     // Drain both pipes so a verbose browser cannot deadlock the test.
     _process!.stdout.transform(utf8.decoder).listen(_log.write);
@@ -119,12 +121,13 @@ class RealChromeFixture {
       throw StateError('Chrome version differs from pinned CfT version: '
           '${browser['Browser']} (expected $version).');
     }
-    // Target metadata identifies our requested tab, not a committed document.
-    // The smoke explicitly navigates it after verifying paused startup/Resume.
+    // Target metadata identifies the requested startup tab, not a committed
+    // document. The mirror starts blank so its one explicit local navigation
+    // cannot race a second startup navigation to the same fixture URL.
     await chromeUntil(() async {
       final targets = (await _json('/json/list')) as List;
       final ours = targets.cast<Map>().where(
-        (target) => target['type'] == 'page' && target['url'] == '$page',
+        (target) => target['type'] == 'page' && target['url'] == '$initialPage',
       );
       if (ours.isEmpty) {
         return false;

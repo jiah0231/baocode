@@ -1,6 +1,23 @@
 import 'dart:math' as math;
 import 'dart:ui';
 
+/// Only a numeric major is returned, never the user-agent string or profile data.
+/// UA freezing preserves Chrome's major; overrides/forks can still be ambiguous.
+const browserChromiumMajorExpression = r'''(() => {
+  const brands = navigator.userAgentData?.brands;
+  const version = brands?.find(b => b.brand === 'Chromium')?.version ??
+      /\b(?:HeadlessChrome|Chrome)\/(\d+)\./.exec(navigator.userAgent)?.[1];
+  const major = Number(version);
+  return Number.isSafeInteger(major) && major > 0 ? major : 0;
+})()''';
+
+/// Chrome <=157 forwards CDP wheel deltas as surface DIPs. The upstream CSS
+/// correction is in tagged 158.0.8111.0. Unknown values use the standard CSS
+/// contract; this heuristic cannot identify early dev builds or backports.
+bool browserWheelUsesSurfacePixels(Object? major) =>
+    major is num && major.isFinite && major == major.roundToDouble() &&
+    major > 0 && major <= 157;
+
 bool _validSize(Size size) =>
     size.width.isFinite &&
     size.height.isFinite &&
@@ -39,7 +56,8 @@ Offset? browserPagePoint(
   );
 }
 
-/// Maps a logical wheel delta by the same scale used to draw the page.
+/// Maps a logical delta into the supplied surface units, using the drawn
+/// image's scale. A CDP wheel delta can use DIP while its position uses CSS.
 Offset? browserPageDelta(Offset delta, Size view, Size page, {Size? imageSize}) {
   if (!delta.dx.isFinite || !delta.dy.isFinite) return null;
   if (!_validSize(page)) return null;

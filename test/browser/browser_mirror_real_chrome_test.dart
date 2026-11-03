@@ -42,31 +42,31 @@ void main() {
             }
           }
 
-          // These are additional pinch/visual-viewport conditions, not a
-          // substitute for the independently verified browser zoom above.
-          await mirror.command('Emulation.setPageScaleFactor', {
-            'pageScaleFactor': 1.5,
-          });
-          final metrics = await mirror.command('Page.getLayoutMetrics');
-          expect((metrics['cssVisualViewport'] as Map)['scale'], closeTo(1.5, .01));
+          // An off-center native touchpad pinch both scales and pans the
+          // visual viewport, independently of the verified browser zoom.
           await mirror.evaluate('window.scrollTo(137, 211)');
           final viewport = (await mirror.evaluate(
-            '({width:visualViewport.width, height:visualViewport.height})',
+            '({width:visualViewport.width, height:visualViewport.height, '
+            'scale:visualViewport.scale})',
           ))! as Map;
-          // Native touch-scroll is setup only. The asserted clicks below
+          expect(viewport['scale'], closeTo(1, .01));
+          // Native pinch is setup only. The asserted clicks below
           // still originate at the independently located Flutter pixels.
-          await mirror.command('Input.synthesizeScrollGesture', {
+          await mirror.command('Input.synthesizePinchGesture', {
             'x': (viewport['width'] as num) * .65,
             'y': (viewport['height'] as num) * .60,
-            'xDistance': -(viewport['width'] as num) * .10,
-            'yDistance': -(viewport['height'] as num) * .10,
-            'gestureSourceType': 'touch',
-            'preventFling': true,
+            'scaleFactor': 1.5,
+            'gestureSourceType': 'mouse',
           });
-          await mirror.waitUntil(() async => await mirror.evaluate(
-            'Math.abs(visualViewport.offsetLeft) > 2 && '
-            'Math.abs(visualViewport.offsetTop) > 2',
-          ) == true, 'Native touch setup did not produce a real visual-viewport pan.');
+          await mirror.waitUntil(() async {
+            mirror.viewportEvidence = (await mirror.evaluate(
+              '({scale:visualViewport.scale, offsetLeft:visualViewport.offsetLeft, '
+              'offsetTop:visualViewport.offsetTop, scrollX, scrollY})',
+            ))! as Map;
+            return (mirror.viewportEvidence['offsetLeft'] as num).abs() > 2 &&
+                (mirror.viewportEvidence['offsetTop'] as num).abs() > 2;
+          }, 'Native touchpad pinch did not produce a real visual-viewport pan.');
+          expect(mirror.viewportEvidence['scale'], closeTo(1.5, .01));
           await mirror.showNewMarker();
           await mirror.checkPaintedInput('zoom=$zoom pinch=1.5 with nonzero visual offsets');
           await mirror.command('Emulation.setPageScaleFactor', {
@@ -126,6 +126,8 @@ class _RealMirror {
   int _marker = 0;
   List<int> _color = const [250, 20, 220];
   Map _expected = const {};
+  Map _documentEvidence = const {};
+  Map viewportEvidence = const {};
 
   Finder get pageListener => find.descendant(
     of: find.byType(BrowserMirror),
@@ -134,6 +136,9 @@ class _RealMirror {
   );
 
   Future<void> open(double zoom) async {
+    // Exercise native Chrome scaling independently from Flutter's view DPR,
+    // without increasing the number of real browser test cases.
+    final deviceScale = zoom == 2 ? 1.25 : 1.0;
     final executable = Platform.environment['BAOCODE_CHROME_FOR_TESTING'];
     final version = Platform.environment['BAOCODE_CFT_VERSION'];
     expect(executable, isNotNull, reason: 'Supply the official CfT executable.');
@@ -159,20 +164,30 @@ class _RealMirror {
       await bridge.start();
       expect(bridge.otherApp, isFalse);
       await chrome.start(executable!, version!,
-          browserZoom: zoom, deviceScaleFactor: 1);
+          browserZoom: zoom, deviceScaleFactor: deviceScale, initiallyBlank: true);
       await chromeUntil(() => bridge.browsers.length == 1);
       _browser = bridge.browsers.single;
     }, phase: 'start isolated Chrome and native bridge');
     final navigation = await command('Page.navigate', {'url': '${chrome.page}'});
-    expect(navigation['errorText'], isNull);
-    await waitUntil(() async => await evaluate(
-      "document.readyState === 'complete' && typeof window.placeMarker === 'function'",
-    ) == true, 'The isolated marker document did not load.');
+    expect(navigation['errorText'], isNull,
+        reason: 'The one explicit localhost navigation failed: $navigation');
+    await waitUntil(() async {
+      _documentEvidence = (await evaluate(
+        '({readyState:document.readyState, origin:location.origin, '
+        'path:location.pathname.slice(0,120), title:document.title.slice(0,120), '
+        'markerType:typeof window.placeMarker})',
+      ))! as Map;
+      return _documentEvidence['readyState'] == 'complete' &&
+          _documentEvidence['origin'] == chrome.page.origin &&
+          _documentEvidence['path'] == chrome.page.path &&
+          _documentEvidence['title'] == 'Disposable mirror marker' &&
+          _documentEvidence['markerType'] == 'function';
+    }, 'The exact isolated marker document did not commit.');
     final metrics = await command('Page.getLayoutMetrics');
     expect((metrics['cssVisualViewport'] as Map)['zoom'], closeTo(zoom, .01),
         reason: 'The disposable profile must apply REAL browser zoom.');
-    expect(await evaluate('devicePixelRatio'), closeTo(zoom, .01),
-        reason: 'Chrome device scale is fixed at 1, independently of Flutter.');
+    expect(await evaluate('devicePixelRatio'), closeTo(zoom * deviceScale, .01),
+        reason: 'Chrome device scale is $deviceScale, independently of Flutter.');
     final widths = (await evaluate(
       '({inner:innerWidth, visual:visualViewport.width, scale:visualViewport.scale})',
     ))! as Map;
@@ -264,7 +279,9 @@ class _RealMirror {
       await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
     }
     fail('$reason Commands: ${chrome.commands.reversed.take(12).toList()}; '
-        'errors: ${chrome.errors}');
+        'errors: ${chrome.errors}; document: $_documentEvidence; '
+        'viewport: $viewportEvidence; '
+        'input/capture: ${chrome.commandDetails.reversed.take(4).toList()}');
   }
 
   Future<void> showNewMarker() async {
@@ -445,7 +462,9 @@ for (const type of ['pointerdown', 'pointerup', 'wheel']) {
     window.inputEvents.push({type, x:event.clientX, y:event.clientY,
       target:event.target.id, trusted:event.isTrusted,
       deltaY:event.deltaY || 0, deltaMode:event.deltaMode || 0});
-    if (type === 'wheel') event.preventDefault();
+    // Chrome offers native touchpad pinch as ctrl+wheel before zooming.
+    // Allow that setup gesture; keep the measured ordinary wheel stationary.
+    if (type === 'wheel' && !event.ctrlKey) event.preventDefault();
   }, {passive:false});
 }
 window.placeMarker = (x, y, color) => {

@@ -4,6 +4,15 @@ import 'package:baocode/browser/browser_frame_flow.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('wheel compatibility only recognizes integral legacy Chromium majors', () {
+    for (final major in [1, 136, 156, 157, 157.0]) {
+      expect(browserWheelUsesSurfacePixels(major), isTrue);
+    }
+    for (final major in [0, -1, 157.5, 158, 200, '156', null,
+        double.nan, double.infinity, true]) {
+      expect(browserWheelUsesSurfacePixels(major), isFalse);
+    }
+  });
   group('browser frame geometry', () {
     test('encoded aspect and CSS input extents remain separate under zoom', () {
       const view = Size(800, 600);

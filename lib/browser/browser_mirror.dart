@@ -267,6 +267,23 @@ class _BrowserMirrorState extends State<BrowserMirror>
     return viewport;
   }
 
+  int _wheelUnitGeneration = -1;
+  Future<bool>? _legacyWheelUnits;
+
+  Future<bool> _readLegacyWheelUnits(BrowserTab tab) async {
+    try {
+      final response = await tab.browser.cdp(tab.tabId, 'Runtime.evaluate', {
+        'expression': browserChromiumMajorExpression,
+        'returnByValue': true,
+      }, const Duration(seconds: 2));
+      return browserWheelUsesSurfacePixels(
+          (response['result'] as Map?)?['value']);
+    } on Object {
+      // A missing/overridden UA or unsupported read uses the CSS contract.
+      return false;
+    }
+  }
+
   Future<double> _readCaptureClock(BrowserTab tab) async {
     // The frame timestamp is Chrome's wall clock, not this app's clock: the
     // extension can be on a different machine. Only this numeric value is read.
@@ -348,6 +365,12 @@ class _BrowserMirrorState extends State<BrowserMirror>
             _restartStream();
             continue;
           }
+          if (_wheelUnitGeneration != pending.generation) {
+            _wheelUnitGeneration = pending.generation;
+            _legacyWheelUnits = _readLegacyWheelUnits(pending.tab);
+          }
+          final legacyWheel = await _legacyWheelUnits!;
+          if (!current()) continue;
           final decoded = await _decodeFrame(base64Decode(pending.payload.data));
           image = decoded;
           if (!current()) continue;
@@ -367,8 +390,13 @@ class _BrowserMirrorState extends State<BrowserMirror>
             final factor = viewport.zoom * pending.payload.pageScale;
             inputSize = pending.payload.pageSize / factor;
           }
+          // Legacy Chrome takes surface DIPs for wheel deltas, unlike CSS
+          // pointer positions. Corrected/newer or unidentified browsers use
+          // the standard CSS contract. Keep units with these decoded pixels.
+          final wheelSize = legacyWheel
+              ? inputSize * (viewport.zoom * viewport.scale) : inputSize;
           setState(() {
-            _frame = _MirrorFrame(decoded, inputSize, pending.generation);
+            _frame = _MirrorFrame(decoded, inputSize, wheelSize, pending.generation);
           });
           image = null; // The displayed frame now owns this handle.
           // Keep the old widget's owned image alive until replacement is
@@ -993,7 +1021,7 @@ class _BrowserMirrorState extends State<BrowserMirror>
     final box = _key.currentContext?.findRenderObject() as RenderBox?;
     if (tab == null || point == null || frame == null || box == null) return;
     // As far on the page as here: the page under the fingers follows them.
-    final mapped = browserPageDelta(delta, box.size, frame.pageSize,
+    final mapped = browserPageDelta(delta, box.size, frame.wheelSize,
         imageSize: frame.imageSize);
     if (mapped == null) return;
     unawaited(
@@ -1264,11 +1292,12 @@ class _BrowserMirrorState extends State<BrowserMirror>
 }
 
 class _MirrorFrame {
-  _MirrorFrame(this.image, this.pageSize, this.generation)
+  _MirrorFrame(this.image, this.pageSize, this.wheelSize, this.generation)
       : imageSize = Size(image.width.toDouble(), image.height.toDouble());
 
   final ui.Image image;
   final Size pageSize;
+  final Size wheelSize;
   final int generation;
   final Size imageSize;
 }
