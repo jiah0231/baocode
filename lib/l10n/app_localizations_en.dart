@@ -1557,6 +1557,9 @@ class AppLocalizationsEn extends AppLocalizations {
       '$browser (disconnected)';
 
   @override
+  String get browserPanelPausedShort => 'Agent paused';
+
+  @override
   String get browserPanelPreparingControl => 'Preparing manual control…';
 
   @override

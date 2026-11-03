@@ -41,6 +41,45 @@ jobs:
           test/browser/browser_frame_flow_test.dart
           test/browser/browser_agent_control_test.dart
           test/browser/browser_mirror_test.dart
+          test/browser/browser_analysis_test.dart
+          test/browser/browser_bridge_test.dart
+          test/browser/browser_numbers_test.dart
+          test/browser/browser_steps_test.dart
+          test/browser/extension_store_test.dart
+          test/browser/source_map_test.dart
+          test/kernel/codex_install_http_diagnostics_test.dart
+      - name: Test real Chrome takeover with isolated CDP fixture
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
+        timeout-minutes: 8
+        shell: pwsh
+        env:
+          BAOCODE_REAL_CHROME_SMOKE: '1'
+          BAOCODE_CFT_VERSION: '156.0.8078.80'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP ('bao-cft-' + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $root | Out-Null
+          try {
+            # Official version-specific metadata; no installed-browser fallback.
+            $expected = 'https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.80/win64/chrome-win64.zip'
+            $metadata = Invoke-RestMethod "https://googlechromelabs.github.io/chrome-for-testing/$($env:BAOCODE_CFT_VERSION).json" -TimeoutSec 60
+            $asset = @($metadata.downloads.chrome | Where-Object { $_.platform -eq 'win64' })
+            if ($metadata.version -ne $env:BAOCODE_CFT_VERSION -or $asset.Count -ne 1 -or $asset[0].url -ne $expected) { throw 'Pinned official Chrome for Testing metadata mismatch' }
+            $archive = Join-Path $root 'chrome-win64.zip'
+            Invoke-WebRequest $expected -OutFile $archive -TimeoutSec 180
+            $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
+            Write-Host "Chrome for Testing $($env:BAOCODE_CFT_VERSION) | $expected | archive SHA256 $hash"
+            Expand-Archive -LiteralPath $archive -DestinationPath $root
+            $env:BAOCODE_CHROME_FOR_TESTING = Join-Path $root 'chrome-win64\chrome.exe'
+            if (-not (Test-Path -LiteralPath $env:BAOCODE_CHROME_FOR_TESTING)) { throw 'Official Chrome for Testing executable missing' }
+            # Fresh disposable profile, local pages, loopback CDP, no extension
+            # installation/registry changes. Not native-host/extension E2E.
+            flutter test test/browser/browser_takeover_real_chrome_test.dart --reporter expanded --timeout 3m
+            if ($LASTEXITCODE -ne 0) { throw 'Real Chrome takeover smoke failed' }
+          } finally {
+            # Only the binary/archive directory created by this exact step.
+            if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+          }
       - name: Test Codex approval and edit-review UI early
         run: flutter test test/kernel_ui_test.dart --plain-name "a Codex agent asks leave, and its work can be undone"
       - name: Test selected cross-kernel session retrieval

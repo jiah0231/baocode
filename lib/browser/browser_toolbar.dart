@@ -75,8 +75,12 @@ class BrowserPanelToolbar extends StatefulWidget {
 class _BrowserPanelToolbarState extends State<BrowserPanelToolbar> {
   late final TextEditingController _address;
   final FocusNode _addressFocus = FocusNode(debugLabel: 'browser address');
+  final FocusNode _helpFocus = FocusNode(debugLabel: 'browser help');
+  final ScrollController _noticesScroll = ScrollController();
   bool _retainSubmittedDraftOnBlur = false;
   String? _urlAtSubmission;
+  bool _helpFocused = false;
+  bool _helpOpen = false;
 
   @override
   void initState() {
@@ -103,6 +107,8 @@ class _BrowserPanelToolbarState extends State<BrowserPanelToolbar> {
   void dispose() {
     _addressFocus.removeListener(_focusChanged);
     _addressFocus.dispose();
+    _helpFocus.dispose();
+    _noticesScroll.dispose();
     _address.dispose();
     super.dispose();
   }
@@ -147,6 +153,59 @@ class _BrowserPanelToolbarState extends State<BrowserPanelToolbar> {
     widget.onNavigate(address);
   }
 
+  Future<void> _showHelp() async {
+    if (_helpOpen) return;
+    _helpOpen = true;
+    final l10n = context.l10n;
+    final paused = widget.manualControl;
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: AppColors.surface,
+          scrollable: true,
+          title: Text(
+            '${l10n.sidePanelBrowser} · ${l10n.menuHelp}',
+            style: TextStyle(fontSize: 14, color: AppColors.text),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                l10n.browserPanelChromeNotice,
+                style: TextStyle(
+                  fontSize: 13,
+                  height: 1.4,
+                  color: AppColors.text,
+                ),
+              ),
+              if (paused) ...[
+                const SizedBox(height: 12),
+                Text(
+                  l10n.browserPanelPausedNotice,
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.4,
+                    color: AppColors.text,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(l10n.commonClose),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      _helpOpen = false;
+    }
+  }
+
   Widget _action(
     IconData icon,
     String label,
@@ -169,10 +228,22 @@ class _BrowserPanelToolbarState extends State<BrowserPanelToolbar> {
           )
         : l10n.browserPanelUnavailable;
     final title = widget.title.isEmpty ? widget.url : widget.title;
-    final controlLabel = widget.manualControl ? l10n.browserPanelResume : l10n.browserPanelTakeOver;
+    final controlLabel = widget.manualControl
+        ? l10n.browserPanelResume
+        : l10n.browserPanelTakeOver;
     final controlTooltip = widget.manualControl
-        ? l10n.browserPanelResumeTooltip
+        ? '${l10n.browserPanelResumeTooltip}\n${l10n.browserPanelPausedNotice}'
         : l10n.browserPanelTakeOverTooltip;
+    final helpTooltip = [
+      l10n.menuHelp,
+      l10n.browserPanelChromeNotice,
+      if (widget.manualControl) l10n.browserPanelPausedNotice,
+    ].join('\n\n');
+    final bindingNotice = widget.bindingNotice;
+    final error = widget.error;
+    final hasBindingNotice =
+        bindingNotice != null && bindingNotice.trim().isNotEmpty;
+    final hasError = error != null && error.isNotEmpty;
     return Material(
       type: MaterialType.transparency,
       child: Container(
@@ -205,6 +276,7 @@ class _BrowserPanelToolbarState extends State<BrowserPanelToolbar> {
                               style: TextStyle(
                                 color: AppColors.text,
                                 fontSize: 12,
+                                height: 1.3,
                               ),
                             ),
                           Text(
@@ -212,8 +284,21 @@ class _BrowserPanelToolbarState extends State<BrowserPanelToolbar> {
                             style: TextStyle(
                               color: AppColors.textMuted,
                               fontSize: 11,
+                              height: 1.3,
                             ),
                           ),
+                          if (widget.manualControl)
+                            Semantics(
+                              liveRegion: true,
+                              child: Text(
+                                l10n.browserPanelPausedShort,
+                                style: TextStyle(
+                                  color: AppColors.caution,
+                                  fontSize: 11,
+                                  height: 1.3,
+                                ),
+                              ),
+                            ),
                         ],
                       ),
                     ),
@@ -267,6 +352,34 @@ class _BrowserPanelToolbarState extends State<BrowserPanelToolbar> {
                           : widget.onTakeOver,
                     ),
                   ),
+                  FocusableActionDetector(
+                    key: const ValueKey('browser-panel-help'),
+                    focusNode: _helpFocus,
+                    onShowFocusHighlight: (focused) {
+                      if (mounted) setState(() => _helpFocused = focused);
+                    },
+                    shortcuts: const {
+                      SingleActivator(LogicalKeyboardKey.enter):
+                          ActivateIntent(),
+                      SingleActivator(LogicalKeyboardKey.space):
+                          ActivateIntent(),
+                    },
+                    actions: {
+                      ActivateIntent: CallbackAction<ActivateIntent>(
+                        onInvoke: (_) {
+                          unawaited(_showHelp());
+                          return null;
+                        },
+                      ),
+                    },
+                    child: IdeActionButton(
+                      icon: Codicons.info,
+                      tooltip: helpTooltip,
+                      size: 26,
+                      checked: _helpFocused,
+                      onPressed: () => unawaited(_showHelp()),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -298,6 +411,7 @@ class _BrowserPanelToolbarState extends State<BrowserPanelToolbar> {
                         ),
                         child: TextField(
                           key: const ValueKey('browser-panel-address'),
+                          groupId: _addressFocus,
                           controller: _address,
                           focusNode: _addressFocus,
                           enabled: widget.connected,
@@ -308,6 +422,7 @@ class _BrowserPanelToolbarState extends State<BrowserPanelToolbar> {
                           maxLines: 1,
                           style: TextStyle(
                             fontSize: 12,
+                            height: 1.3,
                             color: IdeInputColors.foreground,
                           ),
                           cursorColor: IdeInputColors.foreground,
@@ -328,13 +443,14 @@ class _BrowserPanelToolbarState extends State<BrowserPanelToolbar> {
                           // Keep focus changes under _submitAddress's control.
                           onEditingComplete: () {},
                           onSubmitted: _submitAddress,
-                          onTapOutside: (_) => _addressFocus.unfocus(),
+                          onTapOutside: (_) => _cancelEditing(),
                         ),
                       ),
                     ),
                   ),
                 ),
                 TextFieldTapRegion(
+                  groupId: _addressFocus,
                   child: _action(
                     Codicons.arrowRight,
                     l10n.browserPanelGo,
@@ -343,42 +459,61 @@ class _BrowserPanelToolbarState extends State<BrowserPanelToolbar> {
                 ),
               ],
             ),
-            if (widget.bindingNotice case final notice?
-                when notice.trim().isNotEmpty)
+            if (hasBindingNotice || hasError)
               Padding(
                 padding: const EdgeInsets.only(top: 5),
-                child: Text(
-                  notice,
-                  key: const ValueKey('browser-panel-binding-notice'),
-                  style: TextStyle(fontSize: 11, color: AppColors.textMuted),
-                ),
-              ),
-            Padding(
-              padding: const EdgeInsets.only(top: 5),
-              child: Text(
-                l10n.browserPanelChromeNotice,
-                style: TextStyle(fontSize: 11, color: AppColors.textMuted),
-              ),
-            ),
-            if (widget.manualControl)
-              Padding(
-                padding: const EdgeInsets.only(top: 5),
-                child: Semantics(
-                  liveRegion: true,
-                  child: Text(
-                    l10n.browserPanelPausedNotice,
-                    style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+                child: ConstrainedBox(
+                  // Long profile names and error details must remain readable
+                  // without pushing the page and navigation off the screen.
+                  constraints: BoxConstraints(
+                    maxHeight: math.min(
+                      160.0,
+                      MediaQuery.sizeOf(context).height / 4,
+                    ),
                   ),
-                ),
-              ),
-            if (widget.error case final error? when error.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 5),
-                child: Semantics(
-                  liveRegion: true,
-                  child: Text(
-                    error,
-                    style: TextStyle(fontSize: 12, color: AppColors.caution),
+                  child: Scrollbar(
+                    controller: _noticesScroll,
+                    thumbVisibility: true,
+                    child: SingleChildScrollView(
+                      key: const ValueKey('browser-panel-notices'),
+                      controller: _noticesScroll,
+                      primary: false,
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (bindingNotice case final notice?
+                              when notice.trim().isNotEmpty)
+                            Text(
+                              notice,
+                              key: const ValueKey(
+                                'browser-panel-binding-notice',
+                              ),
+                              style: TextStyle(
+                                fontSize: 11,
+                                height: 1.3,
+                                color: AppColors.textMuted,
+                              ),
+                            ),
+                          if (error case final message?
+                              when message.isNotEmpty) ...[
+                            if (hasBindingNotice) const SizedBox(height: 5),
+                            Semantics(
+                              liveRegion: true,
+                              child: Text(
+                                message,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  height: 1.3,
+                                  color: AppColors.caution,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),

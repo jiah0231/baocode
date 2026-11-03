@@ -3032,6 +3032,9 @@ abstract class AppLocalizations {
   /// Shows the current view and its distinct agent connection when needed.
   String browserPanelDisconnectedConnection(String browser);
 
+  /// Short visible status while agent browser access is paused.
+  String get browserPanelPausedShort;
+
   /// No description provided for @browserPanelPreparingControl.
   ///
   /// In en, this message translates to:

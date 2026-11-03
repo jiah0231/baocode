@@ -686,6 +686,7 @@
   "@browserPanelBindingNotice": {"placeholders": {"view": {"type": "String"}, "agent": {"type": "String"}}},
   "browserPanelDisconnectedConnection": "{browser} (disconnected)",
   "@browserPanelDisconnectedConnection": {"placeholders": {"browser": {"type": "String"}}},
+  "browserPanelPausedShort": "Agent paused",
   "browserPanelPreparingControl": "Preparing manual control…",
   "browserPanelUnavailable": "Selected tab unavailable",
   "browserPanelBack": "Back",

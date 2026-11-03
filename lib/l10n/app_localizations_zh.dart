@@ -1519,6 +1519,9 @@ class AppLocalizationsZh extends AppLocalizations {
       '${browser}（已断开）';
 
   @override
+  String get browserPanelPausedShort => 'Agent 已暂停';
+
+  @override
   String get browserPanelPreparingControl => '正在准备手动操作…';
 
   @override

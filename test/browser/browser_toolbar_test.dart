@@ -135,9 +135,30 @@ void main() {
     final navigated = <String>[];
     await _pump(tester, _toolbar(onNavigate: navigated.add));
     await tester.enterText(find.byKey(_addressKey), 'do not navigate here');
+    expect(_address(tester).focusNode!.hasFocus, isTrue);
     await tester.tap(find.text('Outside'));
+    // Cancellation is immediate, not deferred until a focus notification.
+    expect(_address(tester).controller!.text, 'https://example.com/');
     await tester.pump();
     expect(_address(tester).controller!.text, 'https://example.com/');
+    expect(_address(tester).focusNode!.hasFocus, isFalse);
+    expect(navigated, isEmpty);
+  });
+
+  testWidgets('keyboard focus loss restores the latest URL without navigating', (
+    tester,
+  ) async {
+    final navigated = <String>[];
+    await _pump(tester, _toolbar(onNavigate: navigated.add));
+    await tester.enterText(find.byKey(_addressKey), 'an unfinished draft');
+    await _pump(
+      tester,
+      _toolbar(url: 'https://example.com/latest', onNavigate: navigated.add),
+    );
+    expect(_address(tester).controller!.text, 'an unfinished draft');
+    _address(tester).focusNode!.unfocus();
+    await tester.pump();
+    expect(_address(tester).controller!.text, 'https://example.com/latest');
     expect(navigated, isEmpty);
   });
 
@@ -457,9 +478,60 @@ void main() {
     );
   });
 
+  testWidgets('localized help keeps native Chrome and restart pause info usable', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    for (final locale in [const Locale('en'), const Locale('zh')]) {
+      await _pump(
+        tester,
+        _toolbar(manualControl: true),
+        width: 240,
+        textScale: 1.5,
+        locale: locale,
+      );
+      final l10n = AppLocalizations.of(
+        tester.element(find.byType(BrowserPanelToolbar)),
+      )!;
+      final help = find.byKey(const ValueKey('browser-panel-help'));
+      expect(find.text(l10n.browserPanelPausedShort), findsOneWidget);
+      expect(find.text(l10n.browserPanelChromeNotice), findsNothing);
+      expect(find.text(l10n.browserPanelPausedNotice), findsNothing);
+      await tester.tap(help);
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.text(l10n.browserPanelChromeNotice), findsOneWidget);
+      expect(find.text(l10n.browserPanelPausedNotice), findsOneWidget);
+      expect(
+        tester.widget<AlertDialog>(find.byType(AlertDialog)).scrollable,
+        isTrue,
+      );
+      await tester.ensureVisible(find.text(l10n.browserPanelPausedNotice));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.text(l10n.commonClose));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+
+      tester.widget<FocusableActionDetector>(help).focusNode!.requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      await tester.tap(find.text(l10n.commonClose));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    }
+  });
+
   testWidgets('narrow layouts wrap in both languages with readable errors', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     const error =
         'Navigation failed. The Chrome connection is no longer available.';
     for (final locale in [const Locale('en'), const Locale('zh')]) {
@@ -471,7 +543,9 @@ void main() {
                 'A very long page title that should not overflow the sidebar',
             manualControl: true,
             bindingNotice:
-                'This panel and this chat are using different connections.',
+                'Viewing Google Chrome. Agent is bound to Google Chrome '
+                '(disconnected), with access to its explicitly shared tabs.',
+            onReconnectAgent: () {},
             error: error,
           ),
           locale: locale,
@@ -481,6 +555,10 @@ void main() {
         expect(tester.takeException(), isNull);
         expect(find.text(error), findsOneWidget);
         expect(
+          find.text(locale.languageCode == 'zh' ? 'Agent 已暂停' : 'Agent paused'),
+          findsOneWidget,
+        );
+        expect(
           find.text(
             locale.languageCode == 'zh'
                 ? '已连接 Chrome'
@@ -489,6 +567,24 @@ void main() {
           findsOneWidget,
         );
         expect(tester.getSize(find.byType(BrowserPanelToolbar)).width, width);
+        expect(
+          tester.getSize(find.byType(BrowserPanelToolbar)).height,
+          lessThanOrEqualTo(552),
+        );
+        expect(
+          tester.getRect(find.text('Outside')).bottom,
+          lessThanOrEqualTo(600),
+        );
+        final notices = tester.widget<SingleChildScrollView>(
+          find.byKey(const ValueKey('browser-panel-notices')),
+        );
+        if (width == 240) {
+          expect(notices.controller!.position.maxScrollExtent, greaterThan(0));
+        }
+        await tester.ensureVisible(find.text(error));
+        await tester.pumpAndSettle();
+        expect(tester.getRect(find.text(error)).bottom, lessThanOrEqualTo(552));
+        expect(tester.takeException(), isNull);
       }
     }
   });

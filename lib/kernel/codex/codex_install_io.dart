@@ -157,6 +157,39 @@ class HttpCodexPackageSource implements CodexPackageSource {
     'release-assets.githubusercontent.com',
     'objects.githubusercontent.com',
   };
+  static const _diagnosticHeaders = [
+    'x-ratelimit-limit',
+    'x-ratelimit-remaining',
+    'x-ratelimit-reset',
+    'retry-after',
+    'x-github-request-id',
+  ];
+
+  /// Error context from the failing response, never credentials, signed URL
+  /// queries, redirect locations, response bodies, or arbitrary headers.
+  static String failureMessage(
+    int statusCode,
+    Uri url,
+    Map<String, String?> headers,
+  ) {
+    String bounded(String value, int limit) {
+      final clean = value.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), ' ');
+      return clean.length <= limit
+          ? clean
+          : '${clean.substring(0, limit - 1)}…';
+    }
+
+    final endpoint = Uri(scheme: 'https', host: url.host, path: url.path);
+    final details = [
+      for (final name in _diagnosticHeaders)
+        if (headers[name] case final value? when value.isNotEmpty)
+          '$name=${bounded(value, 128)}',
+    ];
+    return 'Codex download returned HTTP $statusCode from '
+        '${bounded('$endpoint', 512)}'
+        '${details.isEmpty ? '' : ' (${details.join('; ')})'}.';
+  }
+
   Future<HttpClientResponse> _get(HttpClient client, Uri url) async {
     for (var redirects = 0; redirects < 6; redirects++) {
       if (url.scheme != 'https' ||
@@ -177,10 +210,12 @@ class HttpCodexPackageSource implements CodexPackageSource {
         continue;
       }
       if (response.statusCode != HttpStatus.ok) {
+        final message = failureMessage(response.statusCode, url, {
+          for (final name in _diagnosticHeaders)
+            name: response.headers[name]?.join(', '),
+        });
         await response.drain<void>().timeout(_timeout);
-        throw HttpException(
-          'Codex download returned HTTP ${response.statusCode}.',
-        );
+        throw HttpException(message);
       }
       return response;
     }

@@ -492,6 +492,7 @@
   "browserPanelReconnectAgentTooltip": "将此会话重新连接到所选 Chrome。旧浏览器任务作废，Agent 暂停状态不变。",
   "browserPanelBindingNotice": "当前查看：{view}。Agent 仍连接：{agent}，可使用该连接中明确共享的标签页。",
   "browserPanelDisconnectedConnection": "{browser}（已断开）",
+  "browserPanelPausedShort": "Agent 已暂停",
   "browserPanelPreparingControl": "正在准备手动操作…",
   "browserPanelUnavailable": "所选标签页不可用",
   "browserPanelBack": "后退",

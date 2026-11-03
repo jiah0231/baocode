@@ -93,6 +93,7 @@ void main() {
       ('http://localhost:3000/', 'http://localhost:3000/'),
       ('localhost:3000/', 'https://localhost:3000/'),
       ('example.com:8443/path', 'https://example.com:8443/path'),
+      ('https://[::1]/', 'https://[::1]/'),
       ('https://[::1]:3000/', 'https://[::1]:3000/'),
     ]) {
       chrome.calls.clear();
@@ -121,6 +122,11 @@ void main() {
       'https://user%40example.com@evil.example',
       'https://example.com:99999',
       'https://example.com:',
+      'https://example.com:/path',
+      'https://example.com:?query=1',
+      'https://example.com:#fragment',
+      'https://[::1]:',
+      'https://[::1]:/path',
       'https://example.com:0',
       'https://exa mple.com',
       'https://example.com\\@evil.example',

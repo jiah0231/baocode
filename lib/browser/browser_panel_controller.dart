@@ -253,7 +253,13 @@ class BrowserPanelController extends ChangeNotifier {
         .substring(address.indexOf('://') + 3)
         .split(RegExp(r'[/\?#]'))
         .first;
-    if (authority.contains('@') || authority.contains('%')) return null;
+    // Uri.parse normalizes an empty port away. Check the original authority
+    // before parsing, while allowing bracketed IPv6 and nonempty ports.
+    if (authority.contains('@') ||
+        authority.contains('%') ||
+        authority.endsWith(':')) {
+      return null;
+    }
     try {
       final uri = Uri.parse(address);
       if ((uri.scheme != 'http' && uri.scheme != 'https') ||

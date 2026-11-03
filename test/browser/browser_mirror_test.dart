@@ -66,7 +66,6 @@ void main() {
       await tester.pump();
       await mirror.io(() async {
         mirror.host.sendFrame(const _Frame(_blue, Size(400, 800)), tabId: 2);
-        await mirror.host.flush();
         await mirror.connection.request('test.barrier');
       });
       await tester.pump();
@@ -182,7 +181,6 @@ void main() {
 
       await mirror.io(() async {
         mirror.host.completeScreenshots(_red);
-        await mirror.host.flush();
         await mirror.connection.request('test.barrier');
       });
       await tester.pump();
@@ -236,7 +234,6 @@ void main() {
         // A frame already in transit must not even be acknowledged: doing
         // so could attach the debugger again after the user cancelled it.
         mirror.host.sendFrame(const _Frame(_red, Size(800, 400)));
-        await mirror.host.flush();
         await mirror.connection.request('test.barrier');
       });
       await tester.pump();
@@ -260,7 +257,6 @@ void main() {
       await mirror.io(() async {
         mirror.host.completeScreenshots(_red);
         mirror.host.sendFrame(const _Frame(_red, Size(800, 400)));
-        await mirror.host.flush();
         await mirror.connection.request('test.barrier');
       });
       await tester.pump();
@@ -529,7 +525,6 @@ class _MirrorHarness {
     for (final frame in frames) {
       host.sendFrame(frame);
     }
-    await host.flush();
     // No widget pump here: assert batching before allowing a render frame.
     await _waitUntil(
       () => host.callsFor('Page.screencastFrameAck').length ==
@@ -547,7 +542,11 @@ class _MirrorHarness {
         try {
           for (final host in hosts) {
             host.completeScreenshots(_red);
-            await host.flush();
+          }
+          // A reply proves preceding outbound messages arrived without
+          // binding either duplex socket's sink with an explicit flush.
+          for (final browser in bridge.browsers) {
+            await browser.request('test.barrier');
           }
         } finally {
           await bridge.stop();
@@ -612,7 +611,6 @@ class _SocketHost {
   final _buffer = <int>[];
   var holdScreenshots = false;
   var _frameId = 0;
-  var _destroyed = false;
 
   static Future<_SocketHost> connect({
     String browserName = 'Synthetic Chrome',
@@ -633,7 +631,6 @@ class _SocketHost {
       'browser': browserName,
       'protocol': BrowserBridge.protocol,
     });
-    await host.flush();
     return host;
   }
 
@@ -641,6 +638,9 @@ class _SocketHost {
       calls.where((call) => call.method == method).toList();
 
   void send(Map<String, Object?> message) {
+    // Do not flush this live duplex sink: _read can write a reply while
+    // flush temporarily binds it. Handshake, ACKs and reply barriers below
+    // establish delivery without racing those writes.
     final body = utf8.encode(jsonEncode(message));
     socket
       ..add(
@@ -711,12 +711,5 @@ class _SocketHost {
     pendingScreenshots.clear();
   }
 
-  Future<void> flush() async {
-    if (!_destroyed) await socket.flush();
-  }
-
-  void destroy() {
-    _destroyed = true;
-    socket.destroy();
-  }
+  void destroy() => socket.destroy();
 }
