@@ -44,12 +44,16 @@ it without executable/version configuration is a failure, not a silent skip.
 Both Windows CI workflows run it in a separate, fail-closed step after the
 early synthetic gate. The step still runs if an earlier test fails but analysis
 succeeded; its failure cannot be bypassed for publication. Both pin CfT
-`156.0.8078.80`, verify its official version-specific metadata, log the archive
-SHA-256, and remove their unique extracted binary/archive directory.
+`156.0.8078.80`, verify its official version-specific metadata, verify the archive
+SHA-256, and remove their unique extracted binary/archive directory. The checksum
+was recorded from the official archive in Windows run `41587272125`; it is not
+a separate vendor-published signature.
 
 Pinned metadata: https://googlechromelabs.github.io/chrome-for-testing/156.0.8078.80.json
 
 Pinned archive: https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.80/win64/chrome-win64.zip
+
+Pinned archive SHA-256: `16edb57d6107bf1c48a7c149b8d78b155fe614410093796dd72441fd6640540f`
 
 ## Assertions
 

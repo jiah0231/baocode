@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -66,8 +67,8 @@ void main() {
       await tester.pump();
       await mirror.io(() async {
         mirror.host.sendFrame(const _Frame(_blue, Size(400, 800)), tabId: 2);
-        await mirror.connection.request('test.barrier');
       });
+      await mirror.barrier();
       await tester.pump();
 
       final field = tester.widget<TextField>(
@@ -77,6 +78,42 @@ void main() {
       expect(mirror.imageBytes, orderedEquals(base64Decode(_red)));
       expect(mirror.selected, [BrowserTab(mirror.connection, 1)]);
       expect(mirror.host.calls.where((call) => call.tabId == 2), isEmpty);
+    });
+  });
+
+  testWidgets('frames can arrive before the startScreencast reply', (
+    tester,
+  ) async {
+    await _withMirror(tester, (mirror) async {
+      final stops = mirror.host.callsFor('Page.stopScreencast').length;
+      await mirror.pump(visible: false);
+      await mirror.until(
+        () => mirror.host.callsFor('Page.stopScreencast').length > stops,
+      );
+      mirror.host.holdNextStart = true;
+      await mirror.pump(visible: true);
+      await mirror.until(() => mirror.host.pendingStarts.isNotEmpty);
+      expect(mirror.host.pendingStarts, hasLength(1));
+
+      await mirror.frames([const _Frame(_red, Size(800, 400))]);
+      expect(find.byType(Image), findsNothing);
+      await tester.pump();
+      expect(mirror.imageBytes, orderedEquals(base64Decode(_red)));
+      expect(
+        mirror.host.pendingStarts,
+        hasLength(1),
+        reason: 'the frame was acknowledged and rendered before the start reply',
+      );
+
+      await mirror.io(() async {
+        mirror.host.completeStarts();
+      });
+      await mirror.barrier();
+      await tester.idle();
+      expect(mirror.host.pendingStarts, isEmpty);
+      await mirror.frames([const _Frame(_blue, Size(400, 800))]);
+      await tester.pump();
+      expect(mirror.imageBytes, orderedEquals(base64Decode(_blue)));
     });
   });
 
@@ -181,8 +218,8 @@ void main() {
 
       await mirror.io(() async {
         mirror.host.completeScreenshots(_red);
-        await mirror.connection.request('test.barrier');
       });
+      await mirror.barrier();
       await tester.pump();
       expect(mirror.imageBytes, same(current));
       expect(mirror.imageBytes, orderedEquals(base64Decode(_blue)));
@@ -234,8 +271,8 @@ void main() {
         // A frame already in transit must not even be acknowledged: doing
         // so could attach the debugger again after the user cancelled it.
         mirror.host.sendFrame(const _Frame(_red, Size(800, 400)));
-        await mirror.connection.request('test.barrier');
       });
+      await mirror.barrier();
       await tester.pump();
       expectNoCdp('detach and stale frame must not release, ACK, or reattach');
       expect(mirror.imageBytes, same(beforeDetach));
@@ -257,8 +294,8 @@ void main() {
       await mirror.io(() async {
         mirror.host.completeScreenshots(_red);
         mirror.host.sendFrame(const _Frame(_red, Size(800, 400)));
-        await mirror.connection.request('test.barrier');
       });
+      await mirror.barrier();
       await tester.pump();
       expectNoCdp('late screenshot completion and further frames stay inert');
       expect(mirror.imageBytes, same(beforeDetach));
@@ -373,7 +410,7 @@ void main() {
             await tester.tap(find.text('Resume agent'));
             await tester.pump();
           }
-          await mirror.io(probe);
+          await mirror.transport(probe, label: 'reconnected agent probe');
           expect(routed, same(replacement));
           final probes = replacementHost.callsFor('Runtime.evaluate').where(
             (call) => call.params['expression'] == '"reconnected-chat-test"',
@@ -516,47 +553,139 @@ class _MirrorHarness {
     await tester.pump();
   }
 
-  Future<void> barrier() => io(() async {
-    await connection.request('test.barrier');
-  });
-
-  Future<void> frames(List<_Frame> frames) => io(() async {
-    final acknowledged = host.callsFor('Page.screencastFrameAck').length;
-    for (final frame in frames) {
-      host.sendFrame(frame);
+  Future<void> transport(
+    Future<void> Function() action, {
+    required String label,
+  }) async {
+    var completed = false;
+    Object? failure;
+    StackTrace? failureStack;
+    // Start in real I/O, but do not wait there: socket writes and response
+    // continuations may also need the widget's fake microtask queue drained.
+    await tester.runAsync(() async {
+      unawaited(Future<void>.sync(action).then<void>(
+        (_) {
+          completed = true;
+        },
+        onError: (Object error, StackTrace stack) {
+          failure = error;
+          failureStack = stack;
+          completed = true;
+        },
+      ));
+    });
+    final end = DateTime.now().add(const Duration(seconds: 3));
+    while (!completed && DateTime.now().isBefore(end)) {
+      await tester.idle();
+      await io(() => Future<void>.delayed(const Duration(milliseconds: 5)));
     }
-    // No widget pump here: assert batching before allowing a render frame.
-    await _waitUntil(
-      () => host.callsFor('Page.screencastFrameAck').length ==
-          acknowledged + frames.length,
+    await tester.idle();
+    if (!completed || failure != null) {
+      final originalFailure = failure;
+      final originalStack = failureStack;
+      final counts = [
+        for (final host in [?_host, ..._additionalHosts]) host.calls.length,
+      ];
+      // Closing only this fixture's sockets settles pending requests before
+      // another test can start; a timed-out continuation is not left running.
+      await io(() async {
+        for (final host in [?_host, ..._additionalHosts]) {
+          host.destroy();
+        }
+        await bridge.stop();
+      });
+      await tester.idle();
+      await io(() => Future<void>.delayed(Duration.zero));
+      await tester.idle();
+      if (originalFailure != null) {
+        Error.throwWithStackTrace(originalFailure, originalStack!);
+      }
+      fail('$label did not complete within the fixture deadline; '
+          'host request counts=$counts, settled after disconnect=$completed');
+    }
+  }
+
+  Future<void> barrier({BrowserConnection? browser}) async {
+    expect(BrowserAgentControl.currentLease, isNull);
+    final target = browser ?? connection;
+    await transport(() async {
+      // Only the synthetic host implements this transport echo. This is not
+      // CDP or a tabless browser observation, so it must not acquire authority
+      // that a preceding detached event is supposed to revoke.
+      await target.request(
+        'test.transportBarrier',
+        {'tabId': 1},
+        const Duration(seconds: 3),
+      );
+    }, label: 'transport barrier (connected=${target.connected})');
+  }
+
+  Future<void> frames(List<_Frame> frames) async {
+    final acknowledged = host.callsFor('Page.screencastFrameAck').length;
+    final expected = acknowledged + frames.length;
+    await io(() async {
+      for (final frame in frames) {
+        host.sendFrame(frame);
+      }
+    });
+    // Socket I/O is real, but the mirror's listeners and buffered work can
+    // schedule microtasks in widget FakeAsync. Waiting for every ACK inside
+    // one runAsync blocks that queue. idle drains it without rendering or
+    // advancing fake time, preserving the whole burst for one later pump.
+    final end = DateTime.now().add(const Duration(seconds: 3));
+    while (host.callsFor('Page.screencastFrameAck').length < expected &&
+        DateTime.now().isBefore(end)) {
+      await tester.idle();
+      await io(() => Future<void>.delayed(const Duration(milliseconds: 5)));
+    }
+    await tester.idle();
+    final observed = host.callsFor('Page.screencastFrameAck').length;
+    final requestCounts = <String, int>{};
+    for (final call in host.calls) {
+      requestCounts.update(call.method, (count) => count + 1, ifAbsent: () => 1);
+    }
+    final detached = BrowserAgentControl.instance.isDetached(
+      BrowserTab(connection, 1),
     );
-  });
+    expect(
+      observed,
+      expected,
+      reason: 'Expected $expected total ACKs (${frames.length} new), '
+          'observed $observed before rendering. '
+          'Connected=${connection.connected}, detached=$detached, '
+          'request counts=$requestCounts',
+    );
+  }
 
   Future<void> close() async {
     try {
       await tester.pumpWidget(const SizedBox.shrink());
       // Flush the focus/click check timers after disposing the mirror itself.
       await tester.pump(const Duration(milliseconds: 100));
-      await io(() async {
-        final hosts = [?_host, ..._additionalHosts];
-        try {
+      final hosts = [?_host, ..._additionalHosts];
+      try {
+        await io(() async {
           for (final host in hosts) {
+            host.completeStarts();
             host.completeScreenshots(_red);
           }
-          // A reply proves preceding outbound messages arrived without
-          // binding either duplex socket's sink with an explicit flush.
-          for (final browser in bridge.browsers) {
-            await browser.request('test.barrier');
-          }
-        } finally {
-          await bridge.stop();
-          for (final host in hosts) {
-            host.destroy();
-          }
+        });
+        for (final browser in bridge.browsers) {
+          await barrier(browser: browser);
         }
-      });
-      // Let completed CDP futures cancel their request timeout timers.
-      await tester.pump();
+      } finally {
+        await io(() async {
+          try {
+            await bridge.stop();
+          } finally {
+            for (final host in hosts) {
+              host.destroy();
+            }
+          }
+        });
+        // Let completed CDP futures cancel their request timeout timers.
+        await tester.pump();
+      }
     } finally {
       BrowserAgentControl.instance.resetForTesting();
       BrowserTools.lastTab.value = oldLastTab;
@@ -607,10 +736,13 @@ class _SocketHost {
 
   final Socket socket;
   final calls = <_Call>[];
+  final pendingStarts = <Map<String, Object?>>[];
   final pendingScreenshots = <Map<String, Object?>>[];
   final _buffer = <int>[];
   var holdScreenshots = false;
+  var holdNextStart = false;
   var _frameId = 0;
+  var _destroyed = false;
 
   static Future<_SocketHost> connect({
     String browserName = 'Synthetic Chrome',
@@ -638,6 +770,7 @@ class _SocketHost {
       calls.where((call) => call.method == method).toList();
 
   void send(Map<String, Object?> message) {
+    if (_destroyed) return;
     // Do not flush this live duplex sink: _read can write a reply while
     // flush temporarily binds it. Handshake, ACKs and reply barriers below
     // establish delivery without racing those writes.
@@ -679,6 +812,11 @@ class _SocketHost {
       _buffer.removeRange(0, length + 4);
       final call = _Call(request);
       calls.add(call);
+      if (call.method == 'Page.startScreencast' && holdNextStart) {
+        holdNextStart = false;
+        pendingStarts.add(request);
+        continue;
+      }
       if (call.method == 'Page.captureScreenshot' && holdScreenshots) {
         pendingScreenshots.add(request);
         continue;
@@ -711,5 +849,17 @@ class _SocketHost {
     pendingScreenshots.clear();
   }
 
-  void destroy() => socket.destroy();
+  void completeStarts() {
+    for (final request in pendingStarts) {
+      send({'id': request['id'], 'result': <String, Object?>{}});
+    }
+    pendingStarts.clear();
+  }
+
+  void destroy() {
+    _destroyed = true;
+    pendingStarts.clear();
+    pendingScreenshots.clear();
+    socket.destroy();
+  }
 }

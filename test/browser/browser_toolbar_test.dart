@@ -3,6 +3,7 @@ import 'package:baocode/ide/ide_button.dart';
 import 'package:baocode/ide/ide_hover.dart';
 import 'package:baocode/ide/ide_menu.dart';
 import 'package:baocode/l10n/app_localizations.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -129,21 +130,29 @@ void main() {
     expect(navigated, isEmpty);
   });
 
-  testWidgets('blur discards an unsubmitted draft without navigating', (
-    tester,
-  ) async {
-    final navigated = <String>[];
-    await _pump(tester, _toolbar(onNavigate: navigated.add));
-    await tester.enterText(find.byKey(_addressKey), 'do not navigate here');
-    expect(_address(tester).focusNode!.hasFocus, isTrue);
-    await tester.tap(find.text('Outside'));
-    // Cancellation is immediate, not deferred until a focus notification.
-    expect(_address(tester).controller!.text, 'https://example.com/');
-    await tester.pump();
-    expect(_address(tester).controller!.text, 'https://example.com/');
-    expect(_address(tester).focusNode!.hasFocus, isFalse);
-    expect(navigated, isEmpty);
-  });
+  for (final kind in [PointerDeviceKind.touch, PointerDeviceKind.mouse]) {
+    testWidgets('${kind.name} outside cancels before a focused rebuild', (
+      tester,
+    ) async {
+      final navigated = <String>[];
+      await _pump(tester, _toolbar(onNavigate: navigated.add));
+      final region = tester.widget<TextFieldTapRegion>(
+        find.byKey(const ValueKey('browser-panel-address-region')),
+      );
+      expect(region.onTapOutside, isNotNull);
+      expect(region.groupId, same(_address(tester).focusNode));
+      await tester.enterText(find.byKey(_addressKey), 'do not navigate here');
+      expect(_address(tester).focusNode!.hasFocus, isTrue);
+      // No pump here: focus is live but EditableText's internal outside
+      // callback can still be null until its next build.
+      await tester.tap(find.text('Outside'), kind: kind);
+      expect(_address(tester).controller!.text, 'https://example.com/');
+      await tester.pump();
+      expect(_address(tester).controller!.text, 'https://example.com/');
+      expect(_address(tester).focusNode!.hasFocus, isFalse);
+      expect(navigated, isEmpty);
+    });
+  }
 
   testWidgets('keyboard focus loss restores the latest URL without navigating', (
     tester,
@@ -182,20 +191,22 @@ void main() {
     expect(navigated, hasLength(1));
   });
 
-  testWidgets('the Go button submits the draft before blur can discard it', (
-    tester,
-  ) async {
-    final navigated = <String>[];
-    await _pump(tester, _toolbar(onNavigate: navigated.add));
-    await tester.enterText(find.byKey(_addressKey), 'https://destination.test/');
-    await tester.tap(_action('Go to website'));
-    await tester.pump();
-    expect(navigated, ['https://destination.test/']);
-    expect(
-      _address(tester).controller!.text,
-      'https://destination.test/',
-    );
-  });
+  for (final kind in [PointerDeviceKind.touch, PointerDeviceKind.mouse]) {
+    testWidgets('${kind.name} Go preserves and submits the draft once', (
+      tester,
+    ) async {
+      final navigated = <String>[];
+      await _pump(tester, _toolbar(onNavigate: navigated.add));
+      await tester.enterText(find.byKey(_addressKey), 'https://destination.test/');
+      await tester.tap(_action('Go to website'), kind: kind);
+      await tester.pump();
+      expect(navigated, ['https://destination.test/']);
+      expect(
+        _address(tester).controller!.text,
+        'https://destination.test/',
+      );
+    });
+  }
 
   testWidgets('an empty submission restores the current address', (
     tester,

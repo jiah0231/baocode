@@ -391,59 +391,71 @@ class _BrowserPanelToolbarState extends State<BrowserPanelToolbar> {
                 _action(Codicons.refresh, l10n.browserReload, widget.onReload),
                 const SizedBox(width: 4),
                 Expanded(
-                  child: CallbackShortcuts(
-                    bindings: {
-                      const SingleActivator(LogicalKeyboardKey.escape):
-                          _cancelEditing,
+                  child: TextFieldTapRegion(
+                    key: const ValueKey('browser-panel-address-region'),
+                    groupId: _addressFocus,
+                    // EditableText installs its outside callback only after a
+                    // focused rebuild. Keep this region registered and read
+                    // focus at event time, including between those frames.
+                    onTapOutside: (_) {
+                      if (_addressFocus.hasFocus) _cancelEditing();
                     },
-                    child: Semantics(
-                      label: l10n.browserPanelAddress,
-                      textField: true,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: IdeInputColors.background,
-                          border: Border.all(
-                            color: _addressFocus.hasFocus
-                                ? IdeInputColors.focusBorder
-                                : IdeInputColors.border,
-                          ),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: TextField(
-                          key: const ValueKey('browser-panel-address'),
-                          groupId: _addressFocus,
-                          controller: _address,
-                          focusNode: _addressFocus,
-                          enabled: widget.connected,
-                          keyboardType: TextInputType.url,
-                          textInputAction: TextInputAction.go,
-                          autocorrect: false,
-                          enableSuggestions: false,
-                          maxLines: 1,
-                          style: TextStyle(
-                            fontSize: 12,
-                            height: 1.3,
-                            color: IdeInputColors.foreground,
-                          ),
-                          cursorColor: IdeInputColors.foreground,
-                          decoration: InputDecoration(
-                            hintText: l10n.browserPanelAddress,
-                            hintStyle: TextStyle(
-                              color: IdeInputColors.placeholder,
+                    child: CallbackShortcuts(
+                      bindings: {
+                        const SingleActivator(LogicalKeyboardKey.escape):
+                            _cancelEditing,
+                      },
+                      child: Semantics(
+                        label: l10n.browserPanelAddress,
+                        textField: true,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: IdeInputColors.background,
+                            border: Border.all(
+                              color: _addressFocus.hasFocus
+                                  ? IdeInputColors.focusBorder
+                                  : IdeInputColors.border,
                             ),
-                            isDense: true,
-                            isCollapsed: true,
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 5,
-                            ),
-                            border: InputBorder.none,
-                            visualDensity: VisualDensity.standard,
+                            borderRadius: BorderRadius.circular(4),
                           ),
-                          // Keep focus changes under _submitAddress's control.
-                          onEditingComplete: () {},
-                          onSubmitted: _submitAddress,
-                          onTapOutside: (_) => _cancelEditing(),
+                          child: TextField(
+                            key: const ValueKey('browser-panel-address'),
+                            groupId: _addressFocus,
+                            controller: _address,
+                            focusNode: _addressFocus,
+                            enabled: widget.connected,
+                            keyboardType: TextInputType.url,
+                            textInputAction: TextInputAction.go,
+                            autocorrect: false,
+                            enableSuggestions: false,
+                            maxLines: 1,
+                            style: TextStyle(
+                              fontSize: 12,
+                              height: 1.3,
+                              color: IdeInputColors.foreground,
+                            ),
+                            cursorColor: IdeInputColors.foreground,
+                            decoration: InputDecoration(
+                              hintText: l10n.browserPanelAddress,
+                              hintStyle: TextStyle(
+                                color: IdeInputColors.placeholder,
+                              ),
+                              isDense: true,
+                              isCollapsed: true,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 5,
+                              ),
+                              border: InputBorder.none,
+                              visualDensity: VisualDensity.standard,
+                            ),
+                            // Keep focus changes under _submitAddress's control.
+                            onEditingComplete: () {},
+                            onSubmitted: _submitAddress,
+                            // The enclosing region owns outside cancellation;
+                            // do not also run the platform's default focus policy.
+                            onTapOutside: (_) {},
+                          ),
                         ),
                       ),
                     ),

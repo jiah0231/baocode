@@ -33,14 +33,12 @@ jobs:
         run: flutter analyze --no-pub
       - name: Test browser recorder privacy scripts
         run: node --test test/browser/browser_recorder_script_test.mjs
-      - name: Test browser panel navigation and human takeover early
+      - name: Test browser routing and human takeover early
         run: >-
           flutter test
           test/browser/browser_panel_controller_test.dart
-          test/browser/browser_toolbar_test.dart
           test/browser/browser_frame_flow_test.dart
           test/browser/browser_agent_control_test.dart
-          test/browser/browser_mirror_test.dart
           test/browser/browser_analysis_test.dart
           test/browser/browser_bridge_test.dart
           test/browser/browser_numbers_test.dart
@@ -68,6 +66,7 @@ jobs:
             $archive = Join-Path $root 'chrome-win64.zip'
             Invoke-WebRequest $expected -OutFile $archive -TimeoutSec 180
             $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
+            if ($hash -ne '16edb57d6107bf1c48a7c149b8d78b155fe614410093796dd72441fd6640540f') { throw 'Pinned Chrome for Testing archive checksum mismatch' }
             Write-Host "Chrome for Testing $($env:BAOCODE_CFT_VERSION) | $expected | archive SHA256 $hash"
             Expand-Archive -LiteralPath $archive -DestinationPath $root
             $env:BAOCODE_CHROME_FOR_TESTING = Join-Path $root 'chrome-win64\chrome.exe'
@@ -80,6 +79,10 @@ jobs:
             # Only the binary/archive directory created by this exact step.
             if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
           }
+      - name: Test Chrome panel widget interactions
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
+        timeout-minutes: 5
+        run: flutter test test/browser/browser_toolbar_test.dart test/browser/browser_mirror_test.dart
       - name: Test Codex approval and edit-review UI early
         run: flutter test test/kernel_ui_test.dart --plain-name "a Codex agent asks leave, and its work can be undone"
       - name: Test selected cross-kernel session retrieval

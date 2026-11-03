@@ -23,12 +23,14 @@ import 'package:path/path.dart' as p;
 import 'fixtures/real_chrome_fixture.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   final enabled = Platform.environment['BAOCODE_REAL_CHROME_SMOKE'] == '1';
   final executable = Platform.environment['BAOCODE_CHROME_FOR_TESTING'];
   final version = Platform.environment['BAOCODE_CFT_VERSION'];
 
   test('real Chrome takeover shuts down capture, permits human view, and '
-      'requires a fresh recorder and explicit connection recovery', () async {
+      'requires a fresh recorder and explicit connection recovery',
+      () => HttpOverrides.runWithHttpOverrides(() async {
     expect(executable, isNotNull, reason: 'Supply the official CfT executable.');
     expect(version, matches(RegExp(r'^\d+\.\d+\.\d+\.\d+$')),
         reason: 'Pin and record the official CfT version.');
@@ -343,6 +345,31 @@ window.fixtureTraffic = async function (marker) {
     print('PASS: CfT $version; real domain shutdown in ${clock.elapsedMilliseconds}ms; '
         '${chrome.attaches} real CDP attachments; no old input/console/network backfill. '
         'Native-host discovery, chrome.debugger, and widget rendering are not covered.');
-  }, skip: enabled ? false : 'BAOCODE_REAL_CHROME_SMOKE=1 not set',
+  }, _LoopbackHttpOverrides()),
+    skip: enabled ? false : 'BAOCODE_REAL_CHROME_SMOKE=1 not set',
     timeout: const Timeout(Duration(minutes: 3)));
+}
+
+// Flutter's test HttpClient returns 400 rather than opening a socket. This
+// opt-in integration zone uses real HTTP/WebSocket transport, restricted to
+// numeric IPv4 loopback. Global test overrides are never changed, and proxy
+// environment variables cannot route the fixture traffic off this machine.
+class _LoopbackHttpOverrides extends HttpOverrides {
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    final client = super.createHttpClient(context);
+    client.findProxy = (_) => 'DIRECT';
+    client.connectionFactory = (uri, proxyHost, proxyPort) {
+      if ((uri.scheme != 'http' && uri.scheme != 'ws') ||
+          uri.host != '127.0.0.1' ||
+          uri.port <= 0 ||
+          uri.userInfo.isNotEmpty ||
+          proxyHost != null ||
+          proxyPort != null) {
+        throw StateError('Real Chrome smoke blocked non-loopback transport.');
+      }
+      return Socket.startConnect(InternetAddress.loopbackIPv4, uri.port);
+    };
+    return client;
+  }
 }
