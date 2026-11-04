@@ -14,6 +14,7 @@ import 'package:baocode/l10n/app_localizations.dart';
 import 'package:baocode/platform/data_dir.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -25,6 +26,23 @@ const _red =
     'iVBORw0KGgoAAAANSUhEUgAAAyAAAAGQCAYAAABWJQQ0AAAIUElEQVR4nO3XoQEAIADDsP3/NHxRBBHxtd3ZDgAAQGGvAwAAgH8YEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAjAEBAAAyBgQAAMgYEAAAIGNAAACAzAVfnM3ne3FnMQAAAABJRU5ErkJggg==';
 const _blue =
     'iVBORw0KGgoAAAANSUhEUgAAAZAAAAMgCAYAAAAN6jSQAAAMnElEQVR4nO3OoQ3AQBAEseu/6U8NQauRDMx9d+8BwH/zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABN8wAATfMAAE3zAABFH3hWzefJVAdZAAAAAElFTkSuQmCC';
+
+// Deterministic 800x400 RGBA fixture: background (17,31,47), with four
+// 20x16 solid rectangles centered at (44,28), (244,284), (604,116), (780,380).
+// The marker order/colors and the CSS coordinates below are test data, not
+// calculated through browserFrameRect/browserPagePoint or a RawImage rect.
+final _landmarkData = base64Encode(File(p.join(
+  'test', 'browser', 'fixtures', 'mirror_landmarks.png',
+)).readAsBytesSync());
+const _landmarkColors = [
+  [255, 48, 72],
+  [32, 216, 72],
+  [48, 96, 255],
+  [255, 192, 32],
+];
+const _unscaledLandmarkCss = [
+  Offset(44, 28), Offset(244, 284), Offset(604, 116), Offset(780, 380),
+];
 
 void main() {
   // Its socket queue is real asynchronous work, outside widget fake time.
@@ -210,11 +228,216 @@ void main() {
         await tester.tapAt(drawn.topLeft + Offset(drawn.width * .73, drawn.height * .27));
         await mirror.barrier();
         final press = mirror.mouseCalls.singleWhere((call) => call.params['type'] == 'mousePressed');
-        expect(press.params['x'], closeTo(292, .001), reason: stream ? 'stream' : 'screenshot');
-        expect(press.params['y'], closeTo(54, .001), reason: stream ? 'stream' : 'screenshot');
+        final reason = 'full_surface_css_position_oracle: '
+            '${stream ? 'stream' : 'screenshot'} uses the full captured surface';
+        expect(press.params['x'], closeTo(292, .001), reason: reason);
+        expect(press.params['y'], closeTo(54, .001), reason: reason);
       }
     });
   });
+
+  // Six bounded scenes, each checked through both screenshot fallback and
+  // streaming. Browser native pixel ratio, zoom, pinch, Flutter DPR, and panel
+  // aspect are explicit independent inputs. The expected CSS locations are
+  // separately specified fixture facts, never derived from the production
+  // transform or the discovered paint positions.
+  for (final scene in const [
+    _LandmarkScene(
+      'baseline tall panel',
+      panel: Size(360, 560),
+      cssSize: Size(800, 400),
+      streamSize: Size(800, 400),
+      expectedCss: _unscaledLandmarkCss,
+    ),
+    _LandmarkScene(
+      'browser zoom only',
+      zoom: 1.25,
+      browserPixelRatio: 1.25,
+      panel: Size(720, 300),
+      cssSize: Size(640, 320),
+      streamSize: Size(800, 400),
+      expectedCss: [
+        Offset(35.2, 22.4), Offset(195.2, 227.2),
+        Offset(483.2, 92.8), Offset(624, 304),
+      ],
+    ),
+    _LandmarkScene(
+      'pinch only with Flutter DPR 1.5',
+      pinch: 2,
+      flutterDpr: 1.5,
+      panel: Size(440, 440),
+      cssSize: Size(400, 200),
+      streamSize: Size(800, 400),
+      expectedCss: [
+        Offset(22, 14), Offset(122, 142),
+        Offset(302, 58), Offset(390, 190),
+      ],
+    ),
+    _LandmarkScene(
+      'native ratio 2 with Flutter DPR 1.25',
+      browserPixelRatio: 2,
+      flutterDpr: 1.25,
+      panel: Size(360, 560),
+      cssSize: Size(400, 200),
+      streamSize: Size(400, 200),
+      expectedCss: [
+        Offset(22, 14), Offset(122, 142),
+        Offset(302, 58), Offset(390, 190),
+      ],
+    ),
+    _LandmarkScene(
+      'browser zoom 1.5 with Flutter DPR 2',
+      zoom: 1.5,
+      browserPixelRatio: 1.5,
+      flutterDpr: 2,
+      panel: Size(720, 300),
+      cssSize: Size(533.3333333333, 266.6666666667),
+      streamSize: Size(800, 400),
+      expectedCss: [
+        Offset(29.3333333333, 18.6666666667),
+        Offset(162.6666666667, 189.3333333333),
+        Offset(402.6666666667, 77.3333333333),
+        Offset(520, 253.3333333333),
+      ],
+    ),
+    _LandmarkScene(
+      'combined zoom pinch and native ratio',
+      zoom: 2,
+      pinch: 1.5,
+      browserPixelRatio: 4,
+      flutterDpr: 1.25,
+      panel: Size(600, 420),
+      cssSize: Size(133.3333333333, 66.6666666667),
+      streamSize: Size(400, 200),
+      expectedCss: [
+        Offset(7.3333333333, 4.6666666667),
+        Offset(40.6666666667, 47.3333333333),
+        Offset(100.6666666667, 19.3333333333),
+        Offset(130, 63.3333333333),
+      ],
+    ),
+  ]) {
+    testWidgets(
+      'painted landmarks independently map screenshot and stream input: '
+      '${scene.name}',
+      (tester) async {
+        tester.view.devicePixelRatio = scene.flutterDpr;
+        tester.view.physicalSize = const Size(800, 600) * scene.flutterDpr;
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPhysicalSize);
+        await _withMirror(tester, (mirror) async {
+          await mirror.pump(visible: false, ratio: scene.flutterDpr,
+              panelSize: scene.panel);
+          // Finish the changed panel/DPR debounce while capture is paused.
+          // Otherwise it can invalidate the first fallback during its CDP read.
+          await tester.pump(const Duration(milliseconds: 200));
+          await mirror.barrier();
+          mirror.host
+            ..viewport = scene.cssSize
+            ..browserZoom = scene.zoom
+            ..pageScaleFactor = scene.pinch
+            ..pixelRatio = scene.browserPixelRatio
+            ..screenshotData = _landmarkData;
+          final starts = mirror.host.callsFor('Page.startScreencast').length;
+          await mirror.pump(ratio: scene.flutterDpr, panelSize: scene.panel);
+          await mirror.until(() =>
+              mirror.host.callsFor('Page.startScreencast').length > starts);
+          await tester.pump(const Duration(milliseconds: 200));
+          await mirror.until(() =>
+              mirror.host.callsFor('Page.captureScreenshot').isNotEmpty);
+          await mirror.render(_landmarkData);
+          final screenshot = mirror.image;
+          final screenshotPixels = await _paintedLandmarks(mirror);
+          await _checkPaintedLandmarkInput(mirror, scene.expectedCss,
+              capturedPixels: screenshotPixels,
+              reason: '${scene.name}, screenshot fallback');
+          await _checkPaintedLetterbox(mirror,
+              capturedPixels: screenshotPixels,
+              reason: '${scene.name}, screenshot fallback');
+
+          mirror.host.holdScreenshots = true;
+          await mirror.frames([_Frame(
+            _landmarkData, scene.streamSize,
+            cssSize: scene.cssSize,
+            browserZoom: scene.zoom,
+            pageScaleFactor: scene.pinch,
+            pixelRatio: scene.browserPixelRatio,
+          )]);
+          await mirror.render(_landmarkData, previous: screenshot);
+          final streamPixels = await _paintedLandmarks(mirror);
+          await _checkPaintedLandmarkInput(mirror, scene.expectedCss,
+              capturedPixels: streamPixels,
+              reason: '${scene.name}, stream');
+          await _checkPaintedLetterbox(mirror,
+              capturedPixels: streamPixels,
+              reason: '${scene.name}, stream');
+        });
+      },
+    );
+  }
+
+  testWidgets(
+    'painted landmarks keep input paired with the visible frame until repaint',
+    (tester) async {
+      await _withMirror(tester, (mirror) async {
+        mirror.host.holdScreenshots = true;
+        await mirror.frames([_Frame(_landmarkData, const Size(800, 400))]);
+        await mirror.render(_landmarkData);
+        final before = mirror.image;
+        final capturedPixels = await _paintedLandmarks(mirror);
+        // Geometry below is only an unchanged-render assertion, never the
+        // source of click positions or expected CSS coordinates.
+        final beforeRect = tester.getRect(find.byType(RawImage));
+        final pending = Completer<ui.Image>();
+        var decoding = false;
+        mirror.frameDecoder = (bytes) {
+          expect(base64Encode(bytes), _blue);
+          decoding = true;
+          return pending.future;
+        };
+        await mirror.pump();
+        try {
+          // Same CSS metrics, opposite encoded aspect. This candidate would
+          // make three old landmarks miss the page if used before repaint.
+          await mirror.frames([const _Frame(_blue, Size(800, 400))]);
+          await mirror.until(() => decoding);
+          expect(mirror.image, same(before));
+          expect(tester.getRect(find.byType(RawImage)), beforeRect);
+          await _checkPaintedLandmarkInput(mirror, _unscaledLandmarkCss,
+              capturedPixels: capturedPixels,
+              reason: 'new frame still decoding');
+
+          final metrics = mirror.host.callsFor('Page.getLayoutMetrics').length;
+          await mirror.io(() async {
+            final codec = await ui.instantiateImageCodec(base64Decode(_blue));
+            try {
+              pending.complete((await codec.getNextFrame()).image);
+            } finally {
+              codec.dispose();
+            }
+          });
+          await mirror.untilWithoutRendering(() =>
+              mirror.host.callsFor('Page.getLayoutMetrics').length > metrics);
+          await mirror.barrier();
+          expect(mirror.image, same(before));
+          expect(tester.getRect(find.byType(RawImage)), beforeRect);
+          // Reuse independently raster-observed positions from the stable
+          // old paint. Earlier clicks can dirty focus painting; do not pump
+          // just to enable another toImage during this pre-repaint phase.
+          // The image identity and rendered rectangle must both remain old.
+          await _checkPaintedLandmarkInput(mirror, _unscaledLandmarkCss,
+              capturedPixels: capturedPixels,
+              reason: 'new frame decoded but not painted');
+          await mirror.render(_blue, previous: before);
+          expect(tester.takeException(), isNull);
+        } finally {
+          if (decoding && !pending.isCompleted) {
+            pending.completeError(const FormatException('test ended'));
+          }
+        }
+      });
+    },
+  );
 
   testWidgets('pending decode and pre-build completion keep input on painted pixels',
       (tester) async {
@@ -244,6 +467,8 @@ void main() {
         mirror.host.calls.clear();
         await tester.tapAt(oldPoint);
         await mirror.barrier();
+        expect(mirror.mouseCalls.where((call) => call.params['type'] == 'mousePressed'),
+            hasLength(1), reason: 'pending decode must retain a valid painted hit');
         final held = mirror.mouseCalls.singleWhere((call) => call.params['type'] == 'mousePressed');
         expect(held.params['x'], closeTo(680, .001));
         expect(held.params['y'], closeTo(100, .001));
@@ -266,9 +491,13 @@ void main() {
         mirror.host.calls.clear();
         await tester.tapAt(oldPoint);
         await mirror.barrier();
+        const pairingReason = 'painted_frame_pairing_oracle: '
+            'decoded-before-build input must retain the painted frame';
+        expect(mirror.mouseCalls.where((call) => call.params['type'] == 'mousePressed'),
+            hasLength(1), reason: pairingReason);
         final beforeBuild = mirror.mouseCalls.singleWhere((call) => call.params['type'] == 'mousePressed');
-        expect(beforeBuild.params['x'], closeTo(680, .001));
-        expect(beforeBuild.params['y'], closeTo(100, .001));
+        expect(beforeBuild.params['x'], closeTo(680, .001), reason: pairingReason);
+        expect(beforeBuild.params['y'], closeTo(100, .001), reason: pairingReason);
 
         await mirror.render(_blue, previous: before);
         final drawn = tester.getRect(find.byType(RawImage));
@@ -276,6 +505,8 @@ void main() {
         mirror.host.calls.clear();
         await tester.tapAt(drawn.topLeft + Offset(drawn.width * .75, drawn.height * .25));
         await mirror.barrier();
+        expect(mirror.mouseCalls.where((call) => call.params['type'] == 'mousePressed'),
+            hasLength(1), reason: 'after build must retain a valid painted hit');
         final afterBuild = mirror.mouseCalls.singleWhere((call) => call.params['type'] == 'mousePressed');
         expect(afterBuild.params['x'], closeTo(600, .001));
         expect(afterBuild.params['y'], closeTo(100, .001));
@@ -869,6 +1100,162 @@ void main() {
   }
 }
 
+class _LandmarkScene {
+  const _LandmarkScene(this.name, {
+    this.zoom = 1,
+    this.pinch = 1,
+    this.browserPixelRatio = 1,
+    this.flutterDpr = 1,
+    required this.panel,
+    required this.cssSize,
+    required this.streamSize,
+    required this.expectedCss,
+  });
+
+  final String name;
+  final double zoom;
+  final double pinch;
+  final double browserPixelRatio;
+  final double flutterDpr;
+  final Size panel;
+  final Size cssSize;
+  final Size streamSize;
+  final List<Offset> expectedCss;
+}
+
+class _PaintedLandmarks {
+  const _PaintedLandmarks(this.centers, this.picture);
+
+  final List<Offset> centers;
+  final Rect picture;
+}
+
+// Observe the composed Flutter surface, including toolbar placement and fit.
+// No RawImage rectangle, production coordinate helper, or expected CSS point
+// participates in finding a click. toImage does not pump/build a pending frame.
+Future<_PaintedLandmarks> _paintedLandmarks(_MirrorHarness mirror) async {
+  final boundary = mirror.boundaryKey.currentContext!.findRenderObject()!
+      as RenderRepaintBoundary;
+  expect(boundary.debugNeedsPaint, isFalse);
+  final ratio = mirror.tester.view.devicePixelRatio;
+  return (await mirror.tester.runAsync(() async {
+    final painted = await boundary.toImage(pixelRatio: ratio);
+    try {
+      final rgba = await painted.toByteData(format: ui.ImageByteFormat.rawRgba);
+      expect(rgba, isNotNull);
+      final bytes = rgba!;
+      final count = List<int>.filled(_landmarkColors.length, 0);
+      final sumX = List<double>.filled(_landmarkColors.length, 0);
+      final sumY = List<double>.filled(_landmarkColors.length, 0);
+      var left = painted.width;
+      var top = painted.height;
+      var right = -1;
+      var bottom = -1;
+      for (var y = 0; y < painted.height; y++) {
+        for (var x = 0; x < painted.width; x++) {
+          final offset = (y * painted.width + x) * 4;
+          if (bytes.getUint8(offset + 3) < 250) continue;
+          final r = bytes.getUint8(offset);
+          final g = bytes.getUint8(offset + 1);
+          final b = bytes.getUint8(offset + 2);
+          if (r == 17 && g == 31 && b == 47) {
+            if (x < left) left = x;
+            if (y < top) top = y;
+            if (x > right) right = x;
+            if (y > bottom) bottom = y;
+          }
+          for (var marker = 0; marker < _landmarkColors.length; marker++) {
+            final color = _landmarkColors[marker];
+            if ((r - color[0]).abs() > 3 ||
+                (g - color[1]).abs() > 3 ||
+                (b - color[2]).abs() > 3) continue;
+            count[marker]++;
+            sumX[marker] += x + .5;
+            sumY[marker] += y + .5;
+          }
+        }
+      }
+      for (var marker = 0; marker < count.length; marker++) {
+        expect(count[marker], greaterThan(6),
+            reason: 'Landmark $marker must be found in actual painted pixels');
+      }
+      expect(right, greaterThan(left), reason: 'The fixture background is visible');
+      expect(bottom, greaterThan(top), reason: 'The fixture background is visible');
+      return _PaintedLandmarks(
+        [
+          for (var marker = 0; marker < count.length; marker++)
+            boundary.localToGlobal(Offset(
+              sumX[marker] / count[marker] / ratio,
+              sumY[marker] / count[marker] / ratio,
+            )),
+        ],
+        Rect.fromPoints(
+          boundary.localToGlobal(Offset(left / ratio, top / ratio)),
+          boundary.localToGlobal(Offset((right + 1) / ratio, (bottom + 1) / ratio)),
+        ),
+      );
+    } finally {
+      painted.dispose();
+    }
+  }))!;
+}
+
+Future<void> _checkPaintedLandmarkInput(
+  _MirrorHarness mirror,
+  List<Offset> expectedCss, {
+  required String reason,
+  _PaintedLandmarks? capturedPixels,
+}) async {
+  final pixels = capturedPixels ?? await _paintedLandmarks(mirror);
+  expect(pixels.centers, hasLength(expectedCss.length), reason: reason);
+  for (var marker = 0; marker < pixels.centers.length; marker++) {
+    mirror.host.calls.clear();
+    final gesture = await mirror.tester.startGesture(
+      pixels.centers[marker], kind: PointerDeviceKind.mouse,
+    );
+    await gesture.up();
+    await mirror.barrier();
+    for (final type in ['mousePressed', 'mouseReleased']) {
+      final calls = mirror.mouseCalls.where((call) => call.params['type'] == type);
+      final label = '$reason, marker=$marker, $type';
+      expect(calls, hasLength(1), reason: label);
+      final call = calls.single;
+      expect(call.tabId, 1, reason: label);
+      // The finite raster has subpixel rounding, unlike analytical RawImage
+      // fractions. 1.5 CSS px covers it and still rejects the old unit mismatch
+      // and wrong zoom/pinch/native-DPR mappings at the independent landmarks.
+      final positionReason = reason.contains(', stream')
+          ? 'stream_css_position_oracle: $label' : label;
+      expect(call.params['x'], closeTo(expectedCss[marker].dx, 1.5), reason: positionReason);
+      expect(call.params['y'], closeTo(expectedCss[marker].dy, 1.5), reason: positionReason);
+    }
+  }
+}
+
+Future<void> _checkPaintedLetterbox(_MirrorHarness mirror, {
+  required String reason,
+  required _PaintedLandmarks capturedPixels,
+}) async {
+  // Reuse this scene's pre-click raster; focus changes may dirty painting.
+  final pixels = capturedPixels;
+  final page = mirror.tester.getRect(mirror.pageListener);
+  final margins = [
+    Offset(page.left + 2, page.center.dy),
+    Offset(page.right - 2, page.center.dy),
+    Offset(page.center.dx, page.bottom - 2),
+  ].where((point) => !pixels.picture.inflate(2).contains(point)).toList();
+  expect(margins, isNotEmpty, reason: '$reason must exercise a blank margin');
+  mirror.host.calls.clear();
+  for (final point in margins) {
+    await mirror.tester.tapAt(point);
+    await mirror.tester.sendEventToBinding(PointerScrollEvent(
+      position: point, scrollDelta: const Offset(0, 19),
+    ));
+  }
+  await mirror.barrier();
+  expect(mirror.mouseCalls, isEmpty, reason: '$reason blank margins reject input');
+}
+
 Future<void> _withMirror(
   WidgetTester tester,
   Future<void> Function(_MirrorHarness) test,
@@ -893,6 +1280,7 @@ class _MirrorHarness {
   final oldDataDirectory = DataDirectory.current;
   final oldLastTab = BrowserTools.lastTab.value;
   final selected = <BrowserTab>[];
+  final boundaryKey = GlobalKey();
   Future<ui.Image> Function(Uint8List)? frameDecoder;
   Directory? _temporary;
   _SocketHost? _host;
@@ -912,7 +1300,7 @@ class _MirrorHarness {
   ui.Image get image => tester.widget<RawImage>(find.byType(RawImage)).image!;
 
   Future<void> render(String data, {ui.Image? previous}) async {
-    final expected = data == _red ? const Size(800, 400) : const Size(400, 800);
+    final expected = data == _blue ? const Size(400, 800) : const Size(800, 400);
     var starts = host.callsFor('Page.startScreencast').length;
     for (var attempt = 0; attempt < 100; attempt++) {
       final found = find.byType(RawImage);
@@ -939,13 +1327,14 @@ class _MirrorHarness {
 
   Future<void> expectImage(String data) async {
     final decoded = image;
-    final expectedSize = data == _red ? const Size(800, 400) : const Size(400, 800);
+    final expectedSize = data == _blue ? const Size(400, 800) : const Size(800, 400);
     expect(Size(decoded.width.toDouble(), decoded.height.toDouble()), expectedSize);
     final rgba = (await tester.runAsync(
       () => decoded.toByteData(format: ui.ImageByteFormat.rawRgba),
     ))!;
     expect(rgba.buffer.asUint8List(rgba.offsetInBytes, 4),
-        data == _red ? [255, 0, 0, 255] : [0, 0, 255, 255]);
+        data == _red ? [255, 0, 0, 255] :
+            data == _blue ? [0, 0, 255, 255] : [17, 31, 47, 255]);
   }
 
   List<_Call> get mouseCalls => host.callsFor('Input.dispatchMouseEvent');
@@ -1009,12 +1398,15 @@ class _MirrorHarness {
           height: panelSize?.height,
           child: TickerMode(
             enabled: visible,
-            child: BrowserMirror(
-              key: const ValueKey('test-browser-mirror'),
-              sessionId: 'mirror-widget-test',
-              frameDecoder: frameDecoder,
-              initialTab: initialTab ?? BrowserTab(connection, 1),
-              onSelectionChanged: selected.add,
+            child: RepaintBoundary(
+              key: boundaryKey,
+              child: BrowserMirror(
+                key: const ValueKey('test-browser-mirror'),
+                sessionId: 'mirror-widget-test',
+                frameDecoder: frameDecoder,
+                initialTab: initialTab ?? BrowserTab(connection, 1),
+                onSelectionChanged: selected.add,
+              ),
             ),
           ),
         ),
@@ -1198,6 +1590,7 @@ class _Frame {
     this.cssSize,
     this.pageScaleFactor = 1,
     this.browserZoom = 1,
+    this.pixelRatio,
     this.timestamp,
     this.updateViewport = true,
   });
@@ -1207,6 +1600,7 @@ class _Frame {
   final Size? cssSize;
   final double pageScaleFactor;
   final double browserZoom;
+  final double? pixelRatio;
   final double? timestamp;
   final bool updateViewport;
 }
@@ -1295,7 +1689,7 @@ class _SocketHost {
       lastFrame = frame;
       viewport = frame.cssSize ?? frame.size;
       browserZoom = frame.browserZoom;
-      pixelRatio = frame.browserZoom;
+      pixelRatio = frame.pixelRatio ?? frame.browserZoom;
       pageScaleFactor = frame.pageScaleFactor;
     }
     send({

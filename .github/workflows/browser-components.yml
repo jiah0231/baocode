@@ -1,0 +1,86 @@
+# Independent Flutter component evidence. This does not replace any release
+# gate and never downloads/starts Chrome or changes its security configuration.
+# Keep this on a component-check branch: the ordinary fix branch deliberately
+# still triggers its unchanged complete workflow, including real Chrome.
+name: Browser components only (no Chrome)
+
+on:
+  push:
+    branches: ['component-check/chrome-click-offset-*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-components-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: 3.47.5
+  BAOCODE_REAL_CHROME_SMOKE: '0'
+  BAOCODE_CHROME_FOR_TESTING: ''
+  BAOCODE_CFT_VERSION: ''
+
+jobs:
+  components:
+    if: >-
+      github.repository == 'jiah0231/baocode' &&
+      startsWith(github.ref, 'refs/heads/component-check/chrome-click-offset-')
+    runs-on: windows-2025
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bao-iroh-prebuilt
+      - uses: ./.github/actions/setup-rust
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Resolve packages and generate localization
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          flutter pub get
+          if ($LASTEXITCODE -ne 0) { throw 'Package resolution failed' }
+          flutter gen-l10n
+          if ($LASTEXITCODE -ne 0) { throw 'Localization generation failed' }
+      - name: Analyze component candidate
+        run: flutter analyze --no-pub
+      - name: Test mutation harness without Flutter subprocesses
+        run: python -m unittest discover -s tool/ci -p test_browser_component_mutations.py -v
+      - name: Test only browser geometry and widgets
+        timeout-minutes: 12
+        run: >-
+          flutter test --no-pub --reporter expanded
+          test/browser/browser_frame_flow_test.dart
+          test/browser/browser_mirror_test.dart
+          test/browser/browser_toolbar_test.dart
+      - name: Verify old defects are caught and restore source
+        id: mutations
+        timeout-minutes: 12
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $flutter = (Get-Command flutter -ErrorAction Stop).Source
+          # The full suite above has already warmed native hooks. Bound every
+          # mutation subprocess so cleanup/reporting fits this 12-minute step.
+          python tool/ci/browser_component_mutations.py --flutter $flutter --output-dir build/browser-component-evidence --timeout-seconds 90
+          if ($LASTEXITCODE -ne 0) { throw 'Component mutation validation failed' }
+      - name: Verify production source was not left mutated
+        if: ${{ always() && steps.mutations.outcome != 'skipped' }}
+        shell: pwsh
+        run: |
+          git diff --exit-code -- lib/browser/browser_mirror.dart lib/browser/browser_frame_flow.dart
+          if ($LASTEXITCODE -ne 0) { throw 'Mutation harness left production source changed' }
+      - name: Retain component evidence only
+        if: ${{ always() && steps.mutations.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: browser-component-evidence-${{ github.sha }}
+          path: build/browser-component-evidence/
+          if-no-files-found: error
+          retention-days: 7
