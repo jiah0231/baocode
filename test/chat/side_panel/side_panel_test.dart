@@ -2457,7 +2457,7 @@ void main() {
     expect(_active(panel, session), isNull);
     _tapSpan(tester, '/etc/hosts');
     await tester.pumpAndSettle();
-    expect(_active(panel, session)!.path, '/etc/hosts');
+    expect(_active(panel, session)!.path, p.normalize('/etc/hosts'));
   });
 
   testWidgets('a read outside the project opens as one in it', (tester) async {
