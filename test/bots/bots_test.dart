@@ -230,7 +230,12 @@ void main() {
       expect(restricted, contains('this Codex bot session is restricted'));
       expect(restricted, isNot(contains('You can work on the computer')));
       expect(restricted, contains('Direct web search is disabled'));
-      expect(BotPermissions.tools(codex.copyWith(chatOnly: false)), isNull);
+      // This helper describes Claude's allowlist. Bots.launch separately
+      // leaves a full Codex workspace unrestricted and requiring approvals.
+      expect(
+        BotPermissions.tools(codex.copyWith(chatOnly: false)),
+        BotPermissions.agentTools,
+      );
       final legacy = BotFiles.read(
         '/bots/old',
         '---\nname: Old\nkernel: codex\n---\n',

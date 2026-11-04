@@ -184,7 +184,9 @@ class WorkbenchThemeService extends ChangeNotifier
 
   Future<String> _read(String path) async {
     if (path.startsWith('pebrel:')) {
-      final definition = _pebrelDefinitions[path.substring(7)];
+      final id = path.substring(7);
+      final key = id.endsWith('.json') ? id.substring(0, id.length - 5) : id;
+      final definition = _pebrelDefinitions[key];
       if (definition == null) {
         throw FormatException('Unknown Pebrel theme: $path');
       }
@@ -245,10 +247,10 @@ class WorkbenchThemeService extends ChangeNotifier
       IThemeExtensionPoint(
         id: id,
         label: definition.name,
-        path: 'pebrel:$id',
+        path: 'pebrel:$id.json',
         uiTheme: definition.isLight ? 'vs' : 'vs-dark',
       ),
-      'pebrel:$id',
+      'pebrel:$id.json',
       extensionId: 'baocode.pebrel',
     );
   }

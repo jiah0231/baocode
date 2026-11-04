@@ -374,7 +374,8 @@ class PebrelThemeDefinition {
       'selection_background',
     ]) {
       if (terminal[key] != null &&
-          (terminal[key] is! String || !_rgb.hasMatch(terminal[key] as String))) {
+          (terminal[key] is! String ||
+              !_rgb.hasMatch(terminal[key] as String))) {
         fail('terminal.$key');
       }
     }
