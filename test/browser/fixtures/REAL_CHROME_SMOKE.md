@@ -18,7 +18,7 @@ and the extension's watch badge are substituted.
   download URL, record the selected version/URL, and record the archive hash.
 - A runner that can start sandboxed headless Chrome. The test does not disable
   Chrome's sandbox or alter firewall, registry, host registration or permissions.
-  Windows CI is suitable. A Linux root-only container needing `--no-sandbox` is
+  A runner OS label alone does not establish these prerequisites. A Linux root-only container needing `--no-sandbox` is
   not a supported fallback for this smoke.
 
 Official download metadata: https://googlechromelabs.github.io/chrome-for-testing/
@@ -36,7 +36,7 @@ PowerShell, after obtaining the official binary:
 $env:BAOCODE_REAL_CHROME_SMOKE = '1'
 $env:BAOCODE_CHROME_FOR_TESTING = '<fresh CfT directory>\chrome-win64\chrome.exe'
 $env:BAOCODE_CFT_VERSION = '<exact four-part CfT version>'
-flutter test test/browser/browser_takeover_real_chrome_test.dart --reporter expanded
+flutter test test/browser/browser_takeover_real_chrome_test.dart --concurrency=1 --fail-fast --reporter expanded
 ```
 
 The file skips unless `BAOCODE_REAL_CHROME_SMOKE=1` is explicitly set. Enabling
@@ -98,7 +98,7 @@ Chrome protocol references:
 official CfT binary. Run it separately from the takeover test:
 
 ```powershell
-flutter test test/browser/browser_mirror_real_chrome_test.dart --reporter expanded
+flutter test test/browser/browser_mirror_real_chrome_test.dart --concurrency=1 --fail-fast --reporter expanded
 ```
 
 This test mounts the production `BrowserMirror` widget. It finds an off-center
@@ -151,3 +151,37 @@ builds, vendor backports, forks, or overridden user-agent values. Native Chrome
 158+ has not been runtime-tested by this pinned 156 fixture.
 
 Source correction: https://github.com/chromium/chromium/commit/b6291517908abb64a348cfdcc140dbd5ec16a867
+
+## Sandbox-denial guard
+
+The fixture monitors both Chrome output streams throughout startup, CDP work
+and bounded shutdown. The known Chromium `Sandbox cannot access executable`
+marker invalidates the entire run, even if Chrome subsequently exposes DevTools
+or a page operation succeeds. A violation synchronously blocks native forwarding
+and new CDP work, rejects late results, closes transports and stops only the
+fixture-owned process. Output decoding/monitoring failures and premature output EOF also fail closed.
+Shutdown waits for output EOF rather than treating process exit as proof all
+logs were consumed. Errors identify the category without repeating executable
+paths or the original log. Raw Chrome output is not retained; only bounded
+marker tails and a capped character count are kept.
+
+This detects a known negative signal; absence of that log does **not** establish
+that every Chrome child is sandboxed. Chromium can fall back after a network
+service sandbox launch failure. A blocked runner therefore remains blocked
+until independent evidence establishes an authorized, sandbox-capable setup.
+Do not retry by changing ACLs, disabling the sandbox, using another binary path
+or invoking an installer that grants AppContainer access. Both real-browser workflow commands retain all tests, run serially and use
+`--fail-fast` so a failed fixture does not start later matrix fixtures. This
+guard does not resolve the outstanding real-browser acceptance or authorize
+another run.
+
+`chrome_sandbox_guard_test.dart` and `real_chrome_output_guard_test.dart` use
+synthetic in-memory output only. They neither start Chrome nor execute a packaged
+application. The independent component workflow lists these files explicitly;
+its passing result is guard/component evidence, not real-browser acceptance.
+
+Source of the pinned diagnostic:
+https://github.com/chromium/chromium/blob/156.0.8078.80/sandbox/policy/win/sandbox_win.cc#L776-L808
+
+Source of the network-service fallback:
+https://github.com/chromium/chromium/blob/156.0.8078.80/chrome/browser/net/system_network_context_manager.cc#L260-L266

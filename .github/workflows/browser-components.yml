@@ -52,6 +52,12 @@ jobs:
         run: flutter analyze --no-pub
       - name: Test mutation harness without Flutter subprocesses
         run: python -m unittest discover -s tool/ci -p test_browser_component_mutations.py -v
+      - name: Test sandbox failure handling using synthetic output only
+        timeout-minutes: 3
+        run: >-
+          flutter test --no-pub --reporter expanded
+          test/browser/chrome_sandbox_guard_test.dart
+          test/browser/real_chrome_output_guard_test.dart
       - name: Test only browser geometry and widgets
         timeout-minutes: 12
         run: >-

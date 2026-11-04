@@ -7,7 +7,10 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:baocode/browser/browser_bridge.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+
+import 'chrome_sandbox_guard.dart';
 
 class RealChromeFixture {
   RealChromeFixture(this.root, this.page) {
@@ -18,7 +21,12 @@ class RealChromeFixture {
   final Uri page;
   Process? _process;
   final _client = HttpClient();
-  final _log = StringBuffer();
+  int _outputCharacters = 0;
+  late final _sandbox = ChromeSandboxGuard(onViolation: _stopForSandboxFailure);
+  final _outputDone = <Future<void>>[];
+  final _outputSubscriptions = <StreamSubscription<String>>[];
+  void Function()? _testStopOwnedProcess;
+
   Uri? _endpoint;
   Socket? _native;
   int _nativeGeneration = 0;
@@ -55,11 +63,76 @@ class RealChromeFixture {
   final acknowledgements = <String>[];
   final errors = <String>[];
 
+  void _stopForSandboxFailure() {
+    // Latch first, then stop transport synchronously. A Chrome child may fall
+    // back after a sandbox launch failure; subsequent successful CDP/DOM work
+    // must never turn this run into a pass. Only our owned process is stopped.
+    errors.add('Chrome sandbox/output monitoring failed; fixture stopped.');
+    for (final stop in <void Function()>[
+      disconnectNative,
+      () { _client.close(force: true); },
+      () { _cdp?.abort(); },
+      () { _process?.kill(); },
+      () { _testStopOwnedProcess?.call(); },
+    ]) {
+      try {
+        stop();
+      } on Object {
+        // A transport failure must not prevent stopping the owned process.
+        errors.add('Chrome fixture stop action failed after sandbox violation.');
+      }
+    }
+  }
+
+  void _monitorOutput(String name, Stream<List<int>> output) {
+    final done = Completer<void>();
+    _outputDone.add(done.future);
+    _outputSubscriptions.add(output.transform(utf8.decoder).listen((text) {
+      _sandbox.addOutput(name, text);
+      // Keep no raw output, executable paths or profile names. Only the
+      // guard's bounded marker tails and a capped diagnostic count survive.
+      _outputCharacters = math.min(0x7fffffff, _outputCharacters + text.length);
+    }, onError: (Object _) {
+      _sandbox.failMonitoring();
+    }, onDone: () {
+      // Unexpected EOF means later sandbox diagnostics are no longer visible.
+      // During close we deliberately stop Chrome, so EOF is expected then.
+      if (!_closed) {
+        _sandbox.failMonitoring();
+      }
+      done.complete();
+    }));
+  }
+
+  /// Synthetic test seam: connects only supplied in-memory output streams.
+  /// It cannot launch a process or bypass the real fixture's security checks.
+  @visibleForTesting
+  void monitorOutputForTesting(Stream<List<int>> stdout,
+      Stream<List<int>> stderr, {required void Function() stopOwnedProcess}) {
+    if (_process != null || _outputDone.isNotEmpty || _closed) {
+      throw StateError('Output monitoring has already started.');
+    }
+    _testStopOwnedProcess = stopOwnedProcess;
+    _monitorOutput('stdout', stdout);
+    _monitorOutput('stderr', stderr);
+  }
+
+  @visibleForTesting
+  Future<T> guardedOperationForTesting<T>(Future<T> Function() operation) =>
+      _sandbox.run(operation);
+
+  @visibleForTesting
+  void acceptCdpEventForTesting(Map<String, Object?> event) => _event(event);
+
   Future<void> start(String executable, String version, {
     double browserZoom = 1,
     double? deviceScaleFactor,
     bool initiallyBlank = false,
   }) async {
+    _sandbox.check();
+    if (_closed || _outputDone.isNotEmpty) {
+      throw StateError('Fixture has already started or closed.');
+    }
     if (!File(executable).existsSync()) {
       throw StateError('Official Chrome for Testing executable not found.');
     }
@@ -103,12 +176,13 @@ class RealChromeFixture {
       initialPage.toString(),
     ]);
     // Drain both pipes so a verbose browser cannot deadlock the test.
-    _process!.stdout.transform(utf8.decoder).listen(_log.write);
-    _process!.stderr.transform(utf8.decoder).listen(_log.write);
+    _monitorOutput('stdout', _process!.stdout);
+    _monitorOutput('stderr', _process!.stderr);
     final portFile = File(p.join(profile.path, 'DevToolsActivePort'));
     var port = 0;
     try {
       await chromeUntil(() {
+        _sandbox.check();
         if (!portFile.existsSync()) {
           return false;
         }
@@ -128,7 +202,9 @@ class RealChromeFixture {
         return port > 0 && port <= 65535;
       }, reason: 'Chrome did not expose its disposable DevTools endpoint.');
     } on Object catch (error) {
-      throw StateError('$error\nChrome output: $_log');
+      _sandbox.check();
+      throw StateError('$error\nChrome output characters observed: '
+          '$_outputCharacters (raw output omitted).');
     }
     _endpoint = Uri.parse('http://127.0.0.1:$port');
     final browser = (await _json('/json/version')) as Map;
@@ -162,13 +238,20 @@ class RealChromeFixture {
       _target = id;
     }
     await connectNative();
+    _sandbox.check();
   }
 
   Future<void> connectNative() async {
+    _sandbox.check();
     final parts = File(BrowserBridge.portPath).readAsStringSync().split(' ');
     final socket = await Socket.connect(
       InternetAddress.loopbackIPv4, int.parse(parts[0]),
-    );
+    ).timeout(const Duration(seconds: 5));
+    if (_closed || _sandbox.failed) {
+      socket.destroy();
+      _sandbox.check();
+      throw StateError('Fixture closed during native connection.');
+    }
     final generation = ++_nativeGeneration;
     final buffer = BytesBuilder(copy: false);
     _native = socket;
@@ -198,21 +281,27 @@ class RealChromeFixture {
     _nativeGeneration++;
   }
 
-  Future<Object?> _json(String path, {bool createTarget = false}) async {
+  Future<Object?> _json(String path, {bool createTarget = false}) =>
+      _sandbox.run(() async {
     if (createTarget && path != '/json/new?about:blank') {
       throw StateError('Only a new blank fixture target may be created.');
     }
     final request = await _client.openUrl(
       createTarget ? 'PUT' : 'GET', _endpoint!.resolve(path),
     );
+    _sandbox.check();
     final response = await request.close();
+    _sandbox.check();
     if (response.statusCode != 200) {
       throw StateError('Chrome endpoint $path: ${response.statusCode}');
     }
-    return jsonDecode(await utf8.decodeStream(response));
-  }
+    final body = await utf8.decodeStream(response);
+    _sandbox.check();
+    return jsonDecode(body);
+  });
 
   Future<_CdpSocket> _attached() {
+    _sandbox.check();
     if (_cdp case final current?) {
       return Future.value(current);
     }
@@ -226,10 +315,12 @@ class RealChromeFixture {
         if (url.host != '127.0.0.1' || url.port != _endpoint!.port) {
           throw StateError('Refusing a non-fixture CDP endpoint.');
         }
+        _sandbox.check();
         final connected = _CdpSocket(await WebSocket.connect('$url')
             .timeout(const Duration(seconds: 5)), _event);
-        if (_closed) {
+        if (_closed || _sandbox.failed) {
           await connected.close();
+          _sandbox.check();
           throw StateError('Fixture closed during CDP attachment.');
         }
         _cdp = connected;
@@ -242,6 +333,9 @@ class RealChromeFixture {
   }
 
   void _event(Map<String, Object?> raw) {
+    if (_closed || _sandbox.failed) {
+      return;
+    }
     if (captureNavigation) {
       _recordNavigation(raw);
     }
@@ -264,9 +358,9 @@ class RealChromeFixture {
         final cdp = _cdp;
         if (cdp != null && !_closed) {
           late Future<void> pending;
-          pending = cdp.call('Page.screencastFrameAck', {
+          pending = _sandbox.run(() => cdp.call('Page.screencastFrameAck', {
             'sessionId': (raw['params'] as Map)['sessionId'],
-          }).then<void>((_) {}, onError: (Object error) {
+          })).then<void>((_) {}, onError: (Object error) {
             if (!_closed) errors.add('suppressed frame ACK: $error');
           }).whenComplete(() { _inflight.remove(pending); });
           _inflight.add(pending);
@@ -342,14 +436,15 @@ class RealChromeFixture {
 
   void _send(Map<String, Object?> value) {
     final socket = _native;
-    if (socket == null || _closed) {
+    if (socket == null || _closed || _sandbox.failed) {
       return;
     }
     _sendReply(socket, _nativeGeneration, value);
   }
 
   void _sendReply(Socket socket, int generation, Map<String, Object?> value) {
-    if (_closed || generation != _nativeGeneration || !identical(socket, _native)) {
+    if (_closed || _sandbox.failed || generation != _nativeGeneration ||
+        !identical(socket, _native)) {
       discardedStaleReplies++;
       return;
     }
@@ -363,7 +458,8 @@ class RealChromeFixture {
   }
 
   void _read(Socket socket, int generation, BytesBuilder buffer, Uint8List data) {
-    if (_closed || generation != _nativeGeneration || !identical(socket, _native)) {
+    if (_closed || _sandbox.failed || generation != _nativeGeneration ||
+        !identical(socket, _native)) {
       return;
     }
     buffer.add(data);
@@ -399,6 +495,7 @@ class RealChromeFixture {
     final method = request['method'];
     final params = (request['params'] as Map? ?? {}).cast<String, Object?>();
     try {
+      _sandbox.check();
       Object? result;
       switch (method) {
         case 'cdp':
@@ -417,9 +514,10 @@ class RealChromeFixture {
             if (commandDetails.length == 128) commandDetails.removeAt(0);
             commandDetails.add({'method': name, 'params': Map.of(args)});
           }
-          final cdp = await _attached();
-          result = await cdp.call(name, args,
-              sessionId: params['sessionId'] as String?);
+          final cdp = await _sandbox.run(_attached);
+          result = await _sandbox.run(() => cdp.call(name, args,
+              sessionId: params['sessionId'] as String?));
+          _sandbox.check();
           acknowledgements.add(name);
           if (name == 'Page.captureScreenshot') screenshotReplies++;
           if (name == 'Runtime.evaluate' && holdNextEvaluation) {
@@ -451,6 +549,7 @@ class RealChromeFixture {
         default:
           throw UnsupportedError('Unsupported fixture method $method');
       }
+      _sandbox.check();
       _sendReply(socket, generation, {'id': request['id'], 'result': result});
     } on Object catch (error) {
       errors.add('$method ${params['method'] ?? ''}: $error');
@@ -460,11 +559,13 @@ class RealChromeFixture {
 
   /// Settle commands dispatched before a test's explicit transport barrier.
   Future<void> drain() async {
+    _sandbox.check();
     await () async {
       while (_inflight.isNotEmpty) {
         await Future.wait(_inflight.toList());
       }
     }().timeout(const Duration(seconds: 6));
+    _sandbox.check();
   }
 
   Future<void> close() async {
@@ -485,14 +586,32 @@ class RealChromeFixture {
         }
       }
     } finally {
-      final process = _process;
-      if (process != null) {
-        process.kill();
+      try {
+        final process = _process;
+        if (process != null) {
+          process.kill();
+          try {
+            await process.exitCode.timeout(const Duration(seconds: 10));
+          } on TimeoutException {
+            process.kill(ProcessSignal.sigkill);
+            await process.exitCode.timeout(const Duration(seconds: 5));
+          }
+        }
+      } finally {
+        // Process exit is not pipe EOF. A denial delivered during shutdown
+        // still invalidates the test. Missing/broken output is fail closed.
         try {
-          await process.exitCode.timeout(const Duration(seconds: 10));
-        } on TimeoutException {
-          process.kill(ProcessSignal.sigkill);
-          await process.exitCode.timeout(const Duration(seconds: 5));
+          await Future.wait(_outputDone).timeout(const Duration(seconds: 5));
+        } on Object {
+          _sandbox.failMonitoring();
+        } finally {
+          try {
+            await Future.wait(_outputSubscriptions.map((s) => s.cancel()))
+                .timeout(const Duration(seconds: 5));
+          } on Object {
+            _sandbox.failMonitoring();
+          }
+          _sandbox.check();
         }
       }
     }
@@ -523,9 +642,13 @@ class _CdpSocket {
   final _pending = <int, Completer<Map<String, Object?>>>{};
   final _done = Completer<void>();
   int _nextId = 0;
+  bool _closed = false;
 
   Future<Map<String, Object?>> call(String method,
       Map<String, Object?> params, {String? sessionId}) {
+    if (_closed) {
+      return Future.error(StateError('Real Chrome CDP session closed.'));
+    }
     final id = ++_nextId;
     final result = Completer<Map<String, Object?>>();
     _pending[id] = result;
@@ -539,6 +662,7 @@ class _CdpSocket {
   }
 
   void _ended() {
+    _closed = true;
     for (final result in _pending.values) {
       result.completeError(StateError('Real Chrome CDP session closed.'));
     }
@@ -546,6 +670,13 @@ class _CdpSocket {
     if (!_done.isCompleted) {
       _done.complete();
     }
+  }
+
+  void abort() {
+    _ended();
+    // Close transport only, never send a Chrome command after a violation.
+    unawaited(socket.close().timeout(const Duration(seconds: 5))
+        .then<void>((_) {}, onError: (Object _) {}));
   }
 
   Future<void> close() async {
