@@ -208,8 +208,9 @@ class ClaudeCatalog
                     ))
                   part['text'] as String,
             ].join('\n');
-      if (text.isEmpty || text.trimLeft().startsWith('<system-reminder>'))
+      if (text.isEmpty || text.trimLeft().startsWith('<system-reminder>')) {
         continue;
+      }
       messages.add(
         SessionTextMessage(
           role: role as String,

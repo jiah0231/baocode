@@ -218,7 +218,7 @@ class _IdeColorThemeGalleryState extends State<IdeColorThemeGallery> {
                                         selected?.label ?? session.selectedId,
                                     text: _text,
                                   );
-                                  if (constraints.maxWidth < 700)
+                                  if (constraints.maxWidth < 700) {
                                     return Column(
                                       children: [
                                         SizedBox(height: 140, child: preview),
@@ -226,6 +226,7 @@ class _IdeColorThemeGalleryState extends State<IdeColorThemeGallery> {
                                         Expanded(child: grid),
                                       ],
                                     );
+                                  }
                                   return Row(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.stretch,

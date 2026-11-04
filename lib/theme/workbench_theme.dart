@@ -185,8 +185,9 @@ class WorkbenchThemeService extends ChangeNotifier
   Future<String> _read(String path) async {
     if (path.startsWith('pebrel:')) {
       final definition = _pebrelDefinitions[path.substring(7)];
-      if (definition == null)
+      if (definition == null) {
         throw FormatException('Unknown Pebrel theme: $path');
+      }
       return jsonEncode(definition.toColorThemeJson());
     }
     // An extension's theme: its file on disk.

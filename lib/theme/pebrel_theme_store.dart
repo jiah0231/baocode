@@ -106,8 +106,9 @@ class PebrelThemeStore {
           await temporary.writeAsString(encoded, flush: true);
           await temporary.rename(target.path);
         } finally {
-          if (ownsTemporary && await temporary.exists())
+          if (ownsTemporary && await temporary.exists()) {
             await temporary.delete();
+          }
         }
         _themes = {..._themes, id: theme};
         return id;
@@ -258,8 +259,9 @@ class PebrelThemeStore {
       } else if (unit == 34) {
         inString = true;
       } else if (unit == 123 || unit == 91) {
-        if (++depth > 64)
+        if (++depth > 64) {
           throw const FormatException('Theme JSON is nested too deeply.');
+        }
       } else if (unit == 125 || unit == 93) {
         depth--;
       }
