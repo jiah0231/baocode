@@ -1,0 +1,64 @@
+# Independent compile/static evidence. Not a replacement for release gates.
+name: Windows package static checks (no Chrome)
+on:
+  push:
+    branches: ['package-check/chrome-click-offset-*']
+permissions:
+  contents: read
+concurrency:
+  group: windows-package-static-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  FLUTTER_VERSION: 3.47.5
+  BAOCODE_REAL_CHROME_SMOKE: '0'
+  BAOCODE_CHROME_FOR_TESTING: ''
+jobs:
+  package:
+    if: github.repository == 'jiah0231/baocode' && startsWith(github.ref, 'refs/heads/package-check/chrome-click-offset-')
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bao-iroh-prebuilt
+      - uses: ./.github/actions/setup-rust
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Resolve packages and localization
+        shell: pwsh
+        run: |
+          flutter pub get
+          if ($LASTEXITCODE -ne 0) { throw 'Package resolution failed' }
+          flutter gen-l10n
+          if ($LASTEXITCODE -ne 0) { throw 'Localization generation failed' }
+      - name: Analyze candidate
+        run: flutter analyze --no-pub
+      - name: Test static inspector using synthetic file bytes
+        run: python -m unittest discover -s tool/ci -p test_check_windows_package_static.py -v
+      # This installs the compiler tool, not the BaoCode installer being tested.
+      - name: Provision Inno Setup compiler
+        run: choco install innosetup --no-progress -y
+      - name: Compile Windows bundle and installer without updates
+        run: dart run tool/build_windows.dart --arch x64 --no-updates --remote-release 1.7.3.23-958eff42c6ca
+      - name: Inspect files without executing any packaged binary
+        shell: pwsh
+        run: |
+          python tool/ci/check_windows_package_static.py --commit $env:GITHUB_SHA --output build/package-static-evidence/report.json
+          if ($LASTEXITCODE -ne 0) { throw 'Static package checks failed' }
+          $setup = Get-Item build/installers/BaoCode-1.8.0-setup.exe
+          if ($setup.VersionInfo.FileVersion -ne '1.8.0.0') { throw 'Installer resource version mismatch' }
+          $app = Get-Item build/windows/x64/runner/Release/baocode.exe
+          if ($app.VersionInfo.ProductVersion -ne '1.8.0+28') { throw 'App resource product version mismatch' }
+          @{installer_file_version=$setup.VersionInfo.FileVersion; app_product_version=$app.VersionInfo.ProductVersion} | ConvertTo-Json | Out-File build/package-static-evidence/resource-versions.json -Encoding utf8
+          "STATIC EVIDENCE ONLY: source $env:GITHUB_SHA; not installed, not launched, no Chrome, no signing, not for distribution." | Out-File build/package-static-evidence/SCOPE.txt -Encoding utf8
+      - name: Retain static evidence only (not an installer delivery)
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-package-static-evidence-${{ github.sha }}
+          path: build/package-static-evidence/
+          if-no-files-found: error
+          retention-days: 7
