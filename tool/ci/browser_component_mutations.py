@@ -131,9 +131,11 @@ def child_environment(environment: dict[str, str]) -> dict[str, str]:
     if environment.get("BAOCODE_REAL_CHROME_SMOKE", "0") != "0":
         raise GateError("BAOCODE_REAL_CHROME_SMOKE must be unset or exactly 0")
     # Do not pass tokens, browser overrides, account data, or unrelated CI secrets.
+    # Native Windows build-tool discovery needs the standard installation roots.
     allowed = {"PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "WINDIR", "COMSPEC",
                "SYSTEMDRIVE", "PATHEXT", "TEMP", "TMP", "TMPDIR", "APPDATA",
-               "LOCALAPPDATA", "PROGRAMDATA", "PUB_CACHE", "LANG", "LC_ALL"}
+               "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES", "PROGRAMFILES(X86)",
+               "PROGRAMW6432", "PUB_CACHE", "LANG", "LC_ALL"}
     result = {key: value for key, value in environment.items() if key.upper() in allowed}
     result.update(BAOCODE_REAL_CHROME_SMOKE="0", CI="true",
                   FLUTTER_SUPPRESS_ANALYTICS="true", DART_SUPPRESS_ANALYTICS="true")

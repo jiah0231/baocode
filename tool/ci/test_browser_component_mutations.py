@@ -314,6 +314,21 @@ class InputAndProcessTests(unittest.TestCase):
         with self.assertRaises(gate.GateError):
             gate.test_command(Path("flutter"), ("test/browser/real_chrome",), Path("report"))
 
+    def test_windows_installation_roots_preserve_casing_without_secrets_or_smoke_override(self):
+        roots = {"ProgramFiles": r"C:\Program Files",
+                 "ProgramFiles(x86)": r"C:\Program Files (x86)",
+                 "ProgramW6432": r"C:\Program Files"}
+        environment = {**roots, "GITHUB_TOKEN": "not-a-real-token",
+                       "ACTIONS_RUNTIME_TOKEN": "not-a-real-token",
+                       "BAOCODE_CHROME_FOR_TESTING": "browser",
+                       "BAOCODE_CFT_VERSION": "browser-version", "CHROME_EXECUTABLE": "browser",
+                       "BAOCODE_REAL_CHROME_SMOKE": "0"}
+        self.assertEqual(gate.child_environment(environment), {
+            **roots, "BAOCODE_REAL_CHROME_SMOKE": "0", "CI": "true",
+            "FLUTTER_SUPPRESS_ANALYTICS": "true", "DART_SUPPRESS_ANALYTICS": "true"})
+        with self.assertRaises(gate.GateError):
+            gate.child_environment({**environment, "BAOCODE_REAL_CHROME_SMOKE": "1"})
+
     def test_missing_existing_sdk_does_not_launch_or_bootstrap(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
