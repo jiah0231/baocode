@@ -45,17 +45,24 @@ jobs:
       - name: Compile Windows bundle and installer without updates
         run: dart run tool/build_windows.dart --arch x64 --no-updates --remote-release 1.7.3.23-958eff42c6ca
       - name: Inspect files without executing any packaged binary
+        id: inspect
         shell: pwsh
         run: |
           python tool/ci/check_windows_package_static.py --commit $env:GITHUB_SHA --output build/package-static-evidence/report.json
           if ($LASTEXITCODE -ne 0) { throw 'Static package checks failed' }
           $setup = Get-Item build/installers/BaoCode-1.8.0-setup.exe
-          if ($setup.VersionInfo.FileVersion -ne '1.8.0.0') { throw 'Installer resource version mismatch' }
           $app = Get-Item build/windows/x64/runner/Release/baocode.exe
+          $setupNumeric = @($setup.VersionInfo.FileMajorPart, $setup.VersionInfo.FileMinorPart, $setup.VersionInfo.FileBuildPart, $setup.VersionInfo.FilePrivatePart) -join '.'
+          $appNumeric = @($app.VersionInfo.ProductMajorPart, $app.VersionInfo.ProductMinorPart, $app.VersionInfo.ProductBuildPart, $app.VersionInfo.ProductPrivatePart) -join '.'
+          $versions = @{installer_file_version=$setup.VersionInfo.FileVersion; installer_numeric=$setupNumeric; app_product_version=$app.VersionInfo.ProductVersion; app_numeric=$appNumeric} | ConvertTo-Json
+          $versions | Out-File build/package-static-evidence/resource-versions.json -Encoding utf8
+          Write-Host $versions
+          if ($setupNumeric -ne '1.8.0.0') { throw 'Installer numeric resource version mismatch' }
+          if ($appNumeric -ne '1.8.0.28') { throw 'App numeric resource version mismatch' }
           if ($app.VersionInfo.ProductVersion -ne '1.8.0+28') { throw 'App resource product version mismatch' }
-          @{installer_file_version=$setup.VersionInfo.FileVersion; app_product_version=$app.VersionInfo.ProductVersion} | ConvertTo-Json | Out-File build/package-static-evidence/resource-versions.json -Encoding utf8
           "STATIC EVIDENCE ONLY: source $env:GITHUB_SHA; not installed, not launched, no Chrome, no signing, not for distribution." | Out-File build/package-static-evidence/SCOPE.txt -Encoding utf8
       - name: Retain static evidence only (not an installer delivery)
+        if: ${{ always() && steps.inspect.outcome != 'skipped' }}
         uses: actions/upload-artifact@v6
         with:
           name: windows-package-static-evidence-${{ github.sha }}
