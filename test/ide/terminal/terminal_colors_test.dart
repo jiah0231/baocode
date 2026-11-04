@@ -126,8 +126,14 @@ void main() {
       expect(extended, hasLength(240));
       expect(extended.first, cssColor(const Color(0xFF123456)));
       expect(extended.last, cssColor(const Color(0xFF654321)));
-      expect(() => theme.indexedColors[16] = const Color(0x00000000), throwsUnsupportedError);
-      expect(() => theme.palette[16] = const Color(0x00000000), throwsUnsupportedError);
+      expect(
+        () => theme.indexedColors[16] = const Color(0x00000000),
+        throwsUnsupportedError,
+      );
+      expect(
+        () => theme.palette[16] = const Color(0x00000000),
+        throwsUnsupportedError,
+      );
     });
 
     test('indexed changes participate in theme equality', () {
@@ -142,7 +148,10 @@ void main() {
 
     test('rejects slots outside the extended palette', () {
       for (final index in [-1, 0, 15, 256]) {
-        expect(() => resolve({index: const Color(0xFF123456)}), throwsRangeError);
+        expect(
+          () => resolve({index: const Color(0xFF123456)}),
+          throwsRangeError,
+        );
       }
     });
 
@@ -154,9 +163,8 @@ void main() {
       final h = _terminal(initial);
       expect(h.source.themeService.colors.ansi[16].rgba, 0x123456FF);
       expect(h.source.themeService.colors.ansi[255].rgba, 0x654321FF);
-      h.terminal.options.theme = resolve({
-        42: const Color(0xFFABCDEF),
-      }).toXtermTheme();
+      h.terminal.options.theme = resolve({42: const Color(0xFFABCDEF)})
+          .toXtermTheme();
       expect(h.source.themeService.colors.ansi[16].rgba, 0x000000FF);
       expect(h.source.themeService.colors.ansi[42].rgba, 0xABCDEFFF);
       h.terminal.options.theme = resolve().toXtermTheme();

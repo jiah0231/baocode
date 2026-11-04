@@ -185,7 +185,8 @@ class WorkbenchThemeService extends ChangeNotifier
   Future<String> _read(String path) async {
     if (path.startsWith('pebrel:')) {
       final definition = _pebrelDefinitions[path.substring(7)];
-      if (definition == null) throw FormatException('Unknown Pebrel theme: $path');
+      if (definition == null)
+        throw FormatException('Unknown Pebrel theme: $path');
       return jsonEncode(definition.toColorThemeJson());
     }
     // An extension's theme: its file on disk.
@@ -214,7 +215,9 @@ class WorkbenchThemeService extends ChangeNotifier
       ),
     for (final theme in _pebrelData.values)
       IdeColorThemeEntry(
-        id: theme.settingsId, label: theme.label, type: theme.type,
+        id: theme.settingsId,
+        label: theme.label,
+        type: theme.type,
         description: 'Pebrel',
       ),
     for (final theme in _extensionThemes.values)
@@ -239,10 +242,13 @@ class WorkbenchThemeService extends ChangeNotifier
     _pebrelDefinitions[id] = definition;
     _pebrelData[id] = ColorThemeData.fromExtensionTheme(
       IThemeExtensionPoint(
-        id: id, label: definition.name, path: 'pebrel:$id',
+        id: id,
+        label: definition.name,
+        path: 'pebrel:$id',
         uiTheme: definition.isLight ? 'vs' : 'vs-dark',
       ),
-      'pebrel:$id', extensionId: 'baocode.pebrel',
+      'pebrel:$id',
+      extensionId: 'baocode.pebrel',
     );
   }
 
@@ -259,7 +265,9 @@ class WorkbenchThemeService extends ChangeNotifier
     }
     final raw = jsonDecode(source) as Map;
     for (final entry in raw['themes'] as List) {
-      final definition = PebrelThemeDefinition.fromJson(Map<String, dynamic>.from(entry as Map));
+      final definition = PebrelThemeDefinition.fromJson(
+        Map<String, dynamic>.from(entry as Map),
+      );
       _registerPebrel('Pebrel ${definition.name}', definition);
     }
     // A supplied bundle is an isolated test/showcase environment, not user disk.
@@ -267,7 +275,9 @@ class WorkbenchThemeService extends ChangeNotifier
       final store = _pebrelStore ??= PebrelThemeStore();
       try {
         final custom = await store.load();
-        for (final entry in custom.entries) { _registerPebrel(entry.key, entry.value); }
+        for (final entry in custom.entries) {
+          _registerPebrel(entry.key, entry.value);
+        }
       } on FileSystemException {
         // A locked/unreadable user folder must not disable bundled themes.
         appEvent('theme', 'Custom theme library could not be read');
@@ -278,32 +288,33 @@ class WorkbenchThemeService extends ChangeNotifier
     _pebrelLoaded = true;
   }
 
-  Future<void> setCustomPebrelThemes(Map<String, PebrelThemeDefinition> themes) =>
-      _queue(() async {
-        final visible = colorThemeId;
-        final previous = _pebrelDefinitions.keys
-            .where((id) => id.startsWith('Pebrel Custom '))
-            .toList();
-        for (final id in previous) {
-          _pebrelDefinitions.remove(id);
-          _pebrelData.remove(id);
-        }
-        for (final entry in themes.entries) {
-          _registerPebrel(entry.key, entry.value);
-        }
-        if (previous.contains(_setting) && !_pebrelData.containsKey(_setting)) {
-          // Only removal of the persisted choice changes preferences.
-          await _setColorTheme(_defaultSetting, preview: false);
-        } else if (_pebrelData[visible] case final data?) {
-          await data.ensureLoaded(_read);
-          // Importing or refreshing the library must neither save a preview
-          // nor rewrite the user's unchanged persisted selection.
-          _apply(data, preview: true);
-        } else if (previous.contains(visible)) {
-          await _setColorTheme(_setting, preview: true);
-        }
-        notifyListeners();
-      });
+  Future<void> setCustomPebrelThemes(
+    Map<String, PebrelThemeDefinition> themes,
+  ) => _queue(() async {
+    final visible = colorThemeId;
+    final previous = _pebrelDefinitions.keys
+        .where((id) => id.startsWith('Pebrel Custom '))
+        .toList();
+    for (final id in previous) {
+      _pebrelDefinitions.remove(id);
+      _pebrelData.remove(id);
+    }
+    for (final entry in themes.entries) {
+      _registerPebrel(entry.key, entry.value);
+    }
+    if (previous.contains(_setting) && !_pebrelData.containsKey(_setting)) {
+      // Only removal of the persisted choice changes preferences.
+      await _setColorTheme(_defaultSetting, preview: false);
+    } else if (_pebrelData[visible] case final data?) {
+      await data.ensureLoaded(_read);
+      // Importing or refreshing the library must neither save a preview
+      // nor rewrite the user's unchanged persisted selection.
+      _apply(data, preview: true);
+    } else if (previous.contains(visible)) {
+      await _setColorTheme(_setting, preview: true);
+    }
+    notifyListeners();
+  });
 
   Future<String> importCustomThemeFile(File file) async {
     final store = _pebrelStore ??= PebrelThemeStore();
@@ -435,7 +446,8 @@ class WorkbenchThemeService extends ChangeNotifier
       if (_extensionThemes[_setting] case final theme?) {
         await theme.ensureLoaded(_read);
         _apply(theme, preview: false);
-      } else if (!_pebrelData.containsKey(_setting) && (await _loadManifest()).themeById(_setting) == null) {
+      } else if (!_pebrelData.containsKey(_setting) &&
+          (await _loadManifest()).themeById(_setting) == null) {
         await _setColorTheme(_defaultSetting, preview: false);
       }
     }

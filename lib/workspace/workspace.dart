@@ -299,14 +299,21 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
 
   AgentThread? _queryTarget(String targetId) {
     if (_disposed) return null;
-    return _threads.where((thread) => !thread.archived &&
-        listsInSidebar(thread) && thread.id != null &&
-        '${thread.kernel.id}:${thread.id}' == targetId).firstOrNull;
+    return _threads
+        .where(
+          (thread) =>
+              !thread.archived &&
+              listsInSidebar(thread) &&
+              thread.id != null &&
+              '${thread.kernel.id}:${thread.id}' == targetId,
+        )
+        .firstOrNull;
   }
 
   Future<SessionQuerySnapshot?> _readSelectedSession(
-    String targetId, {String? cursor}
-  ) async {
+    String targetId, {
+    String? cursor,
+  }) async {
     final thread = _queryTarget(targetId);
     if (thread == null) return null;
     final catalog = thread.kernel.catalog;
@@ -317,26 +324,38 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       // A newly running conversation may not yet have its storage path in the
       // sidebar. Resolve only its catalog identity; never guess a storage path.
       record ??= (await catalog.sessionsIn(thread.project.path))
-          .where((record) => record.id == thread.id).firstOrNull;
+          .where((record) => record.id == thread.id)
+          .firstOrNull;
       record ??= SessionRecord(
-        id: thread.id!, title: thread.title, updatedAt: thread.updatedAt,
+        id: thread.id!,
+        title: thread.title,
+        updatedAt: thread.updatedAt,
         cwd: thread.project.path,
       );
       final position = cursor == null ? null : jsonDecode(cursor) as Map;
       final SessionTextPage page = await catalog.readTextPage(
-        record, cursor: position?['cursor'] as String?,
+        record,
+        cursor: position?['cursor'] as String?,
       );
       if (!identical(_queryTarget(targetId), thread)) return null;
       final end = position?['end'] as int? ?? page.messages.length;
       final start = end - page.messages.length;
-      final fingerprint = sha256.convert(utf8.encode([
-        for (final message in page.messages)
-          '${message.id}:${message.role}:${sha256.convert(utf8.encode(message.text))}',
-      ].join('|'))).toString();
+      final fingerprint = sha256
+          .convert(
+            utf8.encode(
+              [
+                for (final message in page.messages)
+                  '${message.id}:${message.role}:${sha256.convert(utf8.encode(message.text))}',
+              ].join('|'),
+            ),
+          )
+          .toString();
       if (position?['fingerprint'] case final String expected
           when expected != fingerprint) {
-        throw StateError('The selected history page changed while being read. '
-            'Select the conversation with @ again for a fresh snapshot.');
+        throw StateError(
+          'The selected history page changed while being read. '
+          'Select the conversation with @ again for a fresh snapshot.',
+        );
       }
       var skipped = position?['skipped'] as int? ?? 0;
       var characters = position?['characters'] as int? ?? 0;
@@ -345,16 +364,23 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       // Page from newer text toward older text, including slices of a single
       // huge answer. The private continuation re-reads this same storage page
       // before advancing its archive cursor, so budget caps never skip text.
-      while (skipped < page.messages.length && budget > 0 && messages.length < 500) {
+      while (skipped < page.messages.length &&
+          budget > 0 &&
+          messages.length < 500) {
         final i = page.messages.length - 1 - skipped;
         final message = page.messages[i];
         final remaining = message.text.length - characters;
         final length = remaining < budget ? remaining : budget;
         final offset = remaining - length;
         if (length > 0) {
-          messages.add(SessionQueryMessage(index: start + i,
-            role: message.role, text: message.text.substring(offset, remaining),
-            startCharacter: offset));
+          messages.add(
+            SessionQueryMessage(
+              index: start + i,
+              role: message.role,
+              text: message.text.substring(offset, remaining),
+              startCharacter: offset,
+            ),
+          );
           budget -= length;
         }
         characters += length;
@@ -368,16 +394,24 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
         }
       }
       final next = skipped < page.messages.length
-          ? jsonEncode({'cursor': position?['cursor'], 'end': end,
-              'skipped': skipped, 'characters': characters,
-              'fingerprint': fingerprint})
-          : page.nextCursor == null ? null
-              : jsonEncode({'cursor': page.nextCursor, 'end': start});
+          ? jsonEncode({
+              'cursor': position?['cursor'],
+              'end': end,
+              'skipped': skipped,
+              'characters': characters,
+              'fingerprint': fingerprint,
+            })
+          : page.nextCursor == null
+          ? null
+          : jsonEncode({'cursor': page.nextCursor, 'end': start});
       return SessionQuerySnapshot(
-        targetId: targetId, title: thread.title, kernel: thread.kernel.label,
+        targetId: targetId,
+        title: thread.title,
+        kernel: thread.kernel.label,
         busy: thread.isOpen && thread.session.isStreaming,
         messages: List.unmodifiable(messages.reversed),
-        hasEarlierHistory: next != null, olderCursor: next,
+        hasEarlierHistory: next != null,
+        olderCursor: next,
       );
     }
 
@@ -402,15 +436,20 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
         break;
       }
       final available = 200000 - characters;
-      final bounded = text.length <= available ? text : text.substring(0, available);
+      final bounded = text.length <= available
+          ? text
+          : text.substring(0, available);
       truncated |= bounded.length < text.length;
       characters += bounded.length;
       messages.add(SessionQueryMessage(index: i, role: role, text: bounded));
     }
     return SessionQuerySnapshot(
-      targetId: targetId, title: thread.title, kernel: thread.kernel.label,
+      targetId: targetId,
+      title: thread.title,
+      kernel: thread.kernel.label,
       messages: List.unmodifiable(messages.reversed),
-      busy: session.isStreaming, hasEarlierHistory: truncated,
+      busy: session.isStreaming,
+      hasEarlierHistory: truncated,
       truncatedWindow: truncated,
     );
   }

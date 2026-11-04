@@ -64,37 +64,43 @@ void main() {
     session.dispose();
   });
 
-  test('apply wins over pending previews, persists once and prevents rollback', () async {
-    final themes = _Themes();
-    final gate = themes.gate = Completer<void>();
-    final session = IdeThemePreviewSession(themes);
-    final preview = session.select('a');
-    await Future<void>.delayed(Duration.zero);
-    final next = session.select('b');
-    final applied = session.apply();
-    expect(await session.apply(), isFalse);
-    gate.complete();
-    await Future.wait([preview, next]);
-    expect(await applied, isTrue);
-    await session.cancel();
-    expect(themes.persisted, ['b']);
-    expect(themes.colorThemeId, 'b');
-    session.dispose();
-  });
+  test(
+    'apply wins over pending previews, persists once and prevents rollback',
+    () async {
+      final themes = _Themes();
+      final gate = themes.gate = Completer<void>();
+      final session = IdeThemePreviewSession(themes);
+      final preview = session.select('a');
+      await Future<void>.delayed(Duration.zero);
+      final next = session.select('b');
+      final applied = session.apply();
+      expect(await session.apply(), isFalse);
+      gate.complete();
+      await Future.wait([preview, next]);
+      expect(await applied, isTrue);
+      await session.cancel();
+      expect(themes.persisted, ['b']);
+      expect(themes.colorThemeId, 'b');
+      session.dispose();
+    },
+  );
 
-  test('failed preview restores original without saving and remains usable', () async {
-    final themes = _Themes()..fails = 'bad';
-    final session = IdeThemePreviewSession(themes);
-    await session.select('bad');
-    expect(session.error, isA<StateError>());
-    expect(themes.colorThemeId, 'original');
-    expect(themes.persisted, isEmpty);
-    await session.select('good');
-    expect(session.error, isNull);
-    expect(await session.apply(), isTrue);
-    expect(themes.persisted, ['good']);
-    session.dispose();
-  });
+  test(
+    'failed preview restores original without saving and remains usable',
+    () async {
+      final themes = _Themes()..fails = 'bad';
+      final session = IdeThemePreviewSession(themes);
+      await session.select('bad');
+      expect(session.error, isA<StateError>());
+      expect(themes.colorThemeId, 'original');
+      expect(themes.persisted, isEmpty);
+      await session.select('good');
+      expect(session.error, isNull);
+      expect(await session.apply(), isTrue);
+      expect(themes.persisted, ['good']);
+      session.dispose();
+    },
+  );
 
   test('failed Apply stays open and can cancel', () async {
     final themes = _Themes();
@@ -108,16 +114,19 @@ void main() {
     session.dispose();
   });
 
-  test('completion after widget disposal never notifies disposed listeners', () async {
-    final themes = _Themes();
-    final gate = themes.gate = Completer<void>();
-    final session = IdeThemePreviewSession(themes);
-    final preview = session.select('a');
-    await Future<void>.delayed(Duration.zero);
-    final cancel = session.cancel();
-    session.dispose();
-    gate.complete();
-    await Future.wait([preview, cancel]);
-    expect(themes.colorThemeId, 'original');
-  });
+  test(
+    'completion after widget disposal never notifies disposed listeners',
+    () async {
+      final themes = _Themes();
+      final gate = themes.gate = Completer<void>();
+      final session = IdeThemePreviewSession(themes);
+      final preview = session.select('a');
+      await Future<void>.delayed(Duration.zero);
+      final cancel = session.cancel();
+      session.dispose();
+      gate.complete();
+      await Future.wait([preview, cancel]);
+      expect(themes.colorThemeId, 'original');
+    },
+  );
 }

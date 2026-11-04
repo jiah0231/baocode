@@ -100,19 +100,33 @@ void main() {
       Color.alphaBlend(AppColors.removedBackground, AppColors.code),
     ]) {
       expect(_contrast(AppColors.text, surface), greaterThanOrEqualTo(4.5));
-      expect(_contrast(AppColors.textMuted, surface), greaterThanOrEqualTo(4.5));
+      expect(
+        _contrast(AppColors.textMuted, surface),
+        greaterThanOrEqualTo(4.5),
+      );
     }
     expect(AppColors.addedBackground, AppColors.added.withValues(alpha: .12));
-    expect(AppColors.removedBackground, AppColors.removed.withValues(alpha: .12));
+    expect(
+      AppColors.removedBackground,
+      AppColors.removed.withValues(alpha: .12),
+    );
     expect(AppColors.textSelection.a, lessThanOrEqualTo(.3));
-    final selectedText = Color.alphaBlend(AppColors.textSelection, AppColors.text);
-    final selectedPage = Color.alphaBlend(AppColors.textSelection, AppColors.code);
+    final selectedText = Color.alphaBlend(
+      AppColors.textSelection,
+      AppColors.text,
+    );
+    final selectedPage = Color.alphaBlend(
+      AppColors.textSelection,
+      AppColors.code,
+    );
     expect(_contrast(selectedText, selectedPage), greaterThanOrEqualTo(4.5));
     final theme = buildAppTheme();
     expect(theme.colorScheme.primary, AppColors.accent);
     expect(theme.colorScheme.onPrimary, AppColors.code);
-    expect(_contrast(theme.colorScheme.primary, theme.colorScheme.onPrimary),
-        greaterThanOrEqualTo(4.5));
+    expect(
+      _contrast(theme.colorScheme.primary, theme.colorScheme.onPrimary),
+      greaterThanOrEqualTo(4.5),
+    );
     expect(theme.colorScheme.onSurface, AppColors.text);
     expect(theme.textSelectionTheme.selectionColor, AppColors.textSelection);
   });
@@ -126,75 +140,93 @@ void main() {
     expect(AppColors.partBorder.a, 0);
     expect(AppColors.bubbleBorder().a, 0);
     expect(AppColors.textSelection, const Color(0x20363A4F));
-    expect(AppColors.bubbleFill,
-        Color.alphaBlend(const Color(0x20363A4F), AppColors.code));
+    expect(
+      AppColors.bubbleFill,
+      Color.alphaBlend(const Color(0x20363A4F), AppColors.code),
+    );
   });
 
-  test('themes without Pebrel tokens retain VS Code semantics and Material seed', () {
-    _install({
-      'sideBar.background': '#102030',
-      'editor.background': '#203040',
-      'editor.foreground': '#DDEEFF',
-      'editorWidget.background': '#304050',
-      'menu.background': '#405060',
-      'panel.border': '#506070',
-      'sideBar.border': '#708090',
-      'input.border': '#8090A0',
-      'agentsChatInput.background': '#10203080',
-      'foreground': '#AABBCC',
-      'settings.headerForeground': '#BBCCDD',
-      'descriptionForeground': '#8899AA',
-      'disabledForeground': '#667788',
-      'textLink.foreground': '#90A0B0',
-      'list.hoverBackground': '#112233',
-      'editor.selectionBackground': '#AABBCC40',
-      'gitDecoration.addedResourceForeground': '#88CC88',
-      'gitDecoration.deletedResourceForeground': '#CC8888',
-      'diffEditor.insertedLineBackground': '#00FF0020',
-      'diffEditor.removedLineBackground': '#FF000020',
-      'editorWarning.foreground': '#CCCC88',
-      'button.background': '#789ABC',
-    });
-    final colors = themeColors;
-    final direct = <Color, String>{
-      AppColors.background: 'sideBar.background',
-      AppColors.code: 'editor.background',
-      AppColors.surface: 'editorWidget.background',
-      AppColors.surfaceRaised: 'menu.background',
-      AppColors.border: 'panel.border',
-      AppColors.partBorder: 'sideBar.border',
-      AppColors.borderStrong: 'input.border',
-      AppColors.text: 'foreground',
-      AppColors.textPrimary: 'settings.headerForeground',
-      AppColors.textMuted: 'descriptionForeground',
-      AppColors.textFaint: 'disabledForeground',
-      AppColors.accent: 'textLink.foreground',
-      AppColors.hover: 'list.hoverBackground',
-      AppColors.added: 'gitDecoration.addedResourceForeground',
-      AppColors.removed: 'gitDecoration.deletedResourceForeground',
-      AppColors.addedBackground: 'diffEditor.insertedLineBackground',
-      AppColors.removedBackground: 'diffEditor.removedLineBackground',
-      AppColors.caution: 'editorWarning.foreground',
-    };
-    for (final entry in direct.entries) {
-      expect(entry.key, colors[entry.value], reason: entry.value);
-    }
-    final fill = Color.alphaBlend(colors['agentsChatInput.background'], AppColors.code);
-    final border = Color.lerp(
-      Color.lerp(fill, colors['editor.foreground'].withValues(alpha: 1), .12),
-      AppColors.accent.withValues(alpha: 1),
-      .03,
-    )!;
-    expect(AppColors.bubbleFill, fill);
-    expect(AppColors.bubbleBorder(), border);
-    expect(AppColors.bubbleBorder(focused: true),
-        Color.lerp(border, AppColors.accent.withValues(alpha: 1), .2));
-    expect(AppColors.textSelection,
-        seeThroughSelection(colors['editor.selectionBackground'], AppColors.code));
-    expect(buildAppTheme().colorScheme, material.ColorScheme.fromSeed(
-      seedColor: colors['button.background'],
-      brightness: Brightness.dark,
-      surface: AppColors.surface,
-    ));
-  });
+  test(
+    'themes without Pebrel tokens retain VS Code semantics and Material seed',
+    () {
+      _install({
+        'sideBar.background': '#102030',
+        'editor.background': '#203040',
+        'editor.foreground': '#DDEEFF',
+        'editorWidget.background': '#304050',
+        'menu.background': '#405060',
+        'panel.border': '#506070',
+        'sideBar.border': '#708090',
+        'input.border': '#8090A0',
+        'agentsChatInput.background': '#10203080',
+        'foreground': '#AABBCC',
+        'settings.headerForeground': '#BBCCDD',
+        'descriptionForeground': '#8899AA',
+        'disabledForeground': '#667788',
+        'textLink.foreground': '#90A0B0',
+        'list.hoverBackground': '#112233',
+        'editor.selectionBackground': '#AABBCC40',
+        'gitDecoration.addedResourceForeground': '#88CC88',
+        'gitDecoration.deletedResourceForeground': '#CC8888',
+        'diffEditor.insertedLineBackground': '#00FF0020',
+        'diffEditor.removedLineBackground': '#FF000020',
+        'editorWarning.foreground': '#CCCC88',
+        'button.background': '#789ABC',
+      });
+      final colors = themeColors;
+      final direct = <Color, String>{
+        AppColors.background: 'sideBar.background',
+        AppColors.code: 'editor.background',
+        AppColors.surface: 'editorWidget.background',
+        AppColors.surfaceRaised: 'menu.background',
+        AppColors.border: 'panel.border',
+        AppColors.partBorder: 'sideBar.border',
+        AppColors.borderStrong: 'input.border',
+        AppColors.text: 'foreground',
+        AppColors.textPrimary: 'settings.headerForeground',
+        AppColors.textMuted: 'descriptionForeground',
+        AppColors.textFaint: 'disabledForeground',
+        AppColors.accent: 'textLink.foreground',
+        AppColors.hover: 'list.hoverBackground',
+        AppColors.added: 'gitDecoration.addedResourceForeground',
+        AppColors.removed: 'gitDecoration.deletedResourceForeground',
+        AppColors.addedBackground: 'diffEditor.insertedLineBackground',
+        AppColors.removedBackground: 'diffEditor.removedLineBackground',
+        AppColors.caution: 'editorWarning.foreground',
+      };
+      for (final entry in direct.entries) {
+        expect(entry.key, colors[entry.value], reason: entry.value);
+      }
+      final fill = Color.alphaBlend(
+        colors['agentsChatInput.background'],
+        AppColors.code,
+      );
+      final border = Color.lerp(
+        Color.lerp(fill, colors['editor.foreground'].withValues(alpha: 1), .12),
+        AppColors.accent.withValues(alpha: 1),
+        .03,
+      )!;
+      expect(AppColors.bubbleFill, fill);
+      expect(AppColors.bubbleBorder(), border);
+      expect(
+        AppColors.bubbleBorder(focused: true),
+        Color.lerp(border, AppColors.accent.withValues(alpha: 1), .2),
+      );
+      expect(
+        AppColors.textSelection,
+        seeThroughSelection(
+          colors['editor.selectionBackground'],
+          AppColors.code,
+        ),
+      );
+      expect(
+        buildAppTheme().colorScheme,
+        material.ColorScheme.fromSeed(
+          seedColor: colors['button.background'],
+          brightness: Brightness.dark,
+          surface: AppColors.surface,
+        ),
+      );
+    },
+  );
 }

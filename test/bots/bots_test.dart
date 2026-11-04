@@ -231,8 +231,10 @@ void main() {
       expect(restricted, isNot(contains('You can work on the computer')));
       expect(restricted, contains('Direct web search is disabled'));
       expect(BotPermissions.tools(codex.copyWith(chatOnly: false)), isNull);
-      final legacy = BotFiles.read('/bots/old',
-          '---\nname: Old\nkernel: codex\n---\n')!;
+      final legacy = BotFiles.read(
+        '/bots/old',
+        '---\nname: Old\nkernel: codex\n---\n',
+      )!;
       expect(legacy.chatOnly, isTrue);
       final optedIn = legacy.copyWith(chatOnly: false);
       final optedCard = BotFiles.cardText(optedIn);
@@ -460,18 +462,25 @@ void main() {
           folders.files[p.join(selected.folder, 'BOT.md')]!,
         );
         expect(BotFiles.read(selected.folder, card)!.kernel, 'codex');
-        expect(workspace.agentSetup!(selected.folder)!.workspace().tools,
-            isNotNull);
-        final optedIn = bots.save(id: selected.id, name: selected.name,
-            identity: selected.identity, abilities: selected.abilities,
-            chatOnly: false);
+        expect(
+          workspace.agentSetup!(selected.folder)!.workspace().tools,
+          isNotNull,
+        );
+        final optedIn = bots.save(
+          id: selected.id,
+          name: selected.name,
+          identity: selected.identity,
+          abilities: selected.abilities,
+          chatOnly: false,
+        );
         final setup = workspace.agentSetup!(optedIn.folder)!;
         expect(setup.settings['permission'], 'workspace-write');
         expect(setup.workspace().tools, isNull);
         expect(setup.workspace().approvesAll, isFalse);
         expect(setup.workspace().userServers, isTrue);
-        final optedCard = utf8.decode(folders.files[
-            p.join(optedIn.folder, 'BOT.md')]!);
+        final optedCard = utf8.decode(
+          folders.files[p.join(optedIn.folder, 'BOT.md')]!,
+        );
         expect(BotFiles.read(optedIn.folder, optedCard)!.chatOnly, isFalse);
         bots.setKernel(selected, 'claude-code');
         expect(bots.threadFor(bots.bots.single), same(oldThread));
@@ -603,19 +612,33 @@ void main() {
         expect(its, isNot(contains('session_query')));
         expect(bots.offersTool(assistant.folder, 'session_query'), isFalse);
         final botDenied = await ClaudeSdkTools.handle({
-          'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call',
-          'params': {'name': 'session_query', 'arguments': {
-            'session_id': 'claude-code:target', 'query': 'Show history',
-          }},
+          'jsonrpc': '2.0',
+          'id': 3,
+          'method': 'tools/call',
+          'params': {
+            'name': 'session_query',
+            'arguments': {
+              'session_id': 'claude-code:target',
+              'query': 'Show history',
+            },
+          },
         }, ClaudeSdkCall(cwd: assistant.folder, sessionId: 'bot-source'));
         expect((botDenied['result'] as Map)['isError'], isTrue);
-        expect((botDenied['result'] as Map)['content'].toString(),
-            contains('No tool session_query.'));
+        expect(
+          (botDenied['result'] as Map)['content'].toString(),
+          contains('No tool session_query.'),
+        );
         final denied = await ClaudeSdkTools.handle({
-          'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call',
-          'params': {'name': 'session_query', 'arguments': {
-            'capability': 'not-selected', 'session_id': 'claude-code:target',
-          }},
+          'jsonrpc': '2.0',
+          'id': 2,
+          'method': 'tools/call',
+          'params': {
+            'name': 'session_query',
+            'arguments': {
+              'capability': 'not-selected',
+              'session_id': 'claude-code:target',
+            },
+          },
         }, ClaudeSdkCall(cwd: app, sessionId: 'source'));
         expect((denied['result'] as Map)['isError'], isTrue);
 
@@ -1348,13 +1371,17 @@ void main() {
         abilities: current.abilities,
         chatOnly: true,
       );
-      write(cardPath, read(cardPath).replaceFirst('chat_only: true',
-          'chat_only: false'));
+      write(
+        cardPath,
+        read(cardPath).replaceFirst('chat_only: true', 'chat_only: false'),
+      );
       bots.reload(by: restricted);
       expect(bots.byId(self.id)!.chatOnly, isTrue);
       expect(read(cardPath), contains('chat_only: true'));
-      write(cardPath, read(cardPath).replaceFirst('chat_only: true',
-          'chat_only: false'));
+      write(
+        cardPath,
+        read(cardPath).replaceFirst('chat_only: true', 'chat_only: false'),
+      );
       bots.reload();
       expect(bots.byId(self.id)!.chatOnly, isFalse);
     });

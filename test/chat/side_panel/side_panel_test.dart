@@ -322,10 +322,12 @@ void main() {
       final shown = <int>[];
       await _pumpChat(tester, showBrowserTab: shown.add);
       final scope = tester.widget<FileOpenScope>(
-        find.descendant(
-          of: find.byType(ChatScreen),
-          matching: find.byType(FileOpenScope),
-        ).first,
+        find
+            .descendant(
+              of: find.byType(ChatScreen),
+              matching: find.byType(FileOpenScope),
+            )
+            .first,
       );
       expect(scope.onShowBrowserTab, isNotNull);
       scope.onShowBrowserTab!(17);

@@ -10,9 +10,21 @@ class _Themes implements IdeColorThemeController {
   String colorThemeId = 'dark';
   @override
   final colorThemes = <IdeColorThemeEntry>[
-    const IdeColorThemeEntry(id: 'dark', label: 'Dark garden', type: ColorScheme.dark),
-    const IdeColorThemeEntry(id: 'light', label: 'Light garden', type: ColorScheme.light),
-    const IdeColorThemeEntry(id: 'contrast', label: 'High contrast', type: ColorScheme.highContrastDark),
+    const IdeColorThemeEntry(
+      id: 'dark',
+      label: 'Dark garden',
+      type: ColorScheme.dark,
+    ),
+    const IdeColorThemeEntry(
+      id: 'light',
+      label: 'Light garden',
+      type: ColorScheme.light,
+    ),
+    const IdeColorThemeEntry(
+      id: 'contrast',
+      label: 'High contrast',
+      type: ColorScheme.highContrastDark,
+    ),
   ];
   final saved = <String>[];
   @override
@@ -22,40 +34,60 @@ class _Themes implements IdeColorThemeController {
   }
 }
 
-Future<void> _open(WidgetTester tester, _Themes themes, {Future<String?> Function()? importTheme}) async {
-  await tester.pumpWidget(MaterialApp(home: Builder(builder: (context) => Center(child: GestureDetector(
-    onTap: () => showIdeColorThemeGallery(context, themes, importTheme: importTheme),
-    child: const Text('Open gallery'),
-  )))));
+Future<void> _open(
+  WidgetTester tester,
+  _Themes themes, {
+  Future<String?> Function()? importTheme,
+}) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Builder(
+        builder: (context) => Center(
+          child: GestureDetector(
+            onTap: () => showIdeColorThemeGallery(
+              context,
+              themes,
+              importTheme: importTheme,
+            ),
+            child: const Text('Open gallery'),
+          ),
+        ),
+      ),
+    ),
+  );
   await tester.tap(find.text('Open gallery'));
   await tester.pumpAndSettle();
 }
 
 void main() {
-  testWidgets('filters keep high-contrast themes and Escape rolls back preview', (tester) async {
+  testWidgets(
+    'filters keep high-contrast themes and Escape rolls back preview',
+    (tester) async {
+      final themes = _Themes();
+      await _open(tester, themes);
+      expect(find.text('Select to preview'), findsNWidgets(3));
+      await tester.tap(find.text('Light'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('theme-card-light')), findsOneWidget);
+      expect(find.byKey(const ValueKey('theme-card-dark')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('theme-card-light')));
+      await tester.pumpAndSettle();
+      expect(themes.colorThemeId, 'light');
+      await tester.tap(find.text('Dark'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('theme-card-contrast')), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byType(IdeColorThemeGallery), findsNothing);
+      expect(themes.colorThemeId, 'dark');
+      expect(themes.saved, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
-    final themes = _Themes();
-    await _open(tester, themes);
-    expect(find.text('Select to preview'), findsNWidgets(3));
-    await tester.tap(find.text('Light'));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('theme-card-light')), findsOneWidget);
-    expect(find.byKey(const ValueKey('theme-card-dark')), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('theme-card-light')));
-    await tester.pumpAndSettle();
-    expect(themes.colorThemeId, 'light');
-    await tester.tap(find.text('Dark'));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('theme-card-contrast')), findsOneWidget);
-    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-    await tester.pumpAndSettle();
-    expect(find.byType(IdeColorThemeGallery), findsNothing);
-    expect(themes.colorThemeId, 'dark');
-    expect(themes.saved, isEmpty);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('Apply saves chosen theme and reopening Cancel preserves it', (tester) async {
+  testWidgets('Apply saves chosen theme and reopening Cancel preserves it', (
+    tester,
+  ) async {
     final themes = _Themes();
     await _open(tester, themes);
     await tester.tap(find.byKey(const ValueKey('theme-card-light')));
@@ -73,12 +105,24 @@ void main() {
     expect(themes.saved, ['light']);
   });
 
-  testWidgets('custom import is selected for preview without saving', (tester) async {
+  testWidgets('custom import is selected for preview without saving', (
+    tester,
+  ) async {
     final themes = _Themes();
-    await _open(tester, themes, importTheme: () async {
-      themes.colorThemes.add(const IdeColorThemeEntry(id: 'custom', label: 'My palette', type: ColorScheme.dark));
-      return 'custom';
-    });
+    await _open(
+      tester,
+      themes,
+      importTheme: () async {
+        themes.colorThemes.add(
+          const IdeColorThemeEntry(
+            id: 'custom',
+            label: 'My palette',
+            type: ColorScheme.dark,
+          ),
+        );
+        return 'custom';
+      },
+    );
     await tester.tap(find.text('＋ Import Pebrel JSON'));
     await tester.pumpAndSettle();
     expect(themes.colorThemeId, 'custom');

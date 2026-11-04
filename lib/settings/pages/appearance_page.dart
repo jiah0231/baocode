@@ -32,7 +32,8 @@ import '../../platform/event_log.dart' show appEvent;
 import '../../theme/app_theme.dart';
 import '../../theme/code_font.dart';
 import '../../theme/window_blur.dart';
-import '../../theme/workbench_theme.dart' show ThemeSettingDefaults, WorkbenchThemeService;
+import '../../theme/workbench_theme.dart'
+    show ThemeSettingDefaults, WorkbenchThemeService;
 import '../user_settings.dart';
 import 'settings_dropdown.dart';
 import 'settings_widgets.dart';
@@ -469,24 +470,36 @@ class AppearanceSettingsPage extends StatelessWidget {
                   ),
                 ),
                 SettingsRow(
-                  label: l10n.localeName.startsWith('zh') ? '主题画廊' : 'Theme gallery',
+                  label: l10n.localeName.startsWith('zh')
+                      ? '主题画廊'
+                      : 'Theme gallery',
                   description: l10n.localeName.startsWith('zh')
                       ? '配色卡片、实时预览与自定义主题导入。'
                       : 'Palette cards, live previews and custom theme imports.',
                   trailing: IdeButton(
-                    label: l10n.localeName.startsWith('zh') ? '浏览主题…' : 'Browse themes…',
+                    label: l10n.localeName.startsWith('zh')
+                        ? '浏览主题…'
+                        : 'Browse themes…',
                     secondary: true,
-                    onPressed: () => unawaited(showIdeColorThemeGallery(
-                      context,
-                      themes,
-                      importTheme: themes is WorkbenchThemeService && WindowControls.canPickFiles
-                          ? () async {
-                              final files = await WindowControls.pickOpenFiles(multiple: false);
-                              if (files.isEmpty) return null;
-                              return (themes as WorkbenchThemeService).importCustomThemeFile(File(files.single));
-                            }
-                          : null,
-                    )),
+                    onPressed: () => unawaited(
+                      showIdeColorThemeGallery(
+                        context,
+                        themes,
+                        importTheme:
+                            themes is WorkbenchThemeService &&
+                                WindowControls.canPickFiles
+                            ? () async {
+                                final files =
+                                    await WindowControls.pickOpenFiles(
+                                      multiple: false,
+                                    );
+                                if (files.isEmpty) return null;
+                                return (themes as WorkbenchThemeService)
+                                    .importCustomThemeFile(File(files.single));
+                              }
+                            : null,
+                      ),
+                    ),
                   ),
                 ),
                 SettingsRow(

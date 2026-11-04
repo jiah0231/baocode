@@ -9675,15 +9675,6 @@ abstract class AppLocalizations {
   /// **'Path'**
   String get claudePathSetting;
 
-  /// Local Codex CLI settings.
-  String get codexPathSettingDescription;
-
-  /// Local Codex CLI settings.
-  String get codexPathMissing;
-
-  /// Local Codex CLI settings.
-  String get codexPathRefresh;
-
   /// No description provided for @claudePathSettingDescription.
   ///
   /// In en, this message translates to:
@@ -21454,6 +21445,108 @@ abstract class AppLocalizations {
   /// **'Listening on port {port}'**
   String mobileStatusListening(int port);
 
+  /// No description provided for @codexPathSettingDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Absolute path to the local Codex CLI (codex.exe or codex.cmd on Windows). Leave empty to find it on PATH. Applies to new local sessions and history requests, not SSH hosts. Nothing is downloaded automatically. (codex.path)'**
+  String get codexPathSettingDescription;
+
+  /// No description provided for @codexPathMissing.
+  ///
+  /// In en, this message translates to:
+  /// **'Codex was not found. Install it with npm install -g @openai/codex, or choose its executable above.'**
+  String get codexPathMissing;
+
+  /// No description provided for @codexPathRefresh.
+  ///
+  /// In en, this message translates to:
+  /// **'Check again'**
+  String get codexPathRefresh;
+
+  /// No description provided for @codexInstallTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Managed Codex CLI'**
+  String get codexInstallTitle;
+
+  /// No description provided for @codexInstallDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Install or update an official Codex release in BaoCode’s data folder. Other installations, running sessions and SSH hosts are unchanged.'**
+  String get codexInstallDescription;
+
+  /// No description provided for @codexInstallAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Install / update…'**
+  String get codexInstallAction;
+
+  /// No description provided for @codexInstallBusy.
+  ///
+  /// In en, this message translates to:
+  /// **'Working…'**
+  String get codexInstallBusy;
+
+  /// No description provided for @codexInstallChecking.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking the latest official release…'**
+  String get codexInstallChecking;
+
+  /// No description provided for @codexInstallConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Install and use this Codex release?'**
+  String get codexInstallConfirm;
+
+  /// No description provided for @codexInstallConfirmDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Download this package from OpenAI’s GitHub releases, verify its SHA-256, extract it into BaoCode’s data folder, and check its version. On success, switch new local sessions to this executable. Existing versions and system PATH are not changed.'**
+  String get codexInstallConfirmDetail;
+
+  /// No description provided for @codexInstallProceed.
+  ///
+  /// In en, this message translates to:
+  /// **'Install and use'**
+  String get codexInstallProceed;
+
+  /// No description provided for @codexInstallDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Installed and selected for new local sessions.'**
+  String get codexInstallDone;
+
+  /// No description provided for @codexInstallFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Codex installation failed. The selected executable was not changed.'**
+  String get codexInstallFailed;
+
+  /// No description provided for @botsBackendTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Bot backends'**
+  String get botsBackendTitle;
+
+  /// No description provided for @botsBackendDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose each bot’s backend while idle. Each backend keeps its own conversation; switching clears the model choice, not history. Codex starts in chat-only mode with gated tools and a read-only sandbox. Turn off Chat Only on the phone to allow workspace writes. Permission requests need an approval-capable client; otherwise cancel and switch back to Chat Only.'**
+  String get botsBackendDescription;
+
+  /// No description provided for @botsBackendBusy.
+  ///
+  /// In en, this message translates to:
+  /// **'Wait for this bot to finish before switching.'**
+  String get botsBackendBusy;
+
+  /// No description provided for @codexCustomizeNotice.
+  ///
+  /// In en, this message translates to:
+  /// **'Native Codex files and settings; commands are BaoCode prompts. Config edits apply to new sessions and depend on the installed Codex version. Project config, hooks and execution rules require a trusted project.'**
+  String get codexCustomizeNotice;
+
   /// No description provided for @autoResetCreditsToggle.
   ///
   /// In en, this message translates to:
@@ -22144,48 +22237,6 @@ abstract class AppLocalizations {
   /// **'Click again to unpick: back to the context as it is now'**
   String get ustatContextUnpickHint;
 
-  /// Managed Codex CLI
-  String get codexInstallTitle;
-
-  /// Install or update an official Codex release in BaoCode’s data folder. Other installations, running sessions and SSH hosts are unchanged.
-  String get codexInstallDescription;
-
-  /// Install / update…
-  String get codexInstallAction;
-
-  /// Working…
-  String get codexInstallBusy;
-
-  /// Checking the latest official release…
-  String get codexInstallChecking;
-
-  /// Install and use this Codex release?
-  String get codexInstallConfirm;
-
-  /// Download this package from OpenAI’s GitHub releases, verify its SHA-256, extract it into BaoCode’s data folder, and check its version. On success, switch new local sessions to this executable. Existing versions and system PATH are not changed.
-  String get codexInstallConfirmDetail;
-
-  /// Install and use
-  String get codexInstallProceed;
-
-  /// Installed and selected for new local sessions.
-  String get codexInstallDone;
-
-  /// Codex installation failed. The selected executable was not changed.
-  String get codexInstallFailed;
-
-  /// Bot backends
-  String get botsBackendTitle;
-
-  /// Choose each bot’s backend while idle. Each backend keeps its own conversation; switching clears the model choice, not history. Codex starts in chat-only mode with gated tools and a read-only sandbox. Turn off Chat Only on the phone to allow workspace writes. Permission requests need an approval-capable client; otherwise cancel and switch back to Chat Only.
-  String get botsBackendDescription;
-
-  /// Wait for this bot to finish before switching.
-  String get botsBackendBusy;
-
-  /// Native Codex files and settings; commands are BaoCode prompts. Config edits apply to new sessions and depend on the installed Codex version. Project config, hooks and execution rules require a trusted project.
-  String get codexCustomizeNotice;
-
   /// No description provided for @localRunTitle.
   ///
   /// In en, this message translates to:
@@ -22305,34 +22356,60 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Path copied'**
   String get branchBarPathCopied;
-  /// The restored browser panel.
+
+  /// The side panel's browser page, there once the browser plugin is installed.
+  ///
+  /// In en, this message translates to:
+  /// **'Browser'**
   String get sidePanelBrowser;
 
-  /// The restored browser panel.
+  /// No description provided for @browserNotConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'No browser is connected. Add BaoCode\'s extension to Chrome (or Edge, Brave, Arc) and agents can use the tabs you share with them.'**
   String get browserNotConnected;
 
-  /// The restored browser panel.
+  /// No description provided for @browserNoSharedTab.
+  ///
+  /// In en, this message translates to:
+  /// **'No tab is shared yet. Ask an agent to open a page, or click BaoCode in the browser toolbar to share the tab in front.'**
   String get browserNoSharedTab;
 
-  /// The restored browser panel.
+  /// No description provided for @browserSharedTabs.
+  ///
+  /// In en, this message translates to:
+  /// **'Shared Tabs'**
   String get browserSharedTabs;
 
-  /// The restored browser panel.
+  /// No description provided for @browserReload.
+  ///
+  /// In en, this message translates to:
+  /// **'Reload'**
   String get browserReload;
 
-  /// The restored browser panel.
+  /// No description provided for @browserShowInBrowser.
+  ///
+  /// In en, this message translates to:
+  /// **'Show in Browser'**
   String get browserShowInBrowser;
 
-  /// The restored browser panel.
+  /// No description provided for @browserDetached.
+  ///
+  /// In en, this message translates to:
+  /// **'The browser stopped letting BaoCode see this tab.'**
   String get browserDetached;
 
-  /// The restored browser panel.
+  /// No description provided for @browserReconnect.
+  ///
+  /// In en, this message translates to:
+  /// **'Reconnect'**
   String get browserReconnect;
 
-  /// The restored browser panel.
+  /// No description provided for @browserShowInPanel.
+  ///
+  /// In en, this message translates to:
+  /// **'Show in Side Panel'**
   String get browserShowInPanel;
-
-
 }
 
 class _AppLocalizationsDelegate

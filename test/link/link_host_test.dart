@@ -141,36 +141,36 @@ void main() {
     expect(platform.boundRelays, defaultLinkRelays);
   });
 
-  test('direct only: no relay kept, told or bound to; its own port alone',
-      () async {
-    await host.setEnabled(true);
-    await host.setRelayMode(LinkRelayMode.direct);
-    expect(host.relays, isEmpty);
-    expect(platform.boundRelays, isEmpty);
-    expect(platform.boundStrictPort, isTrue);
-    expect(platform.kept['relayMode'], 'direct');
+  test(
+    'direct only: no relay kept, told or bound to; its own port alone',
+    () async {
+      await host.setEnabled(true);
+      await host.setRelayMode(LinkRelayMode.direct);
+      expect(host.relays, isEmpty);
+      expect(platform.boundRelays, isEmpty);
+      expect(platform.boundStrictPort, isTrue);
+      expect(platform.kept['relayMode'], 'direct');
 
-    final offer = (await host.beginPairing())!;
-    expect(offer.relays, isEmpty);
-    expect(offer.direct, isTrue);
-    final parsed = PairingOffer.parse(offer.uri);
-    expect(parsed.direct, isTrue);
-    expect(parsed.relays, isEmpty);
+      final offer = (await host.beginPairing())!;
+      expect(offer.relays, isEmpty);
+      expect(offer.direct, isTrue);
+      final parsed = PairingOffer.parse(offer.uri);
+      expect(parsed.direct, isTrue);
+      expect(parsed.relays, isEmpty);
 
-    final peer = await connect(phone);
-    final hello =
-        await peer.call(LinkMethods.hello, {
-              'name': 'iPhone',
-              'token': encodeKey(offer.token),
-            })
-            as Map;
-    final device = DeviceInfo.fromJson(
-      hello['device']! as Map<String, Object?>,
-    );
-    expect(device.direct, isTrue);
-    expect(device.relays, isEmpty);
-    await peer.close();
-  });
+      final peer = await connect(phone);
+      final hello = await peer.call(LinkMethods.hello, {
+        'name': 'iPhone',
+        'token': encodeKey(offer.token),
+      }) as Map;
+      final device = DeviceInfo.fromJson(
+        hello['device']! as Map<String, Object?>,
+      );
+      expect(device.direct, isTrue);
+      expect(device.relays, isEmpty);
+      await peer.close();
+    },
+  );
 
   test('the direct port: kept, and bound to alone', () async {
     await host.setEnabled(true);
@@ -338,28 +338,39 @@ void main() {
     },
   );
 
-  test('an expired offer accepts neither its token nor nearby requests', () async {
-    host.dispose();
-    host = LinkHost(
-      workspace: workspace,
-      platform: platform,
-      offerLifetime: Duration.zero,
-    );
-    await host.load();
-    final offer = (await host.beginPairing())!;
-    final peer = await connect(phone);
-    addTearDown(peer.close);
-    await expectLater(
-      peer.call(LinkMethods.hello, {'token': encodeKey(offer.token)}),
-      throwsA(isA<LinkRemoteException>().having((e) => e.code, 'code', 'badToken')),
-    );
-    await expectLater(
-      peer.call(LinkMethods.hello, {'request': true}),
-      throwsA(isA<LinkRemoteException>().having((e) => e.code, 'code', 'notPairing')),
-    );
-    expect(host.phones, isEmpty);
-    expect(host.pending, isNull);
-  });
+  test(
+    'an expired offer accepts neither its token nor nearby requests',
+    () async {
+      host.dispose();
+      host = LinkHost(
+        workspace: workspace,
+        platform: platform,
+        offerLifetime: Duration.zero,
+      );
+      await host.load();
+      final offer = (await host.beginPairing())!;
+      final peer = await connect(phone);
+      addTearDown(peer.close);
+      await expectLater(
+        peer.call(LinkMethods.hello, {'token': encodeKey(offer.token)}),
+        throwsA(
+          isA<LinkRemoteException>().having((e) => e.code, 'code', 'badToken'),
+        ),
+      );
+      await expectLater(
+        peer.call(LinkMethods.hello, {'request': true}),
+        throwsA(
+          isA<LinkRemoteException>().having(
+            (e) => e.code,
+            'code',
+            'notPairing',
+          ),
+        ),
+      );
+      expect(host.phones, isEmpty);
+      expect(host.pending, isNull);
+    },
+  );
 
   test('a phone disconnected while comparing codes is not kept', () async {
     final offer = (await host.beginPairing())!;

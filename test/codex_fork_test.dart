@@ -225,9 +225,8 @@ class _Harness {
   final allServers = <_Server>[];
   Iterable<Map<String, Object?>> requests(String method) =>
       allServers.expand((server) => server.requests(method));
-  Iterable<_Server> get forkServers => allServers.where(
-    (server) => server.requests('thread/fork').isNotEmpty,
-  );
+  Iterable<_Server> get forkServers =>
+      allServers.where((server) => server.requests('thread/fork').isNotEmpty);
   final kernels = <CodexKernel>[];
   late final KernelDescriptor descriptor;
   // A Workspace can also create a default empty conversation. Resolve the
@@ -573,8 +572,7 @@ void main() {
       });
       expect((await fork)?.id, 'forked');
       expect(
-        (h.requests('thread/fork').single['params']
-            as Map)['beforeTurnId'],
+        (h.requests('thread/fork').single['params'] as Map)['beforeTurnId'],
         'server-turn-1',
       );
       expect(session.sessionId, 'source');
@@ -649,8 +647,7 @@ void main() {
       if (version == '0.167.0') {
         expect(fork?.id, 'forked');
         expect(
-          (h.requests('thread/fork').single['params']
-              as Map)['beforeTurnId'],
+          (h.requests('thread/fork').single['params'] as Map)['beforeTurnId'],
           'server-turn-1',
         );
       } else {
@@ -712,36 +709,39 @@ void main() {
     },
   );
 
-  test('/fork waits for lazy Codex history before sending its message', () async {
-    final h = _Harness();
-    final workspace = Workspace(
-      kernels: [h.descriptor],
-      preferences: MemoryPreferenceStore(),
-    );
-    addTearDown(workspace.dispose);
-    await workspace.load();
-    final source = workspace.threads.firstWhere((t) => t.id == 'source');
-    expect(await source.session.prepareConversation(), isTrue);
-    h.configureServer = (server) => server.holdResume = true;
-    final forked = await workspace.fork(
-      source,
-      message: const ComposerMessage(text: 'Continue in the copy'),
-    );
-    expect(forked, isNotNull);
-    await pumpEventQueue(times: 100);
-    final child = h.resumed('forked');
-    expect(child.pendingResume, isNotNull);
-    expect(child.requests('turn/start'), isEmpty);
-    expect(_items(forked!.session).whereType<UserMessageItem>(), isEmpty);
-    child.releaseResume();
-    await pumpEventQueue(times: 100);
-    expect(child.requests('turn/start'), hasLength(1));
-    expect(
-      _items(forked.session).whereType<UserMessageItem>().map((i) => i.text),
-      ['Kept question', 'Continue in the copy'],
-    );
-    expect(h.resumed('source').requests('turn/start'), isEmpty);
-  });
+  test(
+    '/fork waits for lazy Codex history before sending its message',
+    () async {
+      final h = _Harness();
+      final workspace = Workspace(
+        kernels: [h.descriptor],
+        preferences: MemoryPreferenceStore(),
+      );
+      addTearDown(workspace.dispose);
+      await workspace.load();
+      final source = workspace.threads.firstWhere((t) => t.id == 'source');
+      expect(await source.session.prepareConversation(), isTrue);
+      h.configureServer = (server) => server.holdResume = true;
+      final forked = await workspace.fork(
+        source,
+        message: const ComposerMessage(text: 'Continue in the copy'),
+      );
+      expect(forked, isNotNull);
+      await pumpEventQueue(times: 100);
+      final child = h.resumed('forked');
+      expect(child.pendingResume, isNotNull);
+      expect(child.requests('turn/start'), isEmpty);
+      expect(_items(forked!.session).whereType<UserMessageItem>(), isEmpty);
+      child.releaseResume();
+      await pumpEventQueue(times: 100);
+      expect(child.requests('turn/start'), hasLength(1));
+      expect(
+        _items(forked.session).whereType<UserMessageItem>().map((i) => i.text),
+        ['Kept question', 'Continue in the copy'],
+      );
+      expect(h.resumed('source').requests('turn/start'), isEmpty);
+    },
+  );
 
   test('/fork does not send when lazy Codex history fails to load', () async {
     final h = _Harness();

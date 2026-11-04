@@ -12441,6 +12441,52 @@ class AppLocalizationsZh extends AppLocalizations {
   String get codexPathRefresh => '重新检查';
 
   @override
+  String get codexInstallTitle => '托管 Codex CLI';
+
+  @override
+  String get codexInstallDescription =>
+      '在 BaoCode 数据目录安装或更新官方 Codex 版本。不改变其他安装、正在运行的会话或 SSH 主机。';
+
+  @override
+  String get codexInstallAction => '安装 / 更新…';
+
+  @override
+  String get codexInstallBusy => '处理中…';
+
+  @override
+  String get codexInstallChecking => '正在检查最新官方版本…';
+
+  @override
+  String get codexInstallConfirm => '安装并使用此 Codex 版本？';
+
+  @override
+  String get codexInstallConfirmDetail =>
+      '从 OpenAI 的 GitHub 发布页下载此软件包，校验 SHA-256，解压到 BaoCode 数据目录并检查版本。成功后，新建本机会话将使用该可执行文件。不修改已有版本或系统 PATH。';
+
+  @override
+  String get codexInstallProceed => '安装并使用';
+
+  @override
+  String get codexInstallDone => '已安装并选为新建本机会话使用的版本。';
+
+  @override
+  String get codexInstallFailed => 'Codex 安装失败，未更改选中的可执行文件。';
+
+  @override
+  String get botsBackendTitle => '机器人内核';
+
+  @override
+  String get botsBackendDescription =>
+      '空闲时选择各机器人的内核。不同内核保留各自的对话；切换会清除模型选择，不会删除历史。Codex 默认仅聊天，使用受限工具和只读沙箱。在手机上关闭“仅聊天”后可写入工作区。权限请求需在支持审批的客户端确认；若无法确认，请取消任务并改回仅聊天。';
+
+  @override
+  String get botsBackendBusy => '请等待此机器人结束回复后切换。';
+
+  @override
+  String get codexCustomizeNotice =>
+      'Codex 原生文件与设置；命令是 BaoCode 提示词。配置编辑在新会话生效，功能取决于已安装的 Codex 版本。项目配置、hooks 和执行规则需要项目已受信任。';
+
+  @override
   String get autoResetCreditsToggle => '自动使用重置卡';
 
   @override
@@ -12868,52 +12914,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get ustatContextUnpickHint => '再次点击取消选中，回到当前上下文';
-
-  @override
-  String get codexInstallTitle => '托管 Codex CLI';
-
-  @override
-  String get codexInstallDescription =>
-      '在 BaoCode 数据目录安装或更新官方 Codex 版本。不改变其他安装、正在运行的会话或 SSH 主机。';
-
-  @override
-  String get codexInstallAction => '安装 / 更新…';
-
-  @override
-  String get codexInstallBusy => '处理中…';
-
-  @override
-  String get codexInstallChecking => '正在检查最新官方版本…';
-
-  @override
-  String get codexInstallConfirm => '安装并使用此 Codex 版本？';
-
-  @override
-  String get codexInstallConfirmDetail =>
-      '从 OpenAI 的 GitHub 发布页下载此软件包，校验 SHA-256，解压到 BaoCode 数据目录并检查版本。成功后，新建本机会话将使用该可执行文件。不修改已有版本或系统 PATH。';
-
-  @override
-  String get codexInstallProceed => '安装并使用';
-
-  @override
-  String get codexInstallDone => '已安装并选为新建本机会话使用的版本。';
-
-  @override
-  String get codexInstallFailed => 'Codex 安装失败，未更改选中的可执行文件。';
-
-  @override
-  String get botsBackendTitle => '机器人内核';
-
-  @override
-  String get botsBackendDescription =>
-      '空闲时选择各机器人的内核。不同内核保留各自的对话；切换会清除模型选择，不会删除历史。Codex 默认仅聊天，使用受限工具和只读沙箱。在手机上关闭“仅聊天”后可写入工作区。权限请求需在支持审批的客户端确认；若无法确认，请取消任务并改回仅聊天。';
-
-  @override
-  String get botsBackendBusy => '请等待此机器人结束回复后切换。';
-
-  @override
-  String get codexCustomizeNotice =>
-      'Codex 原生文件与设置；命令是 BaoCode 提示词。配置编辑在新会话生效，功能取决于已安装的 Codex 版本。项目配置、hooks 和执行规则需要项目已受信任。';
 
   @override
   String get localRunTitle => '在本机执行';

@@ -13136,6 +13136,54 @@ class AppLocalizationsEn extends AppLocalizations {
   String get codexPathRefresh => 'Check again';
 
   @override
+  String get codexInstallTitle => 'Managed Codex CLI';
+
+  @override
+  String get codexInstallDescription =>
+      'Install or update an official Codex release in BaoCode’s data folder. Other installations, running sessions and SSH hosts are unchanged.';
+
+  @override
+  String get codexInstallAction => 'Install / update…';
+
+  @override
+  String get codexInstallBusy => 'Working…';
+
+  @override
+  String get codexInstallChecking => 'Checking the latest official release…';
+
+  @override
+  String get codexInstallConfirm => 'Install and use this Codex release?';
+
+  @override
+  String get codexInstallConfirmDetail =>
+      'Download this package from OpenAI’s GitHub releases, verify its SHA-256, extract it into BaoCode’s data folder, and check its version. On success, switch new local sessions to this executable. Existing versions and system PATH are not changed.';
+
+  @override
+  String get codexInstallProceed => 'Install and use';
+
+  @override
+  String get codexInstallDone =>
+      'Installed and selected for new local sessions.';
+
+  @override
+  String get codexInstallFailed =>
+      'Codex installation failed. The selected executable was not changed.';
+
+  @override
+  String get botsBackendTitle => 'Bot backends';
+
+  @override
+  String get botsBackendDescription =>
+      'Choose each bot’s backend while idle. Each backend keeps its own conversation; switching clears the model choice, not history. Codex starts in chat-only mode with gated tools and a read-only sandbox. Turn off Chat Only on the phone to allow workspace writes. Permission requests need an approval-capable client; otherwise cancel and switch back to Chat Only.';
+
+  @override
+  String get botsBackendBusy => 'Wait for this bot to finish before switching.';
+
+  @override
+  String get codexCustomizeNotice =>
+      'Native Codex files and settings; commands are BaoCode prompts. Config edits apply to new sessions and depend on the installed Codex version. Project config, hooks and execution rules require a trusted project.';
+
+  @override
   String get autoResetCreditsToggle => 'Auto-Use Reset Credits';
 
   @override
@@ -13619,54 +13667,6 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get ustatContextUnpickHint =>
       'Click again to unpick: back to the context as it is now';
-
-  @override
-  String get codexInstallTitle => 'Managed Codex CLI';
-
-  @override
-  String get codexInstallDescription =>
-      'Install or update an official Codex release in BaoCode’s data folder. Other installations, running sessions and SSH hosts are unchanged.';
-
-  @override
-  String get codexInstallAction => 'Install / update…';
-
-  @override
-  String get codexInstallBusy => 'Working…';
-
-  @override
-  String get codexInstallChecking => 'Checking the latest official release…';
-
-  @override
-  String get codexInstallConfirm => 'Install and use this Codex release?';
-
-  @override
-  String get codexInstallConfirmDetail =>
-      'Download this package from OpenAI’s GitHub releases, verify its SHA-256, extract it into BaoCode’s data folder, and check its version. On success, switch new local sessions to this executable. Existing versions and system PATH are not changed.';
-
-  @override
-  String get codexInstallProceed => 'Install and use';
-
-  @override
-  String get codexInstallDone =>
-      'Installed and selected for new local sessions.';
-
-  @override
-  String get codexInstallFailed =>
-      'Codex installation failed. The selected executable was not changed.';
-
-  @override
-  String get botsBackendTitle => 'Bot backends';
-
-  @override
-  String get botsBackendDescription =>
-      'Choose each bot’s backend while idle. Each backend keeps its own conversation; switching clears the model choice, not history. Codex starts in chat-only mode with gated tools and a read-only sandbox. Turn off Chat Only on the phone to allow workspace writes. Permission requests need an approval-capable client; otherwise cancel and switch back to Chat Only.';
-
-  @override
-  String get botsBackendBusy => 'Wait for this bot to finish before switching.';
-
-  @override
-  String get codexCustomizeNotice =>
-      'Native Codex files and settings; commands are BaoCode prompts. Config edits apply to new sessions and depend on the installed Codex version. Project config, hooks and execution rules require a trusted project.';
 
   @override
   String get localRunTitle => 'Run on this computer';

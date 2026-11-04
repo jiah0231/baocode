@@ -322,9 +322,10 @@ class FileOpenScope extends InheritedWidget {
     final full = resolve(path);
     if (full == null) return null;
     final context = paths ?? p.context;
-    final inside = [...roots, root].any(
-      (folder) => folder == full || context.isWithin(folder, full),
-    );
+    final inside = [
+      ...roots,
+      root,
+    ].any((folder) => folder == full || context.isWithin(folder, full));
     if (inside) return full;
     final seenFile = _seen(path);
     return seenFile != null && context.equals(seenFile, full) ? full : null;

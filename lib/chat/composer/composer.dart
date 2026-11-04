@@ -734,10 +734,13 @@ class ChatComposerState extends State<ChatComposer>
             switch (piece) {
               ComposerEmbed(type: ComposerTokenEmbed.type, :final data) =>
                 switch (ComposerTokenEmbed.decode(data)) {
-                  final token when token.kind == SuggestionKind.session &&
-                      message.sessionMentions.contains(token.value) =>
+                  final token
+                      when token.kind == SuggestionKind.session &&
+                          message.sessionMentions.contains(token.value) =>
                     ComposerTokenEmbed.session(
-                      token.value, token.label, selected: true,
+                      token.value,
+                      token.label,
+                      selected: true,
                     ).atom,
                   _ => piece.atom,
                 },

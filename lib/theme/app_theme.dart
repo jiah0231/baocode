@@ -134,8 +134,9 @@ abstract final class AppColors {
   /// theme's `list.hoverBackground` is the side bar's, maybe darker than
   /// the panel and of another hue).
   static Color get bubbleHover =>
-      (_pebrel('foreground') ?? _colors['editor.foreground'])
-          .withValues(alpha: 0.07);
+      (_pebrel('foreground') ?? _colors['editor.foreground']).withValues(
+        alpha: 0.07,
+      );
 
   static Color _towardsText(Color color, double t) =>
       Color.lerp(color, _colors['editor.foreground'].withValues(alpha: 1), t)!;

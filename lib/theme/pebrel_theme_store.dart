@@ -15,7 +15,8 @@ import 'pebrel_theme.dart';
 /// Each import gets an opaque identity independent of its display name/path.
 class PebrelThemeStore {
   PebrelThemeStore({Directory? directory})
-    : directory = directory ??
+    : directory =
+          directory ??
           Directory(p.join(DataDirectory.current.userDir, 'pebrel-themes'));
 
   static const maxImportBytes = 1024 * 1024;
@@ -40,8 +41,8 @@ class PebrelThemeStore {
   /// falls back without changing a selected built-in or extension theme.
   String resolveSelection(String selected, {required String fallback}) =>
       selected.startsWith(_prefix) && !_themes.containsKey(selected)
-          ? fallback
-          : selected;
+      ? fallback
+      : selected;
 
   Future<Map<String, PebrelThemeDefinition>> load() => _serial(() async {
     await _read();
@@ -64,45 +65,54 @@ class PebrelThemeStore {
     if (name.isEmpty || theme.name.length > 256) {
       throw const FormatException('Theme name must contain 1–256 characters.');
     }
-    return _serial(() => _locked(() async {
-      await _read();
-      if (_themes.values.any((t) => t.name.trim().toLowerCase() == name)) {
-        throw const FormatException(
-          'A custom theme with this name already exists. Rename it before importing.',
-        );
-      }
-      if (_themes.length >= maxThemes) {
-        throw const FormatException('The custom theme library is full.');
-      }
-      final random = Random.secure();
-      String token;
-      File target;
-      do {
-        token = List.generate(16, (_) => random.nextInt(256)
-            .toRadixString(16).padLeft(2, '0')).join();
-        target = File(p.join(directory.path, '$token.json'));
-      } while (await FileSystemEntity.type(target.path, followLinks: false) !=
-          FileSystemEntityType.notFound);
-      final id = '$_prefix$token';
-      final encoded = jsonEncode({'version': 1, 'id': id, 'theme': theme.toJson()});
-      if (utf8.encode(encoded).length > _maxStoredBytes) {
-        throw const FormatException('Theme snapshot is too large.');
-      }
-      // Same-directory rename is the commit point. Never fall back to writing
-      // the destination in place: readers must not see a partial snapshot.
-      final temporary = File(p.join(directory.path, '.$token.tmp'));
-      var ownsTemporary = false;
-      try {
-        await temporary.create(exclusive: true);
-        ownsTemporary = true;
-        await temporary.writeAsString(encoded, flush: true);
-        await temporary.rename(target.path);
-      } finally {
-        if (ownsTemporary && await temporary.exists()) await temporary.delete();
-      }
-      _themes = {..._themes, id: theme};
-      return id;
-    }));
+    return _serial(
+      () => _locked(() async {
+        await _read();
+        if (_themes.values.any((t) => t.name.trim().toLowerCase() == name)) {
+          throw const FormatException(
+            'A custom theme with this name already exists. Rename it before importing.',
+          );
+        }
+        if (_themes.length >= maxThemes) {
+          throw const FormatException('The custom theme library is full.');
+        }
+        final random = Random.secure();
+        String token;
+        File target;
+        do {
+          token = List.generate(
+            16,
+            (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+          ).join();
+          target = File(p.join(directory.path, '$token.json'));
+        } while (await FileSystemEntity.type(target.path, followLinks: false) !=
+            FileSystemEntityType.notFound);
+        final id = '$_prefix$token';
+        final encoded = jsonEncode({
+          'version': 1,
+          'id': id,
+          'theme': theme.toJson(),
+        });
+        if (utf8.encode(encoded).length > _maxStoredBytes) {
+          throw const FormatException('Theme snapshot is too large.');
+        }
+        // Same-directory rename is the commit point. Never fall back to writing
+        // the destination in place: readers must not see a partial snapshot.
+        final temporary = File(p.join(directory.path, '.$token.tmp'));
+        var ownsTemporary = false;
+        try {
+          await temporary.create(exclusive: true);
+          ownsTemporary = true;
+          await temporary.writeAsString(encoded, flush: true);
+          await temporary.rename(target.path);
+        } finally {
+          if (ownsTemporary && await temporary.exists())
+            await temporary.delete();
+        }
+        _themes = {..._themes, id: theme};
+        return id;
+      }),
+    );
   }
 
   /// Only removes an owned snapshot, never a built-in/theme extension or an
@@ -117,12 +127,16 @@ class PebrelThemeStore {
       return;
     }
     await _locked(() async {
-      final file = File(p.join(directory.path, '${id.substring(_prefix.length)}.json'));
+      final file = File(
+        p.join(directory.path, '${id.substring(_prefix.length)}.json'),
+      );
       final type = await FileSystemEntity.type(file.path, followLinks: false);
       if (type == FileSystemEntityType.file) {
         await file.delete();
       } else if (type != FileSystemEntityType.notFound) {
-        throw const FormatException('Custom theme snapshot is not a regular file.');
+        throw const FormatException(
+          'Custom theme snapshot is not a regular file.',
+        );
       }
       await _read();
     });
@@ -137,17 +151,25 @@ class PebrelThemeStore {
       for (final entry in entries) {
         if (!_filePattern.hasMatch(p.basename(entry.path))) continue;
         if (loaded.length >= maxThemes) {
-          warnings.add('Additional custom themes were skipped: library limit reached.');
+          warnings.add(
+            'Additional custom themes were skipped: library limit reached.',
+          );
           break;
         }
         try {
-          final data = _decode(await _readBounded(File(entry.path), _maxStoredBytes),
-              _maxStoredBytes);
+          final data = _decode(
+            await _readBounded(File(entry.path), _maxStoredBytes),
+            _maxStoredBytes,
+          );
           final id = '$_prefix${p.basenameWithoutExtension(entry.path)}';
-          if (data['version'] != 1 || data['id'] != id || data['theme'] is! Map<String, dynamic>) {
+          if (data['version'] != 1 ||
+              data['id'] != id ||
+              data['theme'] is! Map<String, dynamic>) {
             throw const FormatException('Invalid snapshot envelope.');
           }
-          final theme = PebrelThemeDefinition.fromJson(data['theme'] as Map<String, dynamic>);
+          final theme = PebrelThemeDefinition.fromJson(
+            data['theme'] as Map<String, dynamic>,
+          );
           if (theme.name.trim().isEmpty || theme.name.length > 256) {
             throw const FormatException('Invalid theme name.');
           }
@@ -167,11 +189,16 @@ class PebrelThemeStore {
     final key = p.normalize(p.absolute(directory.path));
     final previous = _queues[key] ?? Future<void>.value();
     final result = previous.then((_) => operation());
-    final tail = result.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    final tail = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
     _queues[key] = tail;
-    unawaited(tail.then((_) {
-      if (identical(_queues[key], tail)) _queues.remove(key);
-    }));
+    unawaited(
+      tail.then((_) {
+        if (identical(_queues[key], tail)) _queues.remove(key);
+      }),
+    );
     return result;
   }
 
@@ -179,8 +206,11 @@ class PebrelThemeStore {
     await directory.create(recursive: true);
     final lockFile = File(p.join(directory.path, '.lock'));
     final type = await FileSystemEntity.type(lockFile.path, followLinks: false);
-    if (type != FileSystemEntityType.notFound && type != FileSystemEntityType.file) {
-      throw const FormatException('Custom theme library lock is not a regular file.');
+    if (type != FileSystemEntityType.notFound &&
+        type != FileSystemEntityType.file) {
+      throw const FormatException(
+        'Custom theme library lock is not a regular file.',
+      );
     }
     final lock = await lockFile.open(mode: FileMode.append);
     try {
@@ -192,7 +222,8 @@ class PebrelThemeStore {
   }
 
   static Future<String> _readBounded(File file, int limit) async {
-    if (await FileSystemEntity.type(file.path, followLinks: false) != FileSystemEntityType.file) {
+    if (await FileSystemEntity.type(file.path, followLinks: false) !=
+        FileSystemEntityType.file) {
       throw const FormatException('Choose a regular JSON theme file.');
     }
     if (await file.length() > limit) {
@@ -227,7 +258,8 @@ class PebrelThemeStore {
       } else if (unit == 34) {
         inString = true;
       } else if (unit == 123 || unit == 91) {
-        if (++depth > 64) throw const FormatException('Theme JSON is nested too deeply.');
+        if (++depth > 64)
+          throw const FormatException('Theme JSON is nested too deeply.');
       } else if (unit == 125 || unit == 93) {
         depth--;
       }

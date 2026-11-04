@@ -584,7 +584,9 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
     if (bot.kernel == 'codex' && !session.isStreaming) {
       final permissions = session.permissions;
       final wanted = bot.chatOnly ? 'read-only' : 'workspace-write';
-      final option = permissions?.options.where((o) => o.id == wanted).firstOrNull;
+      final option = permissions?.options
+          .where((o) => o.id == wanted)
+          .firstOrNull;
       if (option != null) permissions!.onSelected(option);
     }
     if (session.isStreaming) {
@@ -737,7 +739,9 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
     if (index < 0) throw StateError('No bot $id');
     final had = _bots[index];
     if (chatOnly != null && chatOnly != had.chatOnly && !canSwitchKernel(had)) {
-      throw StateError('Wait for the bot to finish before changing tool access.');
+      throw StateError(
+        'Wait for the bot to finish before changing tool access.',
+      );
     }
     final picked = _avatar(had.folder, avatar, avatarImage, had: had.avatar);
     if (had.avatarFile case final file? when picked != had.avatar) {
@@ -1126,9 +1130,13 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
           toldRequest = pending.id;
           _notice(
             byId(bot.id) ?? bot,
-            _event(thread, BotEventKind.waiting, detail: chinese
-                ? '需要你确认。请用支持审批的手机客户端打开此会话；若没有确认按钮，可先取消，再把联系人改为仅聊天。'
-                : 'Your approval is needed. Open this conversation in a phone client that supports approvals. If no approval buttons are available, cancel the task and switch this contact to chat only.'),
+            _event(
+              thread,
+              BotEventKind.waiting,
+              detail: chinese
+                  ? '需要你确认。请用支持审批的手机客户端打开此会话；若没有确认按钮，可先取消，再把联系人改为仅聊天。'
+                  : 'Your approval is needed. Open this conversation in a phone client that supports approvals. If no approval buttons are available, cancel the task and switch this contact to chat only.',
+            ),
           );
         }
         if (session.itemCount != count) {
