@@ -1,0 +1,160 @@
+# Isolated, non-publishing Windows candidate checks. Never use this as a release job.
+# Explicit test files only: no browser/live suites, installers or signing. Only formatter diagnostics may be uploaded.
+name: Candidate validation (no browser or release)
+on:
+  push:
+    branches: ['validation/non-chrome-*']
+permissions:
+  contents: read
+concurrency:
+  group: candidate-validation-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  validate:
+    if: github.repository == 'jiah0231/baocode' && startsWith(github.ref, 'refs/heads/validation/non-chrome-')
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.5'
+          cache: false
+      # Unit tests can require the project's native FFI dependency. Restoring
+      # it (or compiling it) does not start BaoCode or a browser.
+      - id: iroh
+        uses: ./.github/actions/bao-iroh-prebuilt
+      - if: steps.iroh.outputs.hit != 'true'
+        uses: ./.github/actions/setup-rust
+      - name: Resolve packages and localization
+        shell: pwsh
+        run: |
+          flutter pub get
+          if ($LASTEXITCODE -ne 0) { throw 'Package resolution failed' }
+          flutter gen-l10n
+          if ($LASTEXITCODE -ne 0) { throw 'Localization generation failed' }
+      - name: Capture dependency-generated changes separately
+        id: preparation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dirty = @(git -c core.quotepath=false diff --name-only HEAD --)
+          if ($LASTEXITCODE -ne 0) { throw 'Preparation difference enumeration failed' }
+          if ($dirty.Count) {
+            New-Item -ItemType Directory -Force build/formatter-evidence | Out-Null
+            git diff --binary --output=build/formatter-evidence/preparation.patch HEAD --
+            if ($LASTEXITCODE -ne 0) { throw 'Preparation patch generation failed' }
+            $dirty | Set-Content build/formatter-evidence/preparation-files.txt
+            "Source commit: $env:GITHUB_SHA" | Set-Content build/formatter-evidence/source.txt
+            for ($offset = 0; $offset -lt $dirty.Count; $offset += 20) {
+              $last = [Math]::Min($offset + 19, $dirty.Count - 1)
+              $batch = @($dirty[$offset..$last])
+              git restore --worktree --source=HEAD -- @batch
+              if ($LASTEXITCODE -ne 0) { throw 'Preparation source restore failed' }
+            }
+            git diff --quiet HEAD --
+            if ($LASTEXITCODE -ne 0) { throw 'Preparation source was not restored' }
+            "changed=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } else {
+            "changed=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          }
+      - name: Analyze candidate
+        id: analyze
+        run: flutter analyze --no-pub --fatal-infos
+      - name: Check formatting of existing Dart files changed since custom +28
+        id: formatting
+        if: ${{ !cancelled() && steps.preparation.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = '7a71304f899117131bb0a14f4c7952b05602bc6e'
+          git cat-file -e "$base^{commit}"
+          if ($LASTEXITCODE -ne 0) { throw 'Formatting base is missing' }
+          $files = @(git -c core.quotepath=false diff --name-only --diff-filter=ACMR $base HEAD -- '*.dart')
+          if ($LASTEXITCODE -ne 0) { throw 'Changed-file enumeration failed' }
+          git diff --quiet HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Tracked source differs from exact candidate before formatting' }
+          $formatFailed = $false
+          for ($offset = 0; $offset -lt $files.Count; $offset += 20) {
+            $last = [Math]::Min($offset + 19, $files.Count - 1)
+            $batch = @($files[$offset..$last])
+            dart format --output=none --set-exit-if-changed @batch
+            if ($LASTEXITCODE -ne 0) { $formatFailed = $true }
+          }
+          if ($formatFailed) {
+            git diff --quiet HEAD --
+            if ($LASTEXITCODE -ne 0) { throw 'Unexpected tracked changes before formatter diagnostics' }
+            try {
+              for ($offset = 0; $offset -lt $files.Count; $offset += 20) {
+                $last = [Math]::Min($offset + 19, $files.Count - 1)
+                $batch = @($files[$offset..$last])
+                dart format @batch
+                if ($LASTEXITCODE -ne 0) { throw 'Formatter diagnostic generation failed' }
+              }
+              New-Item -ItemType Directory -Force build/formatter-evidence | Out-Null
+              git diff --binary --output=build/formatter-evidence/format.patch HEAD -- '*.dart'
+              if ($LASTEXITCODE -ne 0) { throw 'Formatter patch generation failed' }
+              "Source commit: $env:GITHUB_SHA" | Set-Content build/formatter-evidence/source.txt
+            } finally {
+              for ($offset = 0; $offset -lt $files.Count; $offset += 20) {
+                $last = [Math]::Min($offset + 19, $files.Count - 1)
+                $batch = @($files[$offset..$last])
+                git restore --worktree --source=HEAD -- @batch
+                if ($LASTEXITCODE -ne 0) { throw 'Exact source restore failed' }
+              }
+              git diff --quiet HEAD --
+              if ($LASTEXITCODE -ne 0) { throw 'Source was not restored after formatting' }
+            }
+          }
+          git diff --quiet HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Tracked source differs from exact candidate after formatting' }
+          "source_exact=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          if ($formatFailed) { throw 'Changed Dart files need formatting; diagnostic patch retained' }
+          if ('${{ steps.preparation.outputs.changed }}' -ne 'false') { throw 'Dependency-generated differences require review; diagnostic patch retained' }
+      - name: Run explicitly selected non-browser regressions
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' && steps.formatting.outputs.source_exact == 'true' && steps.preparation.outputs.changed == 'false' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Optional live suites may check environment presence, not its value.
+          Remove-Item Env:BAO_BROWSER_LIVE -ErrorAction SilentlyContinue
+          Remove-Item Env:BAOCODE_CODEX_OFFICIAL_SMOKE -ErrorAction SilentlyContinue
+          $tests = @(
+            'test/bots/bots_test.dart',
+            'test/bots/codex_bot_mobile_test.dart',
+            'test/codex_fork_test.dart',
+            'test/chat/session_query_test.dart',
+            'test/chat/session_query_queue_test.dart',
+            'test/chat/session_query_claude_lifecycle_test.dart',
+            'test/chat/session_mentions_test.dart',
+            'test/workspace/session_query_workspace_test.dart',
+            'test/workspace/usage_shutdown_test.dart',
+            'test/ide/textmate_tokenizer_lifecycle_test.dart',
+            'test/customize/customize_view_test.dart',
+            'test/customize/codex_customization_store_test.dart',
+            'test/models/proxy/model_proxy_shutdown_test.dart',
+            'test/models/proxy/model_proxy_test.dart',
+            'test/update/custom_update_channel_test.dart',
+            'test/remote/remote_review_compat_test.dart',
+            'test/theme/pebrel_theme_store_test.dart',
+            'test/theme/pebrel_app_colors_test.dart',
+            'test/theme/pebrel_theme_test.dart',
+            'test/theme/workbench_theme_test.dart',
+            'test/ide/terminal/terminal_colors_test.dart',
+            'test/ide/workbench/color_theme_gallery_test.dart',
+            'test/ide/workbench/theme_preview_session_test.dart'
+          )
+          flutter test --no-pub @tests
+          if ($LASTEXITCODE -ne 0) { throw 'Non-browser candidate regressions failed' }
+      - name: Retain exact-source formatter patch only
+        if: ${{ always() && hashFiles('build/formatter-evidence/*.patch') != '' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: formatter-evidence-${{ github.sha }}
+          path: build/formatter-evidence/
+          retention-days: 7
+          if-no-files-found: error

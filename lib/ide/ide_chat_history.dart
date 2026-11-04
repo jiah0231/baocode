@@ -329,7 +329,6 @@ class _IdeChatHistoryState extends State<IdeChatHistory> {
     final anyAgents = widget.threads.any(
       (thread) => !thread.untouched && (_archived || !thread.archived),
     );
-    final colors = themeColors;
     final panel = Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -450,7 +449,7 @@ class _IdeChatHistoryState extends State<IdeChatHistory> {
                   boxShadow: IdeQuickInput.shadows,
                 ),
                 child: Material(
-                  color: colors['quickInput.background'],
+                  color: IdeQuickInput.backgroundOf(context),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(
                       IdeQuickInput.cornerRadius,

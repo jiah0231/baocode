@@ -95,6 +95,84 @@ void main() {
     });
   });
 
+  group('indexed theme colors', () {
+    TerminalColorTheme resolve([Map<int, Color> indexed = const {}]) =>
+        TerminalColorTheme.resolve(
+          (_) => null,
+          type: ColorScheme.dark,
+          indexedColors: indexed,
+        );
+
+    test('no overrides preserve the default palette and xterm option', () {
+      final theme = resolve();
+      expect(theme.palette, terminalAnsiColors(theme.ansi));
+      expect(theme.toXtermTheme().extendedAnsi, isNull);
+    });
+
+    test('sparse overrides preserve all other slots and are immutable', () {
+      final overrides = <int, Color>{
+        16: const Color(0xFF123456),
+        255: const Color(0xFF654321),
+      };
+      final theme = resolve(overrides);
+      overrides[16] = const Color(0xFF000000);
+      expect(theme.palette, hasLength(256));
+      expect(theme.palette[16], const Color(0xFF123456));
+      expect(theme.palette[255], const Color(0xFF654321));
+      final defaults = terminalAnsiColors(theme.ansi);
+      expect(theme.palette.sublist(0, 16), defaults.sublist(0, 16));
+      expect(theme.palette.sublist(17, 255), defaults.sublist(17, 255));
+      final extended = theme.toXtermTheme().extendedAnsi!;
+      expect(extended, hasLength(240));
+      expect(extended.first, cssColor(const Color(0xFF123456)));
+      expect(extended.last, cssColor(const Color(0xFF654321)));
+      expect(
+        () => theme.indexedColors[16] = const Color(0x00000000),
+        throwsUnsupportedError,
+      );
+      expect(
+        () => theme.palette[16] = const Color(0x00000000),
+        throwsUnsupportedError,
+      );
+    });
+
+    test('indexed changes participate in theme equality', () {
+      final first = resolve({42: const Color(0xFF123456)});
+      final same = resolve({42: const Color(0xFF123456)});
+      final changed = resolve({42: const Color(0xFF654321)});
+      expect(first, same);
+      expect(first.hashCode, same.hashCode);
+      expect(first, isNot(changed));
+      expect(first, isNot(resolve()));
+    });
+
+    test('rejects slots outside the extended palette', () {
+      for (final index in [-1, 0, 15, 256]) {
+        expect(
+          () => resolve({index: const Color(0xFF123456)}),
+          throwsRangeError,
+        );
+      }
+    });
+
+    test('switching themes replaces and resets extended colors', () {
+      final initial = resolve({
+        16: const Color(0xFF123456),
+        255: const Color(0xFF654321),
+      });
+      final h = _terminal(initial);
+      expect(h.source.themeService.colors.ansi[16].rgba, 0x123456FF);
+      expect(h.source.themeService.colors.ansi[255].rgba, 0x654321FF);
+      h.terminal.options.theme = resolve({42: const Color(0xFFABCDEF)})
+          .toXtermTheme();
+      expect(h.source.themeService.colors.ansi[16].rgba, 0x000000FF);
+      expect(h.source.themeService.colors.ansi[42].rgba, 0xABCDEFFF);
+      h.terminal.options.theme = resolve().toXtermTheme();
+      expect(h.source.themeService.colors.ansi[42].rgba, 0x00D787FF);
+      expect(h.source.themeService.colors.ansi[255].rgba, 0xEEEEEEFF);
+    });
+  });
+
   group('terminalAnsiColors', () {
     final palette = terminalAnsiColors();
 

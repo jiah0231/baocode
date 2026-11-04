@@ -1499,101 +1499,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sidePanelTerminal => 'Terminal';
 
   @override
-  String get sidePanelBrowser => 'Browser';
-
-  @override
-  String get browserNotConnected =>
-      'No browser is connected. Add BaoCode\'s extension to Chrome (or Edge, Brave, Arc) and agents can use the tabs you share with them.';
-
-  @override
-  String get browserNoSharedTab =>
-      'No tab is shared yet. Ask an agent to open a page, or click BaoCode in the browser toolbar to share the tab in front.';
-
-  @override
   String get browserOtherApp => 'Another BaoCode is connected to the browser.';
-
-  @override
-  String get browserSharedTabs => 'Shared Tabs';
-
-  @override
-  String get browserReload => 'Reload';
-
-  @override
-  String get browserShowInBrowser => 'Show in Browser';
-
-  @override
-  String get browserDetached =>
-      'The browser stopped letting BaoCode see this tab.';
-
-  @override
-  String get browserReconnect => 'Reconnect';
-
-  @override
-  String get browserShowInPanel => 'Show in Side Panel';
-
-  @override
-  String browserPanelConnected(String browser) {
-    return 'Connected to $browser';
-  }
-
-  @override
-  String get browserPanelPausedNotice => 'Agent browser access is paused. Click Resume to allow it. Restarting BaoCode pauses it again.';
-
-  @override
-  String get browserPanelChromeNotice => 'Use Chrome for native dialogs, permission prompts and downloads.';
-
-  @override
-  String get browserPanelReconnectAgent => 'Reconnect this chat';
-
-  @override
-  String get browserPanelReconnectAgentTooltip => 'Use the selected Chrome connection for this chat. Old browser work is cancelled; agent pause stays unchanged.';
-
-  @override
-  String browserPanelBindingNotice(String view, String agent) =>
-      'Viewing $view. Agent is bound to $agent, with access to its explicitly shared tabs.';
-
-  @override
-  String browserPanelDisconnectedConnection(String browser) =>
-      '$browser (disconnected)';
-
-  @override
-  String get browserPanelPausedShort => 'Agent paused';
-
-  @override
-  String get browserPanelPreparingControl => 'Preparing manual control…';
-
-  @override
-  String get browserPanelUnavailable => 'Selected tab unavailable';
-
-  @override
-  String get browserPanelBack => 'Back';
-
-  @override
-  String get browserPanelForward => 'Forward';
-
-  @override
-  String get browserPanelNewTab => 'New tab';
-
-  @override
-  String get browserPanelCloseTab => 'Close current tab';
-
-  @override
-  String get browserPanelAddress => 'Enter website address';
-
-  @override
-  String get browserPanelGo => 'Go to website';
-
-  @override
-  String get browserPanelTakeOver => 'Take over';
-
-  @override
-  String get browserPanelResume => 'Resume agent';
-
-  @override
-  String get browserPanelTakeOverTooltip => 'Pause all future agent browser observations and actions. Commands already sent may finish.';
-
-  @override
-  String get browserPanelResumeTooltip => 'Allow all agent browser observations and actions again.';
 
   @override
   String get browserWatchTitle => 'Watching you in the browser';
@@ -1749,10 +1655,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sidePanelHide => 'Hide side panel';
 
   @override
-  String get sidePanelMoveLeft => 'Move to the Left of the Conversation';
+  String get chatLayout => 'Layout';
 
   @override
-  String get sidePanelMoveRight => 'Move to the Right of the Conversation';
+  String get chatLayoutSidebarChatPanel => 'Sidebar · Chat · Panel';
+
+  @override
+  String get chatLayoutSidebarPanelChat => 'Sidebar · Panel · Chat';
+
+  @override
+  String get chatLayoutPanelChatSidebar => 'Panel · Chat · Sidebar';
+
+  @override
+  String get chatLayoutChatPanelSidebar => 'Chat · Panel · Sidebar';
 
   @override
   String get sidePanelChanges => 'Changes';
@@ -2118,6 +2033,13 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get btwCommandDetail =>
       'Ask in a conversation of its own, beside this one';
+
+  @override
+  String get forkCommandDetail => 'Fork this conversation and open the copy';
+
+  @override
+  String get forkUnavailable =>
+      'This conversation can\'t be forked: it needs a message first, and its agent has to support forking.';
 
   @override
   String get sidebarFoldAsides => 'Hide /btw Conversations';
@@ -3725,7 +3647,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get generalSettingsClaudeCoreDescription =>
-      'Claude Code CLI: Anthropic\'s own program, with this machine\'s sign-in and setup; pick it to use a Claude subscription. Built-in: comes with BaoCode, and uses only the models added in Settings → Models. The CLI is the default, downloaded for you if this machine has none. Changes apply to new sessions.';
+      'Claude Code CLI: Anthropic\'s own program, with this machine\'s sign-in and setup; pick it to use a Claude subscription. Built-in: comes with BaoCode, and uses only the models added in Settings → Models. By default, the CLI where this machine has Claude Code, else the built-in core; the CLI, picked where there is none, is downloaded for you. Changes apply to new sessions.';
 
   @override
   String get generalSettingsClaudeCoreBuiltin => 'Built-in';
@@ -6110,7 +6032,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get claudePathMissing =>
-      'None found yet: Claude Code is downloaded as the first conversation starts.';
+      'None found yet: with the Claude Code CLI picked, it is downloaded as the first conversation starts.';
 
   @override
   String get generalSettingsIdeWindows => 'Fast Ide Windows';
@@ -8123,6 +8045,11 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String remoteStatusTooltip(String kind, String host) {
     return 'Connected to $host over $kind';
+  }
+
+  @override
+  String remoteStatusSystem(String platform) {
+    return 'System: $platform';
   }
 
   @override
@@ -10437,16 +10364,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get modelSetUp => 'Set Up a Model';
 
   @override
-  String get claudeCoreHint =>
-      'This chat runs on BaoCode\'s built-in core. We recommend the Claude Code core for the fullest experience; it\'s downloaded for you if needed.';
-
-  @override
-  String get claudeCoreHintSwitch => 'Switch to Claude Code';
-
-  @override
-  String get claudeCoreHintLater => 'Not Now';
-
-  @override
   String get remoteAddServer => 'Add SSH Server...';
 
   @override
@@ -12315,6 +12232,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get gitCommitTab => 'Commit';
 
   @override
+  String get gitCommitPanelFold => 'Fold';
+
+  @override
+  String get gitCommitPanelUnfold => 'Unfold';
+
+  @override
   String get gitStashSelected => 'Stash Selected Files…';
 
   @override
@@ -13213,6 +13136,54 @@ class AppLocalizationsEn extends AppLocalizations {
   String get codexPathRefresh => 'Check again';
 
   @override
+  String get codexInstallTitle => 'Managed Codex CLI';
+
+  @override
+  String get codexInstallDescription =>
+      'Install or update an official Codex release in BaoCode’s data folder. Other installations, running sessions and SSH hosts are unchanged.';
+
+  @override
+  String get codexInstallAction => 'Install / update…';
+
+  @override
+  String get codexInstallBusy => 'Working…';
+
+  @override
+  String get codexInstallChecking => 'Checking the latest official release…';
+
+  @override
+  String get codexInstallConfirm => 'Install and use this Codex release?';
+
+  @override
+  String get codexInstallConfirmDetail =>
+      'Download this package from OpenAI’s GitHub releases, verify its SHA-256, extract it into BaoCode’s data folder, and check its version. On success, switch new local sessions to this executable. Existing versions and system PATH are not changed.';
+
+  @override
+  String get codexInstallProceed => 'Install and use';
+
+  @override
+  String get codexInstallDone =>
+      'Installed and selected for new local sessions.';
+
+  @override
+  String get codexInstallFailed =>
+      'Codex installation failed. The selected executable was not changed.';
+
+  @override
+  String get botsBackendTitle => 'Bot backends';
+
+  @override
+  String get botsBackendDescription =>
+      'Choose each bot’s backend while idle. Each backend keeps its own conversation; switching clears the model choice, not history. Codex starts in chat-only mode with gated tools and a read-only sandbox. Turn off Chat Only on the phone to allow workspace writes. Permission requests need an approval-capable client; otherwise cancel and switch back to Chat Only.';
+
+  @override
+  String get botsBackendBusy => 'Wait for this bot to finish before switching.';
+
+  @override
+  String get codexCustomizeNotice =>
+      'Native Codex files and settings; commands are BaoCode prompts. Config edits apply to new sessions and depend on the installed Codex version. Project config, hooks and execution rules require a trusted project.';
+
+  @override
   String get autoResetCreditsToggle => 'Auto-Use Reset Credits';
 
   @override
@@ -13698,50 +13669,107 @@ class AppLocalizationsEn extends AppLocalizations {
       'Click again to unpick: back to the context as it is now';
 
   @override
-  String get codexInstallTitle => 'Managed Codex CLI';
+  String get localRunTitle => 'Run on this computer';
 
   @override
-  String get codexInstallDescription =>
-      'Install or update an official Codex release in BaoCode’s data folder. Other installations, running sessions and SSH hosts are unchanged.';
+  String localRunReason(String host, String system) {
+    return 'The agent on $host wants to run this command on your computer ($system), not on $host.';
+  }
 
   @override
-  String get codexInstallAction => 'Install / update…';
+  String localRunAlways(String host) {
+    return 'Always allow for $host';
+  }
 
   @override
-  String get codexInstallBusy => 'Working…';
+  String get remoteLocalAccess => 'Allow Remote Agents to Act on This Computer';
 
   @override
-  String get codexInstallChecking => 'Checking the latest official release…';
+  String get remoteLocalAccessDetail =>
+      'Its agents may run commands on this computer (asking you each time), copy files here and there and forward ports.';
 
   @override
-  String get codexInstallConfirm => 'Install and use this Codex release?';
+  String get sidePanelPorts => 'Ports';
 
   @override
-  String get codexInstallConfirmDetail =>
-      'Download this package from OpenAI’s GitHub releases, verify its SHA-256, extract it into BaoCode’s data folder, and check its version. On success, switch new local sessions to this executable. Existing versions and system PATH are not changed.';
+  String portsEmpty(String host) {
+    return 'No ports are forwarded. A server on $host that prints its http://localhost address is forwarded here on its own.';
+  }
 
   @override
-  String get codexInstallProceed => 'Install and use';
+  String get portsAdd => 'Forward a Port';
 
   @override
-  String get codexInstallDone =>
-      'Installed and selected for new local sessions.';
+  String get portsCopy => 'Copy Address';
 
   @override
-  String get codexInstallFailed =>
-      'Codex installation failed. The selected executable was not changed.';
+  String get portsOpen => 'Open in Browser';
 
   @override
-  String get botsBackendTitle => 'Bot backends';
+  String get portsStop => 'Stop Forwarding';
 
   @override
-  String get botsBackendDescription =>
-      'Choose each bot’s backend while idle. Each backend keeps its own conversation; switching clears the model choice, not history. Codex starts in chat-only mode with gated tools and a read-only sandbox. Turn off Chat Only on the phone to allow workspace writes. Permission requests need an approval-capable client; otherwise cancel and switch back to Chat Only.';
+  String portsHostToHere(String host) {
+    return '$host → this computer';
+  }
 
   @override
-  String get botsBackendBusy => 'Wait for this bot to finish before switching.';
+  String portsHereToHost(String host) {
+    return 'This computer → $host';
+  }
 
   @override
-  String get codexCustomizeNotice =>
-      'Native Codex files and settings; commands are BaoCode prompts. Config edits apply to new sessions and depend on the installed Codex version. Project config, hooks and execution rules require a trusted project.';
+  String get portsAuto => 'Auto';
+
+  @override
+  String get portsPort => 'Port';
+
+  @override
+  String get portsListen => 'Listen on (optional)';
+
+  @override
+  String get portsForward => 'Forward';
+
+  @override
+  String portsCopied(String address) {
+    return 'Copied $address';
+  }
+
+  @override
+  String branchBarFolder(String path) {
+    return '$path\nClick to copy its path';
+  }
+
+  @override
+  String get branchBarPathCopied => 'Path copied';
+
+  @override
+  String get sidePanelBrowser => 'Browser';
+
+  @override
+  String get browserNotConnected =>
+      'No browser is connected. Add BaoCode\'s extension to Chrome (or Edge, Brave, Arc) and agents can use the tabs you share with them.';
+
+  @override
+  String get browserNoSharedTab =>
+      'No tab is shared yet. Ask an agent to open a page, or click BaoCode in the browser toolbar to share the tab in front.';
+
+  @override
+  String get browserSharedTabs => 'Shared Tabs';
+
+  @override
+  String get browserReload => 'Reload';
+
+  @override
+  String get browserShowInBrowser => 'Show in Browser';
+
+  @override
+  String get browserDetached =>
+      'The browser stopped letting BaoCode see this tab.';
+
+  @override
+  String get browserReconnect => 'Reconnect';
+
+  @override
+  String get browserShowInPanel => 'Show in Side Panel';
 }

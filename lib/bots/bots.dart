@@ -480,12 +480,19 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
         ),
         // Told only who it is and how it talks: no coding agent's prompt.
         ownPrompt: true,
-        // All of an agent's, and its own; only the web's and its own when
+        // An agent's, but for what waits on someone at the computer
+        // (BotPermissions), and its own; only the web's and its own when
         // it only chats (with the tool search, for the browser's, which
         // are deferred). Claude and restricted bots do not ask; opted-in
         // Codex uses its normal workspace sandbox and approval requests,
         // carried to the phone by WorkspaceBridge.
-        tools: BotPermissions.tools(bot),
+        // Claude's explicit tool allowlist must not mark an opted-in Codex
+        // agent as restricted: Codex uses a non-null list for chat-only bots.
+        tools: bot.kernel == 'codex' && !bot.chatOnly
+            ? null
+            : BotPermissions.tools(bot),
+        // Full Claude agents keep their user's MCP servers too.
+        userServers: !bot.chatOnly,
         approvesAll: bot.kernel != 'codex' || bot.chatOnly,
         // What the user writes while it talks, taken up as it does: as a
         // person hears what is said meanwhile; and shown where they wrote
@@ -577,7 +584,9 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
     if (bot.kernel == 'codex' && !session.isStreaming) {
       final permissions = session.permissions;
       final wanted = bot.chatOnly ? 'read-only' : 'workspace-write';
-      final option = permissions?.options.where((o) => o.id == wanted).firstOrNull;
+      final option = permissions?.options
+          .where((o) => o.id == wanted)
+          .firstOrNull;
       if (option != null) permissions!.onSelected(option);
     }
     if (session.isStreaming) {
@@ -730,7 +739,9 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
     if (index < 0) throw StateError('No bot $id');
     final had = _bots[index];
     if (chatOnly != null && chatOnly != had.chatOnly && !canSwitchKernel(had)) {
-      throw StateError('Wait for the bot to finish before changing tool access.');
+      throw StateError(
+        'Wait for the bot to finish before changing tool access.',
+      );
     }
     final picked = _avatar(had.folder, avatar, avatarImage, had: had.avatar);
     if (had.avatarFile case final file? when picked != had.avatar) {
@@ -1119,9 +1130,13 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
           toldRequest = pending.id;
           _notice(
             byId(bot.id) ?? bot,
-            _event(thread, BotEventKind.waiting, detail: chinese
-                ? '需要你确认。请用支持审批的手机客户端打开此会话；若没有确认按钮，可先取消，再把联系人改为仅聊天。'
-                : 'Your approval is needed. Open this conversation in a phone client that supports approvals. If no approval buttons are available, cancel the task and switch this contact to chat only.'),
+            _event(
+              thread,
+              BotEventKind.waiting,
+              detail: chinese
+                  ? '需要你确认。请用支持审批的手机客户端打开此会话；若没有确认按钮，可先取消，再把联系人改为仅聊天。'
+                  : 'Your approval is needed. Open this conversation in a phone client that supports approvals. If no approval buttons are available, cancel the task and switch this contact to chat only.',
+            ),
           );
         }
         if (session.itemCount != count) {

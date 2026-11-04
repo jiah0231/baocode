@@ -24,6 +24,7 @@ import '../models/launch_environment.dart';
 import 'remote_claude_install.dart';
 import 'remote_location.dart';
 import 'ssh_host.dart';
+import 'port_forwards.dart';
 
 /// What the user is told to run on the host when Claude Code could not be
 /// installed there for them, as its install guidance says.
@@ -168,15 +169,19 @@ Future<String?> claudeUsageOffByAt(String? cwd) async {
 
 /// Claude Code's sessions: this machine's, and those of a remote project's
 /// host, listed as that project's (their folders as locations).
-class ClaudeCatalog implements SessionCatalog, MovesSessions, SessionHistoryCatalog {
+class ClaudeCatalog
+    implements SessionCatalog, MovesSessions, SessionHistoryCatalog {
   const ClaudeCatalog({
     this.local = const ClaudeStorage(),
     this.readPage = readClaudeHistoryPage,
   });
 
   final Future<ClaudeHistoryPage> Function(
-    SessionRecord session, {required int turns, String? before}
-  ) readPage;
+    SessionRecord session, {
+    required int turns,
+    String? before,
+  })
+  readPage;
 
   @override
   Future<SessionTextPage> readTextPage(
@@ -191,18 +196,28 @@ class ClaudeCatalog implements SessionCatalog, MovesSessions, SessionHistoryCata
       final message = entry['message'];
       if (message is! Map) continue;
       final content = message['content'];
-      final text = content is String ? content : [
-        for (final part in content is List ? content : const [])
-          if (part is Map && part['type'] == 'text' && part['text'] is String &&
-              !(part['text'] as String).trimLeft().startsWith('<system-reminder>'))
-            part['text'] as String,
-      ].join('\n');
-      if (text.isEmpty || text.trimLeft().startsWith('<system-reminder>')) continue;
-      messages.add(SessionTextMessage(
-        role: role as String,
-        text: text,
-        id: entry['uuid'] as String?,
-      ));
+      final text = content is String
+          ? content
+          : [
+              for (final part in content is List ? content : const [])
+                if (part is Map &&
+                    part['type'] == 'text' &&
+                    part['text'] is String &&
+                    !(part['text'] as String).trimLeft().startsWith(
+                      '<system-reminder>',
+                    ))
+                  part['text'] as String,
+            ].join('\n');
+      if (text.isEmpty || text.trimLeft().startsWith('<system-reminder>')) {
+        continue;
+      }
+      messages.add(
+        SessionTextMessage(
+          role: role as String,
+          text: text,
+          id: entry['uuid'] as String?,
+        ),
+      );
     }
     return SessionTextPage(
       messages: List.unmodifiable(messages),
@@ -412,6 +427,7 @@ class RemoteClaudeTransport implements ClaudeCodeTransport {
     final cwd = RemoteLocation.pathOf(launch.cwd);
     final env = await remoteModelEnvironment(client, launch.env);
     final started = launch.copyWith(cwd: cwd, env: env);
+    final forwarded = await PortForwards.instance.remoteEnvironment(host.host);
     try {
       final process = await startRemoteCore(
         host,
@@ -424,7 +440,7 @@ class RemoteClaudeTransport implements ClaudeCodeTransport {
               : started.arguments,
           settings: started.hasSecrets ? started.settings : null,
           cleared: [if (env != null) ...ClaudeModelVariables.inherited],
-          environment: ClaudeLaunch.environment,
+          environment: {...ClaudeLaunch.environment, ...forwarded},
           core: core,
         ),
       );

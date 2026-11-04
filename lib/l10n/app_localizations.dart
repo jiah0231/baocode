@@ -2948,164 +2948,11 @@ abstract class AppLocalizations {
   /// **'Terminal'**
   String get sidePanelTerminal;
 
-  /// The side panel's browser page, there once the browser plugin is installed.
-  ///
-  /// In en, this message translates to:
-  /// **'Browser'**
-  String get sidePanelBrowser;
-
-  /// No description provided for @browserNotConnected.
-  ///
-  /// In en, this message translates to:
-  /// **'No browser is connected. Add BaoCode\'s extension to Chrome (or Edge, Brave, Arc) and agents can use the tabs you share with them.'**
-  String get browserNotConnected;
-
-  /// No description provided for @browserNoSharedTab.
-  ///
-  /// In en, this message translates to:
-  /// **'No tab is shared yet. Ask an agent to open a page, or click BaoCode in the browser toolbar to share the tab in front.'**
-  String get browserNoSharedTab;
-
   /// No description provided for @browserOtherApp.
   ///
   /// In en, this message translates to:
   /// **'Another BaoCode is connected to the browser.'**
   String get browserOtherApp;
-
-  /// No description provided for @browserSharedTabs.
-  ///
-  /// In en, this message translates to:
-  /// **'Shared Tabs'**
-  String get browserSharedTabs;
-
-  /// No description provided for @browserReload.
-  ///
-  /// In en, this message translates to:
-  /// **'Reload'**
-  String get browserReload;
-
-  /// No description provided for @browserShowInBrowser.
-  ///
-  /// In en, this message translates to:
-  /// **'Show in Browser'**
-  String get browserShowInBrowser;
-
-  /// No description provided for @browserDetached.
-  ///
-  /// In en, this message translates to:
-  /// **'The browser stopped letting BaoCode see this tab.'**
-  String get browserDetached;
-
-  /// No description provided for @browserReconnect.
-  ///
-  /// In en, this message translates to:
-  /// **'Reconnect'**
-  String get browserReconnect;
-
-  /// No description provided for @browserShowInPanel.
-  ///
-  /// In en, this message translates to:
-  /// **'Show in Side Panel'**
-  String get browserShowInPanel;
-
-  /// No description provided for @browserPanelConnected.
-  ///
-  /// In en, this message translates to:
-  /// **'Connected to {browser}'**
-  String browserPanelConnected(String browser);
-
-  /// Agent browser control is paused until explicitly resumed for this run.
-  String get browserPanelPausedNotice;
-
-  /// Native browser UI remains in Chrome.
-  String get browserPanelChromeNotice;
-
-  /// Explicit recovery for the current chat after its Chrome connection died.
-  String get browserPanelReconnectAgent;
-
-  /// Explicit recovery for the current chat after its Chrome connection died.
-  String get browserPanelReconnectAgentTooltip;
-
-  /// Shows the current view and its distinct agent connection when needed.
-  String browserPanelBindingNotice(String view, String agent);
-
-  /// Shows the current view and its distinct agent connection when needed.
-  String browserPanelDisconnectedConnection(String browser);
-
-  /// Short visible status while agent browser access is paused.
-  String get browserPanelPausedShort;
-
-  /// No description provided for @browserPanelPreparingControl.
-  ///
-  /// In en, this message translates to:
-  /// **'Preparing manual control…'**
-  String get browserPanelPreparingControl;
-
-  /// No description provided for @browserPanelUnavailable.
-  ///
-  /// In en, this message translates to:
-  /// **'Selected tab unavailable'**
-  String get browserPanelUnavailable;
-
-  /// No description provided for @browserPanelBack.
-  ///
-  /// In en, this message translates to:
-  /// **'Back'**
-  String get browserPanelBack;
-
-  /// No description provided for @browserPanelForward.
-  ///
-  /// In en, this message translates to:
-  /// **'Forward'**
-  String get browserPanelForward;
-
-  /// No description provided for @browserPanelNewTab.
-  ///
-  /// In en, this message translates to:
-  /// **'New tab'**
-  String get browserPanelNewTab;
-
-  /// No description provided for @browserPanelCloseTab.
-  ///
-  /// In en, this message translates to:
-  /// **'Close current tab'**
-  String get browserPanelCloseTab;
-
-  /// No description provided for @browserPanelAddress.
-  ///
-  /// In en, this message translates to:
-  /// **'Enter website address'**
-  String get browserPanelAddress;
-
-  /// No description provided for @browserPanelGo.
-  ///
-  /// In en, this message translates to:
-  /// **'Go to website'**
-  String get browserPanelGo;
-
-  /// No description provided for @browserPanelTakeOver.
-  ///
-  /// In en, this message translates to:
-  /// **'Take over'**
-  String get browserPanelTakeOver;
-
-  /// No description provided for @browserPanelResume.
-  ///
-  /// In en, this message translates to:
-  /// **'Resume agent'**
-  String get browserPanelResume;
-
-  /// No description provided for @browserPanelTakeOverTooltip.
-  ///
-  /// In en, this message translates to:
-  /// **'Pause all future agent browser observations and actions. Commands already sent may finish.'**
-  String get browserPanelTakeOverTooltip;
-
-  /// No description provided for @browserPanelResumeTooltip.
-  ///
-  /// In en, this message translates to:
-  /// **'Allow all agent browser observations and actions again.'**
-  String get browserPanelResumeTooltip;
 
   /// The card in the conversation while an agent watches the user do something in their browser (browser_watch), recording it.
   ///
@@ -3215,17 +3062,35 @@ abstract class AppLocalizations {
   /// **'Hide side panel'**
   String get sidePanelHide;
 
-  /// No description provided for @sidePanelMoveLeft.
+  /// No description provided for @chatLayout.
   ///
   /// In en, this message translates to:
-  /// **'Move to the Left of the Conversation'**
-  String get sidePanelMoveLeft;
+  /// **'Layout'**
+  String get chatLayout;
 
-  /// No description provided for @sidePanelMoveRight.
+  /// No description provided for @chatLayoutSidebarChatPanel.
   ///
   /// In en, this message translates to:
-  /// **'Move to the Right of the Conversation'**
-  String get sidePanelMoveRight;
+  /// **'Sidebar · Chat · Panel'**
+  String get chatLayoutSidebarChatPanel;
+
+  /// No description provided for @chatLayoutSidebarPanelChat.
+  ///
+  /// In en, this message translates to:
+  /// **'Sidebar · Panel · Chat'**
+  String get chatLayoutSidebarPanelChat;
+
+  /// No description provided for @chatLayoutPanelChatSidebar.
+  ///
+  /// In en, this message translates to:
+  /// **'Panel · Chat · Sidebar'**
+  String get chatLayoutPanelChatSidebar;
+
+  /// No description provided for @chatLayoutChatPanelSidebar.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat · Panel · Sidebar'**
+  String get chatLayoutChatPanelSidebar;
 
   /// The side panel's tab listing the files the agent changed.
   ///
@@ -3814,6 +3679,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Ask in a conversation of its own, beside this one'**
   String get btwCommandDetail;
+
+  /// The /fork command in the composer's command list: the conversation is copied into a new one (as the sidebar's Fork), which opens; what follows the command is sent there.
+  ///
+  /// In en, this message translates to:
+  /// **'Fork this conversation and open the copy'**
+  String get forkCommandDetail;
+
+  /// Shown when /fork is sent in a conversation that cannot be copied (nothing sent yet, or its kernel cannot fork).
+  ///
+  /// In en, this message translates to:
+  /// **'This conversation can\'t be forked: it needs a message first, and its agent has to support forking.'**
+  String get forkUnavailable;
 
   /// The arrow on a sidebar row with conversations asked beside it (/btw) listed under it: no longer lists them.
   ///
@@ -6296,7 +6173,7 @@ abstract class AppLocalizations {
   /// No description provided for @generalSettingsClaudeCoreDescription.
   ///
   /// In en, this message translates to:
-  /// **'Claude Code CLI: Anthropic\'s own program, with this machine\'s sign-in and setup; pick it to use a Claude subscription. Built-in: comes with BaoCode, and uses only the models added in Settings → Models. The CLI is the default, downloaded for you if this machine has none. Changes apply to new sessions.'**
+  /// **'Claude Code CLI: Anthropic\'s own program, with this machine\'s sign-in and setup; pick it to use a Claude subscription. Built-in: comes with BaoCode, and uses only the models added in Settings → Models. By default, the CLI where this machine has Claude Code, else the built-in core; the CLI, picked where there is none, is downloaded for you. Changes apply to new sessions.'**
   String get generalSettingsClaudeCoreDescription;
 
   /// Claude Code core choice: BaoCode's own agent core, written in Dart and run inside the app.
@@ -9798,15 +9675,6 @@ abstract class AppLocalizations {
   /// **'Path'**
   String get claudePathSetting;
 
-  /// Local Codex CLI settings.
-  String get codexPathSettingDescription;
-
-  /// Local Codex CLI settings.
-  String get codexPathMissing;
-
-  /// Local Codex CLI settings.
-  String get codexPathRefresh;
-
   /// No description provided for @claudePathSettingDescription.
   ///
   /// In en, this message translates to:
@@ -9846,7 +9714,7 @@ abstract class AppLocalizations {
   /// No description provided for @claudePathMissing.
   ///
   /// In en, this message translates to:
-  /// **'None found yet: Claude Code is downloaded as the first conversation starts.'**
+  /// **'None found yet: with the Claude Code CLI picked, it is downloaded as the first conversation starts.'**
   String get claudePathMissing;
 
   /// No description provided for @generalSettingsIdeWindows.
@@ -13154,6 +13022,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Connected to {host} over {kind}'**
   String remoteStatusTooltip(String kind, String host);
+
+  /// No description provided for @remoteStatusSystem.
+  ///
+  /// In en, this message translates to:
+  /// **'System: {platform}'**
+  String remoteStatusSystem(String platform);
 
   /// No description provided for @remoteStatusTooltipLost.
   ///
@@ -17041,24 +16915,6 @@ abstract class AppLocalizations {
   /// **'Set Up a Model'**
   String get modelSetUp;
 
-  /// No description provided for @claudeCoreHint.
-  ///
-  /// In en, this message translates to:
-  /// **'This chat runs on BaoCode\'s built-in core. We recommend the Claude Code core for the fullest experience; it\'s downloaded for you if needed.'**
-  String get claudeCoreHint;
-
-  /// No description provided for @claudeCoreHintSwitch.
-  ///
-  /// In en, this message translates to:
-  /// **'Switch to Claude Code'**
-  String get claudeCoreHintSwitch;
-
-  /// No description provided for @claudeCoreHintLater.
-  ///
-  /// In en, this message translates to:
-  /// **'Not Now'**
-  String get claudeCoreHintLater;
-
   /// No description provided for @remoteAddServer.
   ///
   /// In en, this message translates to:
@@ -20089,6 +19945,18 @@ abstract class AppLocalizations {
   /// **'Commit'**
   String get gitCommitTab;
 
+  /// No description provided for @gitCommitPanelFold.
+  ///
+  /// In en, this message translates to:
+  /// **'Fold'**
+  String get gitCommitPanelFold;
+
+  /// No description provided for @gitCommitPanelUnfold.
+  ///
+  /// In en, this message translates to:
+  /// **'Unfold'**
+  String get gitCommitPanelUnfold;
+
   /// No description provided for @gitStashSelected.
   ///
   /// In en, this message translates to:
@@ -21577,6 +21445,108 @@ abstract class AppLocalizations {
   /// **'Listening on port {port}'**
   String mobileStatusListening(int port);
 
+  /// No description provided for @codexPathSettingDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Absolute path to the local Codex CLI (codex.exe or codex.cmd on Windows). Leave empty to find it on PATH. Applies to new local sessions and history requests, not SSH hosts. Nothing is downloaded automatically. (codex.path)'**
+  String get codexPathSettingDescription;
+
+  /// No description provided for @codexPathMissing.
+  ///
+  /// In en, this message translates to:
+  /// **'Codex was not found. Install it with npm install -g @openai/codex, or choose its executable above.'**
+  String get codexPathMissing;
+
+  /// No description provided for @codexPathRefresh.
+  ///
+  /// In en, this message translates to:
+  /// **'Check again'**
+  String get codexPathRefresh;
+
+  /// No description provided for @codexInstallTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Managed Codex CLI'**
+  String get codexInstallTitle;
+
+  /// No description provided for @codexInstallDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Install or update an official Codex release in BaoCode’s data folder. Other installations, running sessions and SSH hosts are unchanged.'**
+  String get codexInstallDescription;
+
+  /// No description provided for @codexInstallAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Install / update…'**
+  String get codexInstallAction;
+
+  /// No description provided for @codexInstallBusy.
+  ///
+  /// In en, this message translates to:
+  /// **'Working…'**
+  String get codexInstallBusy;
+
+  /// No description provided for @codexInstallChecking.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking the latest official release…'**
+  String get codexInstallChecking;
+
+  /// No description provided for @codexInstallConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Install and use this Codex release?'**
+  String get codexInstallConfirm;
+
+  /// No description provided for @codexInstallConfirmDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Download this package from OpenAI’s GitHub releases, verify its SHA-256, extract it into BaoCode’s data folder, and check its version. On success, switch new local sessions to this executable. Existing versions and system PATH are not changed.'**
+  String get codexInstallConfirmDetail;
+
+  /// No description provided for @codexInstallProceed.
+  ///
+  /// In en, this message translates to:
+  /// **'Install and use'**
+  String get codexInstallProceed;
+
+  /// No description provided for @codexInstallDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Installed and selected for new local sessions.'**
+  String get codexInstallDone;
+
+  /// No description provided for @codexInstallFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Codex installation failed. The selected executable was not changed.'**
+  String get codexInstallFailed;
+
+  /// No description provided for @botsBackendTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Bot backends'**
+  String get botsBackendTitle;
+
+  /// No description provided for @botsBackendDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose each bot’s backend while idle. Each backend keeps its own conversation; switching clears the model choice, not history. Codex starts in chat-only mode with gated tools and a read-only sandbox. Turn off Chat Only on the phone to allow workspace writes. Permission requests need an approval-capable client; otherwise cancel and switch back to Chat Only.'**
+  String get botsBackendDescription;
+
+  /// No description provided for @botsBackendBusy.
+  ///
+  /// In en, this message translates to:
+  /// **'Wait for this bot to finish before switching.'**
+  String get botsBackendBusy;
+
+  /// No description provided for @codexCustomizeNotice.
+  ///
+  /// In en, this message translates to:
+  /// **'Native Codex files and settings; commands are BaoCode prompts. Config edits apply to new sessions and depend on the installed Codex version. Project config, hooks and execution rules require a trusted project.'**
+  String get codexCustomizeNotice;
+
   /// No description provided for @autoResetCreditsToggle.
   ///
   /// In en, this message translates to:
@@ -22267,47 +22237,179 @@ abstract class AppLocalizations {
   /// **'Click again to unpick: back to the context as it is now'**
   String get ustatContextUnpickHint;
 
-  /// Managed Codex CLI
-  String get codexInstallTitle;
+  /// No description provided for @localRunTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Run on this computer'**
+  String get localRunTitle;
 
-  /// Install or update an official Codex release in BaoCode’s data folder. Other installations, running sessions and SSH hosts are unchanged.
-  String get codexInstallDescription;
+  /// No description provided for @localRunReason.
+  ///
+  /// In en, this message translates to:
+  /// **'The agent on {host} wants to run this command on your computer ({system}), not on {host}.'**
+  String localRunReason(String host, String system);
 
-  /// Install / update…
-  String get codexInstallAction;
+  /// No description provided for @localRunAlways.
+  ///
+  /// In en, this message translates to:
+  /// **'Always allow for {host}'**
+  String localRunAlways(String host);
 
-  /// Working…
-  String get codexInstallBusy;
+  /// No description provided for @remoteLocalAccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow Remote Agents to Act on This Computer'**
+  String get remoteLocalAccess;
 
-  /// Checking the latest official release…
-  String get codexInstallChecking;
+  /// No description provided for @remoteLocalAccessDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Its agents may run commands on this computer (asking you each time), copy files here and there and forward ports.'**
+  String get remoteLocalAccessDetail;
 
-  /// Install and use this Codex release?
-  String get codexInstallConfirm;
+  /// No description provided for @sidePanelPorts.
+  ///
+  /// In en, this message translates to:
+  /// **'Ports'**
+  String get sidePanelPorts;
 
-  /// Download this package from OpenAI’s GitHub releases, verify its SHA-256, extract it into BaoCode’s data folder, and check its version. On success, switch new local sessions to this executable. Existing versions and system PATH are not changed.
-  String get codexInstallConfirmDetail;
+  /// No description provided for @portsEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No ports are forwarded. A server on {host} that prints its http://localhost address is forwarded here on its own.'**
+  String portsEmpty(String host);
 
-  /// Install and use
-  String get codexInstallProceed;
+  /// No description provided for @portsAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'Forward a Port'**
+  String get portsAdd;
 
-  /// Installed and selected for new local sessions.
-  String get codexInstallDone;
+  /// No description provided for @portsCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy Address'**
+  String get portsCopy;
 
-  /// Codex installation failed. The selected executable was not changed.
-  String get codexInstallFailed;
+  /// No description provided for @portsOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Open in Browser'**
+  String get portsOpen;
 
-  /// Bot backends
-  String get botsBackendTitle;
+  /// No description provided for @portsStop.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop Forwarding'**
+  String get portsStop;
 
-  /// Choose each bot’s backend while idle. Each backend keeps its own conversation; switching clears the model choice, not history. Codex starts in chat-only mode with gated tools and a read-only sandbox. Turn off Chat Only on the phone to allow workspace writes. Permission requests need an approval-capable client; otherwise cancel and switch back to Chat Only.
-  String get botsBackendDescription;
+  /// No description provided for @portsHostToHere.
+  ///
+  /// In en, this message translates to:
+  /// **'{host} → this computer'**
+  String portsHostToHere(String host);
 
-  /// Wait for this bot to finish before switching.
-  String get botsBackendBusy;
+  /// No description provided for @portsHereToHost.
+  ///
+  /// In en, this message translates to:
+  /// **'This computer → {host}'**
+  String portsHereToHost(String host);
 
-  /// Native Codex files and settings; commands are BaoCode prompts. Config edits apply to new sessions and depend on the installed Codex version. Project config, hooks and execution rules require a trusted project.
-  String get codexCustomizeNotice;
+  /// No description provided for @portsAuto.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto'**
+  String get portsAuto;
+
+  /// No description provided for @portsPort.
+  ///
+  /// In en, this message translates to:
+  /// **'Port'**
+  String get portsPort;
+
+  /// No description provided for @portsListen.
+  ///
+  /// In en, this message translates to:
+  /// **'Listen on (optional)'**
+  String get portsListen;
+
+  /// No description provided for @portsForward.
+  ///
+  /// In en, this message translates to:
+  /// **'Forward'**
+  String get portsForward;
+
+  /// No description provided for @portsCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied {address}'**
+  String portsCopied(String address);
+
+  /// Hover of the project folder shown under the chat in place of a Git branch (no repository): its path, then that a click copies it.
+  ///
+  /// In en, this message translates to:
+  /// **'{path}\nClick to copy its path'**
+  String branchBarFolder(String path);
+
+  /// Hover of the project folder under the chat once clicked: its path was copied.
+  ///
+  /// In en, this message translates to:
+  /// **'Path copied'**
+  String get branchBarPathCopied;
+
+  /// The side panel's browser page, there once the browser plugin is installed.
+  ///
+  /// In en, this message translates to:
+  /// **'Browser'**
+  String get sidePanelBrowser;
+
+  /// No description provided for @browserNotConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'No browser is connected. Add BaoCode\'s extension to Chrome (or Edge, Brave, Arc) and agents can use the tabs you share with them.'**
+  String get browserNotConnected;
+
+  /// No description provided for @browserNoSharedTab.
+  ///
+  /// In en, this message translates to:
+  /// **'No tab is shared yet. Ask an agent to open a page, or click BaoCode in the browser toolbar to share the tab in front.'**
+  String get browserNoSharedTab;
+
+  /// No description provided for @browserSharedTabs.
+  ///
+  /// In en, this message translates to:
+  /// **'Shared Tabs'**
+  String get browserSharedTabs;
+
+  /// No description provided for @browserReload.
+  ///
+  /// In en, this message translates to:
+  /// **'Reload'**
+  String get browserReload;
+
+  /// No description provided for @browserShowInBrowser.
+  ///
+  /// In en, this message translates to:
+  /// **'Show in Browser'**
+  String get browserShowInBrowser;
+
+  /// No description provided for @browserDetached.
+  ///
+  /// In en, this message translates to:
+  /// **'The browser stopped letting BaoCode see this tab.'**
+  String get browserDetached;
+
+  /// No description provided for @browserReconnect.
+  ///
+  /// In en, this message translates to:
+  /// **'Reconnect'**
+  String get browserReconnect;
+
+  /// No description provided for @browserShowInPanel.
+  ///
+  /// In en, this message translates to:
+  /// **'Show in Side Panel'**
+  String get browserShowInPanel;
 }
 
 class _AppLocalizationsDelegate

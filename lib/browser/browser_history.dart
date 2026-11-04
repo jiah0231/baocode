@@ -39,9 +39,7 @@ class BrowserHistory extends ChangeNotifier {
     if (_detailed == value) return;
     _detailed = value;
     for (final tab in [..._capturing]) {
-      unawaited((value
-        ? BrowserAgentControl.instance.observe(tab.browser, () => _hookSteps(tab))
-        : _unhookSteps(tab)).catchError((Object _) {}));
+      unawaited(value ? _hookSteps(tab) : _unhookSteps(tab));
     }
     notifyListeners();
   }
@@ -66,7 +64,6 @@ class BrowserHistory extends ChangeNotifier {
       : _bytes(size);
 
   bool _started = false;
-  bool _captureSuspended = true;
   final Map<BrowserTab, _HistoryFile> _files = {};
 
   /// The files of the tabs gone, as they finish writing.
@@ -96,36 +93,10 @@ class BrowserHistory extends ChangeNotifier {
     if (_started) return;
     _started = true;
     unawaited(_measure());
-    BrowserAgentControl.withoutAgentLease(() {
-      BrowserRecords.instance.added.listen(_kept);
-      BrowserBridge.instance.events.listen(_received);
-      BrowserBridge.instance.addListener(_connections);
-      BrowserAgentControl.instance.addListener(_controlChanged);
-    });
-    if (BrowserAgentControl.instance.manualControl) _controlChanged();
+    BrowserRecords.instance.added.listen(_kept);
+    BrowserBridge.instance.events.listen(_received);
+    BrowserBridge.instance.addListener(_connections);
     _connections();
-  }
-
-  void _controlChanged() {
-    if (!BrowserAgentControl.instance.manualControl) {
-      for (final tab in _stepAuthorities.keys.toList()) {
-        if (_stepAuthorities[tab]?.valid == true) continue;
-        _capturing.remove(tab);
-        _pages.remove(tab);
-        _stepScripts.remove(tab);
-        _stepTokens.remove(tab);
-        _stepAuthorities.remove(tab);
-      }
-      return;
-    }
-    // Never enumerate/backfill manual browsing on resume. Only an explicitly
-    // used tab can start a fresh capture after the handover.
-    _captureSuspended = true;
-    _capturing.clear();
-    _pages.clear();
-    _stepScripts.clear();
-    _stepTokens.clear();
-    _stepAuthorities.clear();
   }
 
   /// Stops writing (a test's end).
@@ -139,7 +110,6 @@ class BrowserHistory extends ChangeNotifier {
   }
 
   void _connections() {
-    if (BrowserAgentControl.instance.manualControl || _captureSuspended) return;
     final browsers = BrowserBridge.instance.browsers;
     _browsers.removeWhere((b) => !browsers.contains(b));
     for (final browser in browsers) {
@@ -149,11 +119,7 @@ class BrowserHistory extends ChangeNotifier {
 
   Future<void> _captureShared(BrowserConnection browser) async {
     try {
-      final epoch = BrowserAgentControl.instance.epoch;
-      final tabs = await BrowserAgentControl.instance.observe(
-        browser, () => browser.request('tabs.list'),
-      ) as List? ?? const [];
-      if (!BrowserAgentControl.instance.canObserve(epoch)) return;
+      final tabs = await browser.request('tabs.list') as List? ?? const [];
       for (final tab in tabs.cast<Map>()) {
         if (tab['tabId'] case final int id) {
           final browserTab = BrowserTab(browser, id);
@@ -168,17 +134,13 @@ class BrowserHistory extends ChangeNotifier {
 
   Future<void> _capture(BrowserTab tab) async {
     if (!BrowserBridge.instance.enabled ||
-        BrowserAgentControl.instance.manualControl ||
-        (_captureSuspended && !BrowserRecords.instance.recording(tab)) ||
         _declined.contains(tab) ||
         !_capturing.add(tab)) {
       return;
     }
     try {
-      await BrowserAgentControl.instance.observe(tab.browser, () async {
-        await BrowserRecords.instance.watch(tab);
-        if (_detailed) await _hookSteps(tab);
-      });
+      await BrowserRecords.instance.watch(tab);
+      if (_detailed) await _hookSteps(tab);
     } on Object {
       // Not one to debug (the browser's own page): next time it changes.
       _capturing.remove(tab);
@@ -186,7 +148,6 @@ class BrowserHistory extends ChangeNotifier {
   }
 
   void _received(BrowserEvent event) {
-    if (!event.observable) return;
     final tabId = event.tabId;
     switch (event.event) {
       case 'tab':
@@ -201,8 +162,6 @@ class BrowserHistory extends ChangeNotifier {
         _capturing.remove(tab);
         _declined.remove(tab);
         _stepScripts.remove(tab);
-        _stepTokens.remove(tab);
-        _stepAuthorities.remove(tab);
         final file = _files.remove(tab);
         if (file != null) {
           file.write({'t': 'end', 'why': event.event});
@@ -212,8 +171,6 @@ class BrowserHistory extends ChangeNotifier {
         final tab = BrowserTab(event.connection, tabId);
         _capturing.remove(tab);
         _stepScripts.remove(tab);
-        _stepTokens.remove(tab);
-        _stepAuthorities.remove(tab);
         // The user's no to the debugging: not asked again by itself.
         if (event.message['reason'] == 'canceled_by_user') _declined.add(tab);
       case 'cdp' when tabId != null:
@@ -226,11 +183,6 @@ class BrowserHistory extends ChangeNotifier {
         final tab = BrowserTab(event.connection, tabId);
         try {
           final step = jsonDecode(params?['payload'] as String) as Map;
-          if (step['recording'] != _stepTokens[tab] ||
-              !_stepTokens.containsKey(tab) ||
-              _stepAuthorities[tab]?.valid != true) {
-            return;
-          }
           if (step['type'] == 'scroll') return;
           _write(tab, {
             't': 'step',
@@ -251,9 +203,6 @@ class BrowserHistory extends ChangeNotifier {
   final Map<BrowserTab, String> _pages = {};
 
   void _page(BrowserTab tab, Map info) {
-    // Tab events have no generation timestamp. A passive page reached during
-    // manual control must not become a new historical entry after resume.
-    if (_captureSuspended) return;
     if (info['loading'] == true || !_capturing.contains(tab)) return;
     final url = '${info['url'] ?? ''}';
     final title = '${info['title'] ?? ''}';
@@ -266,7 +215,6 @@ class BrowserHistory extends ChangeNotifier {
 
   void _kept((BrowserTab, Object) kept) {
     final (tab, record) = kept;
-    if (!BrowserRecords.instance.recording(tab)) return;
     switch (record) {
       case ConsoleEntry entry:
         if (!_detailed && entry.level != 'error' && entry.level != 'warning') {
@@ -308,23 +256,12 @@ class BrowserHistory extends ChangeNotifier {
   }
 
   Future<void> _request(BrowserTab tab, NetworkRequest r) async {
-    final control = BrowserAgentControl.instance;
-    if (control.isDetached(tab) || !tab.browser.connected) return;
-    final authority = control.captureTab(tab);
-    final epoch = control.epoch;
     final initiator = r.initiator;
     final stack = ScriptFrame.stackOf(initiator?['stack'], max: 6);
     String? requestBody;
     if (_detailed && r.hasPostData) {
-      try {
-        requestBody = await BrowserAgentControl.instance.observe(
-          tab.browser, () => BrowserRecords.instance.requestBody(tab, r),
-        );
-      } on BrowserControlError {
-        return;
-      }
+      requestBody = await BrowserRecords.instance.requestBody(tab, r);
     }
-    if (!authority.valid || !BrowserAgentControl.instance.canObserve(epoch)) return;
     final textual =
         !r.bodyBase64 &&
         RegExp(r'json|text|xml|javascript|html|csv|graphql|x-www-form')
@@ -384,12 +321,11 @@ class BrowserHistory extends ChangeNotifier {
   };
 
   void _write(BrowserTab tab, Map<String, Object?> record) {
-    if (!BrowserRecords.instance.recording(tab)) return;
     if (!_capturing.contains(tab) && !BrowserRecords.instance.watching(tab)) {
       return;
     }
     final file = _files.putIfAbsent(tab, () => _HistoryFile.open(this, tab));
-    final bytes = file.write(_withoutUrlUserInfo(record) as Map<String, Object?>);
+    final bytes = file.write(record);
     final before = _size ?? 0;
     _size = before + bytes;
     // Told as it crosses the line, or each megabyte.
@@ -397,24 +333,6 @@ class BrowserHistory extends ChangeNotifier {
         before >> 20 != _size! >> 20) {
       notifyListeners();
     }
-  }
-
-  /// Userinfo can carry credentials even when percent-encoded. Remove it
-  /// from every standalone URL in persisted records, including stack URLs.
-  static Object? _withoutUrlUserInfo(Object? value) => switch (value) {
-    final String text => _safeUrl(text),
-    final List list => [for (final item in list) _withoutUrlUserInfo(item)],
-    final Map map => <String, Object?>{
-      for (final entry in map.entries)
-        '${entry.key}': _withoutUrlUserInfo(entry.value),
-    },
-    _ => value,
-  };
-
-  static String _safeUrl(String text) {
-    final uri = Uri.tryParse(text);
-    if (uri == null || !uri.hasScheme || uri.userInfo.isEmpty) return text;
-    return uri.replace(userInfo: '').toString();
   }
 
   Future<void> _measure() async {
@@ -462,61 +380,38 @@ class BrowserHistory extends ChangeNotifier {
 
   /// Each tab's script put in each document it loads.
   final Map<BrowserTab, String?> _stepScripts = {};
-  final Map<BrowserTab, String> _stepTokens = {};
-  final Map<BrowserTab, BrowserTabAuthority> _stepAuthorities = {};
-  int _nextStepToken = 0;
 
   Future<void> _hookSteps(BrowserTab tab) async {
-    if (BrowserAgentControl.instance.manualControl ||
-        !BrowserRecords.instance.recording(tab)) {
-      return;
-    }
     if (_stepScripts.containsKey(tab)) return;
-    final authority = BrowserAgentControl.instance.captureTab(tab);
-    _stepAuthorities[tab] = authority;
     _stepScripts[tab] = null;
-    final token = '${BrowserAgentControl.recordingNonce}-history-${++_nextStepToken}';
-    _stepTokens[tab] = token;
-    final script = _stepScript.replaceAll('__BAO_WATCH_TOKEN__', token);
     final browser = tab.browser;
     try {
-      await browser.cdp(tab.tabId, 'Runtime.evaluate', {
-        'expression': 'window.__baoHistory?.stop(true)',
-      });
       await browser.cdp(tab.tabId, 'Runtime.addBinding', {
         'name': _stepBinding,
       });
       final added = await browser.cdp(
         tab.tabId,
         'Page.addScriptToEvaluateOnNewDocument',
-        {'source': script},
+        {'source': _stepScript},
       );
       _stepScripts[tab] = added['identifier'] as String?;
       await browser.cdp(tab.tabId, 'Runtime.evaluate', {
-        'expression': script,
+        'expression': _stepScript,
       });
     } on Object {
-      if (identical(_stepAuthorities[tab], authority)) {
-        _stepScripts.remove(tab);
-        _stepTokens.remove(tab);
-        _stepAuthorities.remove(tab);
-      }
+      _stepScripts.remove(tab);
     }
   }
 
   Future<void> _unhookSteps(BrowserTab tab) async {
     if (!_stepScripts.containsKey(tab)) return;
     final script = _stepScripts.remove(tab);
-    final authority = _stepAuthorities.remove(tab);
-    _stepTokens.remove(tab);
-    if (authority == null || !authority.valid) return;
     for (final (method, params) in [
-      ('Runtime.evaluate', {'expression': 'window.__baoHistory?.stop(true)'}),
+      ('Runtime.evaluate', {'expression': 'window.__baoHistory?.stop()'}),
       ('Runtime.removeBinding', {'name': _stepBinding}),
       if (script != null)
         ('Page.removeScriptToEvaluateOnNewDocument', {'identifier': script}),
     ]) {
-      if (!authority.valid) return;
       try {
         await tab.browser.cdp(tab.tabId, method, params);
       } on Object {
@@ -767,7 +662,13 @@ final _historyTool = ClaudeSdkTool(
       }
       return true;
     });
-    BrowserTab? live(Object? tab) => null;
+    final browsers = BrowserBridge.instance.browsers;
+    BrowserTab? live(Object? tab) {
+      final id = int.tryParse('$tab');
+      if (id == null || browsers.isEmpty) return null;
+      final open = BrowserTab(browsers.first, id);
+      return BrowserRecords.instance.watching(open) ? open : null;
+    }
 
     if (id != null) {
       final r = records.lastOrNull;

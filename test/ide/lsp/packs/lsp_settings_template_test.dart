@@ -87,8 +87,15 @@ void main() {
     await manager.shutdown();
     changes.value++;
     expect(catalog.asked, 2);
-    expect(changes.listening, isFalse);
+    expect(changes.listened, isFalse);
   });
+}
+
+/// lsp.json's changes, telling whether they are still listened to.
+class _Changes extends ValueNotifier<int> {
+  _Changes() : super(0);
+
+  bool get listened => hasListeners;
 }
 
 class _Counting implements LspCatalog {
@@ -116,9 +123,4 @@ class _NoServers implements LspServerProvider {
     String package, {
     void Function(String message)? onProgress,
   }) async {}
-}
-
-class _Changes extends ValueNotifier<int> {
-  _Changes() : super(0);
-  bool get listening => hasListeners;
 }

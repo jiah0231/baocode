@@ -19,6 +19,7 @@ class CodexCustomizationStore extends CustomizationStore {
   final CustomizationDisk? files;
   final String? location;
   final CodexSettingsRequest? request;
+  @override
   p.Context get paths => files!.paths;
   // Metadata belongs to the exact immutable row, never to the latest list.
   // Concurrent category/project loads cannot overwrite one another.

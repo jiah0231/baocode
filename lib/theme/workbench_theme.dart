@@ -22,8 +22,8 @@
 // restyles the whole workbench upstream.
 
 import 'dart:async';
-import 'dart:convert' show jsonEncode;
-import 'dart:io' show File;
+import 'dart:convert' show jsonEncode, jsonDecode;
+import 'dart:io' show File, FileSystemException;
 import 'dart:ui' as ui;
 
 import 'package:flutter/services.dart';
@@ -45,6 +45,8 @@ import 'package:bao_editor/textmate/textmate_worker.dart'
 import '../ide/ide_color_theme_picker.dart';
 import '../platform/event_log.dart';
 import 'workbench_theme_initial_colors.dart';
+import 'pebrel_theme.dart';
+import 'pebrel_theme_store.dart';
 
 export 'package:bao_editor/monaco/vs/platform/theme/common/theme.dart'
     show
@@ -181,6 +183,15 @@ class WorkbenchThemeService extends ChangeNotifier
   final Map<String, ColorThemeData> _themes = {};
 
   Future<String> _read(String path) async {
+    if (path.startsWith('pebrel:')) {
+      final id = path.substring(7);
+      final key = id.endsWith('.json') ? id.substring(0, id.length - 5) : id;
+      final definition = _pebrelDefinitions[key];
+      if (definition == null) {
+        throw FormatException('Unknown Pebrel theme: $path');
+      }
+      return jsonEncode(definition.toColorThemeJson());
+    }
     // An extension's theme: its file on disk.
     if (p.isAbsolute(path)) {
       return decodeTextMateResource(await File(path).readAsBytes());
@@ -205,6 +216,13 @@ class WorkbenchThemeService extends ChangeNotifier
         label: theme.label,
         type: _themeData(theme).type,
       ),
+    for (final theme in _pebrelData.values)
+      IdeColorThemeEntry(
+        id: theme.settingsId,
+        label: theme.label,
+        type: theme.type,
+        description: 'Pebrel',
+      ),
     for (final theme in _extensionThemes.values)
       IdeColorThemeEntry(
         id: theme.settingsId,
@@ -213,6 +231,100 @@ class WorkbenchThemeService extends ChangeNotifier
         description: theme.description,
       ),
   ];
+
+  // GPL app-owned themes are intentionally outside the MIT editor package.
+  final Map<String, PebrelThemeDefinition> _pebrelDefinitions = {};
+  final Map<String, ColorThemeData> _pebrelData = {};
+  bool _pebrelLoaded = false;
+  PebrelThemeStore? _pebrelStore;
+
+  PebrelThemeDefinition? pebrelTheme(String settingsId) =>
+      _pebrelDefinitions[settingsId];
+
+  void _registerPebrel(String id, PebrelThemeDefinition definition) {
+    _pebrelDefinitions[id] = definition;
+    _pebrelData[id] = ColorThemeData.fromExtensionTheme(
+      IThemeExtensionPoint(
+        id: id,
+        label: definition.name,
+        path: 'pebrel:$id.json',
+        uiTheme: definition.isLight ? 'vs' : 'vs-dark',
+      ),
+      'pebrel:$id.json',
+      extensionId: 'baocode.pebrel',
+    );
+  }
+
+  Future<void> _loadPebrel() async {
+    if (_pebrelLoaded) return;
+    String source;
+    try {
+      source = await _assets.loadString('assets/pebrel/catalog.json');
+    } on FlutterError {
+      if (bundle == null) rethrow;
+      // Legacy injected bundles may intentionally contain only editor assets.
+      _pebrelLoaded = true;
+      return;
+    }
+    final raw = jsonDecode(source) as Map;
+    for (final entry in raw['themes'] as List) {
+      final definition = PebrelThemeDefinition.fromJson(
+        Map<String, dynamic>.from(entry as Map),
+      );
+      _registerPebrel('Pebrel ${definition.name}', definition);
+    }
+    // A supplied bundle is an isolated test/showcase environment, not user disk.
+    if (bundle == null) {
+      final store = _pebrelStore ??= PebrelThemeStore();
+      try {
+        final custom = await store.load();
+        for (final entry in custom.entries) {
+          _registerPebrel(entry.key, entry.value);
+        }
+      } on FileSystemException {
+        // A locked/unreadable user folder must not disable bundled themes.
+        appEvent('theme', 'Custom theme library could not be read');
+      } on FormatException {
+        appEvent('theme', 'Custom theme library is invalid');
+      }
+    }
+    _pebrelLoaded = true;
+  }
+
+  Future<void> setCustomPebrelThemes(
+    Map<String, PebrelThemeDefinition> themes,
+  ) => _queue(() async {
+    final visible = colorThemeId;
+    final previous = _pebrelDefinitions.keys
+        .where((id) => id.startsWith('Pebrel Custom '))
+        .toList();
+    for (final id in previous) {
+      _pebrelDefinitions.remove(id);
+      _pebrelData.remove(id);
+    }
+    for (final entry in themes.entries) {
+      _registerPebrel(entry.key, entry.value);
+    }
+    if (previous.contains(_setting) && !_pebrelData.containsKey(_setting)) {
+      // Only removal of the persisted choice changes preferences.
+      await _setColorTheme(_defaultSetting, preview: false);
+    } else if (_pebrelData[visible] case final data?) {
+      await data.ensureLoaded(_read);
+      // Importing or refreshing the library must neither save a preview
+      // nor rewrite the user's unchanged persisted selection.
+      _apply(data, preview: true);
+    } else if (previous.contains(visible)) {
+      await _setColorTheme(_setting, preview: true);
+    }
+    notifyListeners();
+  });
+
+  Future<String> importCustomThemeFile(File file) async {
+    final store = _pebrelStore ??= PebrelThemeStore();
+    final id = await store.importFile(file);
+    await setCustomPebrelThemes(await store.load());
+    return id;
+  }
 
   // --- Extensions' colors (`contributes.colors`) ---------------------------
 
@@ -302,6 +414,7 @@ class WorkbenchThemeService extends ChangeNotifier
     >
     themes,
   ) => _queue(() async {
+    await _loadPebrel();
     final next = <String, ColorThemeData>{};
     for (final (:extensionId, :location, :theme) in themes) {
       final path = theme['path'];
@@ -336,7 +449,8 @@ class WorkbenchThemeService extends ChangeNotifier
       if (_extensionThemes[_setting] case final theme?) {
         await theme.ensureLoaded(_read);
         _apply(theme, preview: false);
-      } else if ((await _loadManifest()).themeById(_setting) == null) {
+      } else if (!_pebrelData.containsKey(_setting) &&
+          (await _loadManifest()).themeById(_setting) == null) {
         await _setColorTheme(_defaultSetting, preview: false);
       }
     }
@@ -378,7 +492,13 @@ class WorkbenchThemeService extends ChangeNotifier
   /// Reads the bundled themes and applies the setting's theme, loaded
   /// (`restoreColorTheme`); the default theme when it is gone.
   Future<void> initialize() => _queue(() async {
+    await _loadPebrel();
     final manifest = await _loadManifest();
+    if (_pebrelData[_setting] case final data?) {
+      await data.ensureLoaded(_read);
+      _apply(data, preview: false);
+      return;
+    }
     final theme = manifest.themeById(_setting);
     if (theme == null) {
       if (_extensionThemes[_setting] case final extension?) {
@@ -431,11 +551,12 @@ class WorkbenchThemeService extends ChangeNotifier
       if (!preview) _keep(_current);
       return;
     }
+    await _loadPebrel();
     final manifest = await _loadManifest();
     final theme = manifest.themeById(settingsId);
     final data = theme != null
         ? _themeData(theme)
-        : _extensionThemes[settingsId];
+        : _pebrelData[settingsId] ?? _extensionThemes[settingsId];
     if (data == null) return;
     await data.ensureLoaded(_read);
     _apply(data, preview: preview);
@@ -453,7 +574,11 @@ class WorkbenchThemeService extends ChangeNotifier
       'theme',
       '${theme.settingsId} (${theme.type.name}'
           '${theme.isLoaded ? '' : ', not loaded'}'
-          '${silent ? ', restored' : preview ? ', preview' : ''})',
+          '${silent
+              ? ', restored'
+              : preview
+              ? ', preview'
+              : ''})',
     );
     if (silent) return;
     notifyListeners();

@@ -1309,23 +1309,7 @@ Map<String, num> _harTimings(NetworkRequest r) {
 /// A recording of a tab's: its trace events as they come, then what they
 /// say.
 class _Trace {
-  _Trace._(this.tab)
-    : _epoch = BrowserAgentControl.instance.epoch,
-      _lease = BrowserAgentControl.currentLease;
-
-  final int _epoch;
-  final BrowserAgentLease? _lease;
-  bool get _valid => BrowserAgentControl.instance.canObserve(_epoch) &&
-      (_lease?.valid ?? true);
-
-  void _controlChanged() {
-    if (_valid) return;
-    BrowserAgentControl.instance.removeListener(_controlChanged);
-    if (identical(_recording[tab], this)) _recording.remove(tab);
-    _events.clear();
-    unawaited(_subscription?.cancel());
-    if (!_complete.isCompleted) _complete.complete();
-  }
+  _Trace._(this.tab);
 
   final BrowserTab tab;
   final List<Object?> _events = [];
@@ -1358,9 +1342,8 @@ class _Trace {
       await old._end().catchError((Object _) {});
     }
     final trace = _Trace._(tab);
-    BrowserAgentControl.instance.addListener(trace._controlChanged);
     trace._subscription = BrowserBridge.instance.events.listen((event) {
-      if (!trace._valid || !event.observable || event.event != 'cdp' ||
+      if (event.event != 'cdp' ||
           !identical(event.connection, tab.browser) ||
           event.tabId != tab.tabId) {
         return;
@@ -1391,7 +1374,6 @@ class _Trace {
       await tab.browser.cdp(tab.tabId, 'Tracing.end');
       await _complete.future.timeout(const Duration(seconds: 30));
     } finally {
-      BrowserAgentControl.instance.removeListener(_controlChanged);
       await _subscription?.cancel();
     }
   }
