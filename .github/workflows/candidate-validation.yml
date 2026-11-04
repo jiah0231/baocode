@@ -1,5 +1,5 @@
 # Isolated, non-publishing Windows candidate checks. Never use this as a release job.
-# Explicit test files only: no browser/live suites, installers, signing, or uploads.
+# Explicit test files only: no browser/live suites, installers or signing. Only formatter diagnostics may be uploaded.
 name: Candidate validation (no browser or release)
 on:
   push:
@@ -38,8 +38,10 @@ jobs:
           flutter gen-l10n
           if ($LASTEXITCODE -ne 0) { throw 'Localization generation failed' }
       - name: Analyze candidate
+        id: analyze
         run: flutter analyze --no-pub --fatal-infos
       - name: Check formatting of existing Dart files changed since custom +28
+        id: formatting
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -48,6 +50,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Formatting base is missing' }
           $files = @(git -c core.quotepath=false diff --name-only --diff-filter=ACMR $base HEAD -- '*.dart')
           if ($LASTEXITCODE -ne 0) { throw 'Changed-file enumeration failed' }
+          git diff --quiet HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Tracked source differs from exact candidate before formatting' }
           $formatFailed = $false
           for ($offset = 0; $offset -lt $files.Count; $offset += 20) {
             $last = [Math]::Min($offset + 19, $files.Count - 1)
@@ -55,8 +59,37 @@ jobs:
             dart format --output=none --set-exit-if-changed @batch
             if ($LASTEXITCODE -ne 0) { $formatFailed = $true }
           }
-          if ($formatFailed) { throw 'Changed Dart files need formatting' }
+          if ($formatFailed) {
+            git diff --quiet HEAD --
+            if ($LASTEXITCODE -ne 0) { throw 'Unexpected tracked changes before formatter diagnostics' }
+            try {
+              for ($offset = 0; $offset -lt $files.Count; $offset += 20) {
+                $last = [Math]::Min($offset + 19, $files.Count - 1)
+                $batch = @($files[$offset..$last])
+                dart format @batch
+                if ($LASTEXITCODE -ne 0) { throw 'Formatter diagnostic generation failed' }
+              }
+              New-Item -ItemType Directory -Force build/formatter-evidence | Out-Null
+              git diff --binary --output=build/formatter-evidence/format.patch HEAD -- '*.dart'
+              if ($LASTEXITCODE -ne 0) { throw 'Formatter patch generation failed' }
+              "Source commit: $env:GITHUB_SHA" | Set-Content build/formatter-evidence/source.txt
+            } finally {
+              for ($offset = 0; $offset -lt $files.Count; $offset += 20) {
+                $last = [Math]::Min($offset + 19, $files.Count - 1)
+                $batch = @($files[$offset..$last])
+                git restore --worktree --source=HEAD -- @batch
+                if ($LASTEXITCODE -ne 0) { throw 'Exact source restore failed' }
+              }
+              git diff --quiet HEAD --
+              if ($LASTEXITCODE -ne 0) { throw 'Source was not restored after formatting' }
+            }
+          }
+          git diff --quiet HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Tracked source differs from exact candidate after formatting' }
+          "source_exact=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          if ($formatFailed) { throw 'Changed Dart files need formatting; diagnostic patch retained' }
       - name: Run explicitly selected non-browser regressions
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' && steps.formatting.outputs.source_exact == 'true' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -90,3 +123,11 @@ jobs:
           )
           flutter test --no-pub @tests
           if ($LASTEXITCODE -ne 0) { throw 'Non-browser candidate regressions failed' }
+      - name: Retain exact-source formatter patch only
+        if: ${{ always() && hashFiles('build/formatter-evidence/format.patch') != '' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: formatter-evidence-${{ github.sha }}
+          path: build/formatter-evidence/
+          retention-days: 7
+          if-no-files-found: error
