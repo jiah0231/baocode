@@ -306,7 +306,7 @@ void main() {
       pinch: 1.5,
       browserPixelRatio: 4,
       flutterDpr: 1.25,
-      panel: Size(600, 420),
+      panel: Size(360, 560),
       cssSize: Size(133.3333333333, 66.6666666667),
       streamSize: Size(400, 200),
       expectedCss: [
