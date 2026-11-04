@@ -1168,7 +1168,9 @@ Future<_PaintedLandmarks> _paintedLandmarks(_MirrorHarness mirror) async {
             final color = _landmarkColors[marker];
             if ((r - color[0]).abs() > 3 ||
                 (g - color[1]).abs() > 3 ||
-                (b - color[2]).abs() > 3) continue;
+                (b - color[2]).abs() > 3) {
+              continue;
+            }
             count[marker]++;
             sumX[marker] += x + .5;
             sumY[marker] += y + .5;
