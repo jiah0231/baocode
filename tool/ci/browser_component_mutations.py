@@ -308,8 +308,12 @@ def validate_machine(result: ProcessResult, names: tuple[str, ...], root: Path,
     completions: dict[int, dict] = {}
     errors: list[dict] = []
     messages: dict[int, list[str]] = {}
+    starts_at: dict[int, int] = {}
+    completions_at: dict[int, int] = {}
+    errors_at: list[int] = []
+    prints: list[tuple[int, dict]] = []
     try:
-        for event in events:
+        for position, event in enumerate(events):
             kind = event["type"]
             if kind == "suite":
                 suite = event["suite"]
@@ -323,6 +327,7 @@ def validate_machine(result: ProcessResult, names: tuple[str, ...], root: Path,
                 if test["id"] in tests or not isinstance(test["name"], str):
                     return fail("duplicate or malformed test start")
                 tests[test["id"]] = test
+                starts_at[test["id"]] = position
             elif kind == "testDone":
                 test_id = event["testID"]
                 if test_id not in tests or test_id in completions:
@@ -332,18 +337,21 @@ def validate_machine(result: ProcessResult, names: tuple[str, ...], root: Path,
                 if not isinstance(event.get("hidden"), bool):
                     return fail("test completion lacks hidden flag")
                 completions[test_id] = event
+                completions_at[test_id] = position
             elif kind == "error":
                 if (event["testID"] not in tests or not isinstance(event["error"], str) or
                         not isinstance(event["stackTrace"], str) or
                         not isinstance(event["isFailure"], bool)):
                     return fail("malformed or unassociated test error")
                 errors.append(event)
+                errors_at.append(position)
             elif kind == "print":
                 if event["testID"] not in tests or not isinstance(event["message"], str):
                     return fail("malformed or unassociated test message")
                 if event.get("messageType") == "skip":
                     return fail("skip message is not mutation evidence")
                 messages.setdefault(event["testID"], []).append(event["message"])
+                prints.append((position, event))
             elif kind not in {"start", "done", "allSuites", "group", "debug"}:
                 return fail(f"unsupported machine event: {kind}")
         if set(tests) != set(completions):
@@ -372,13 +380,48 @@ def validate_machine(result: ProcessResult, names: tuple[str, ...], root: Path,
         if len(names) != 1 or result.returncode != 1 or events[-1]["success"] is not False:
             return fail("mutation lacks the expected failing exit code/done event")
         test_id = selected[names[0]]
-        if completions[test_id].get("result") != "failure":
-            return fail("expected named test did not report a TestFailure")
-        if len(errors) != 1 or errors[0]["testID"] != test_id or errors[0]["isFailure"] is not True:
+        if len(errors) != 1 or errors[0]["testID"] != test_id:
             return fail("expected exactly one assertion error from the selected test, with no extra late errors")
-        assertion_text = "\n".join(error["error"] + "\n" + error["stackTrace"] for error in errors)
-        assertion_text += "\n" + "\n".join(messages.get(test_id, []))
+        if not starts_at[test_id] < errors_at[0] < completions_at[test_id]:
+            return fail("selected assertion error is outside its started/completed test interval")
+        error = errors[0]
         marker = ASSERTION_MARKERS.get(names[0])
+        assertion_format = "direct_test_failure"
+        if error["isFailure"] is True and completions[test_id].get("result") == "failure":
+            assertion_text = error["error"] + "\n" + error["stackTrace"]
+            assertion_text += "\n" + "\n".join(messages.get(test_id, []))
+        elif error["isFailure"] is False and completions[test_id].get("result") == "error":
+            # Flutter 3.47.5's framework can print the actual TestFailure and
+            # throw this exact generic wrapper as a non-TestFailure. Accept ONLY
+            # that captured protocol shape, never an arbitrary runtime error.
+            expected_wrapper = ("Test failed. See exception logs above.\n"
+                                "The test description was: " + names[0])
+            if error["error"] != expected_wrapper or error["stackTrace"] != "" or len(prints) != 1:
+                return fail("non-TestFailure error is not the single exact Flutter framework wrapper")
+            print_at, printed = prints[0]
+            if (printed["testID"] != test_id or printed.get("messageType") != "print" or
+                    not starts_at[test_id] < print_at < errors_at[0]):
+                return fail("Flutter assertion print has the wrong test identity, type, or ordering")
+            assertion_text = printed["message"]
+            description = list(re.finditer(r"(?m)^The test description was:\n  " + re.escape(names[0]) + r"\n", assertion_text))
+            source = list(re.finditer(r"(?m)^This was caught by the test expectation on the following line:\n"
+                                     r"[ \t]+[^\n]*test/browser/browser_mirror_test\.dart line [1-9][0-9]*$", assertion_text))
+            expected = list(re.finditer(r"(?m)^Expected:", assertion_text))
+            actual = list(re.finditer(r"(?m)^  Actual:", assertion_text))
+            markers = list(re.finditer(r"(?m)^" + re.escape(marker) + r":", assertion_text)) if marker else []
+            header = "The following TestFailure was thrown running a test:\n"
+            stack = "When the exception was thrown, this was the stack:\n"
+            if (not assertion_text.startswith("══╡ EXCEPTION CAUGHT BY FLUTTER TEST FRAMEWORK ╞") or
+                    assertion_text.count(header) != 1 or assertion_text.count(stack) != 1 or
+                    assertion_text.count("The test description was:\n") != 1 or
+                    any(len(matches) != 1 for matches in (description, source, expected, actual, markers))):
+                return fail("Flutter wrapper lacks its exact printed TestFailure, description, assertion source, or marker")
+            if not (assertion_text.index(header) < expected[0].start() < actual[0].start() <
+                    markers[0].start() < assertion_text.index(stack) < source[0].start() < description[0].start()):
+                return fail("Flutter printed assertion sections are out of order")
+            assertion_format = "flutter_framework_wrapper"
+        else:
+            return fail("expected named test did not report a supported TestFailure shape")
         if not (marker and marker in assertion_text and "Expected:" in assertion_text and
                 "Actual:" in assertion_text and TEST_FILE.name in assertion_text):
             return fail("missing regression-specific assertion marker, Expected/Actual, or test-source evidence")
@@ -387,7 +430,7 @@ def validate_machine(result: ProcessResult, names: tuple[str, ...], root: Path,
         if len(headers) > 1 or any(header != "TestFailure" for header in headers):
             return fail("Flutter reported a non-TestFailure exception")
         return {"outcome": "killed", "tests": list(names), "assertion_test_id": test_id,
-                "assertion_marker": marker}
+                "assertion_marker": marker, "assertion_format": assertion_format}
     except (KeyError, TypeError, ValueError, AttributeError):
         return fail("malformed machine event fields")
 

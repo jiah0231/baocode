@@ -1,5 +1,6 @@
 """Stdlib-only harness tests. No Flutter, Chrome, or other child process runs."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -40,6 +41,25 @@ def process(events, returncode=0, **kwargs):
     return gate.ProcessResult(returncode, "\n".join(json.dumps(event) for event in events) + "\n", **kwargs)
 
 
+def decode_captured_flutter_fixture(data):
+    # Permit ONLY checkout CRLF-to-LF normalization before integrity checking.
+    # JSON-escaped newlines and all error/stack/description contents stay intact.
+    data = data.replace(b"\r\n", b"\n")
+    assert hashlib.sha256(data).hexdigest() == "cd90bac448130ff381743e9d8d2ed74be70e405ea750868dccd0eb2e6c20aee7"
+    return [json.loads(line) for line in data.splitlines()]
+
+
+def captured_flutter_events():
+    # Canonical LF capture: 3,568 bytes from CI 41763595481, first mutant.
+    # Archive SHA256: 7fe058c8b8bd569d67e480cf546f16bf35432bf2ade36ac79f5aaad913fa63a5.
+    fixture = Path(__file__).parent / "fixtures/flutter_3_47_5_wrapped_assertion.jsonl"
+    events = decode_captured_flutter_fixture(fixture.read_bytes())
+    # The suite path is the only normalization needed to replay Windows evidence
+    # on any host. Keep the actual printed error/stack/description bytes intact.
+    next(event for event in events if event["type"] == "suite")["suite"]["path"] = str(gate.TEST_FILE)
+    return events
+
+
 class MachineProtocolTests(unittest.TestCase):
     def verdict(self, events, *, failure=True, returncode=None, **kwargs):
         result = process(events, (1 if failure else 0) if returncode is None else returncode, **kwargs)
@@ -48,11 +68,113 @@ class MachineProtocolTests(unittest.TestCase):
     def test_baseline_pass(self):
         self.assertEqual(self.verdict(machine_events((gate.LANDMARK_TEST,)), failure=False), "baseline_pass")
 
+    def test_capture_integrity_allows_only_checkout_crlf_normalization(self):
+        fixture = Path(__file__).parent / "fixtures/flutter_3_47_5_wrapped_assertion.jsonl"
+        lf = fixture.read_bytes().replace(b"\r\n", b"\n")
+        crlf = lf.replace(b"\n", b"\r\n")
+        self.assertEqual(decode_captured_flutter_fixture(lf), decode_captured_flutter_fixture(crlf))
+        for changed in (lf.replace(b"\n", b"\r", 1), b" " + lf,
+                        lf.replace(b'"isFailure":false', b'"isFailure":true')):
+            with self.subTest(changed=changed[:20]), self.assertRaises(AssertionError):
+                decode_captured_flutter_fixture(changed)
+
     def test_exact_assertion_kills_mutant(self):
         self.assertEqual(self.verdict(machine_events((gate.LANDMARK_TEST,), failure=True)), "killed")
 
     def test_flutter_wrapped_assertion_kills_mutant(self):
         self.assertEqual(self.verdict(machine_events((gate.LANDMARK_TEST,), failure=True, wrapped=True)), "killed")
+
+    def test_actual_flutter_non_failure_wrapper_proves_marked_assertion(self):
+        events = captured_flutter_events()
+        error = next(event for event in events if event["type"] == "error")
+        self.assertIs(error["isFailure"], False)
+        self.assertEqual(error["stackTrace"], "")
+        verdict = gate.validate_machine(process(events, 1), (gate.LANDMARK_TEST,), Path.cwd(), mutant=True)
+        self.assertEqual(verdict["outcome"], "killed")
+        self.assertEqual(verdict["assertion_format"], "flutter_framework_wrapper")
+        self.assertEqual(verdict["assertion_marker"], "stream_css_position_oracle")
+
+    def test_actual_wrapper_rejects_runtime_forgery_identity_order_and_extra_evidence(self):
+        for defect in ("runtime_header", "runtime_in_same_print", "extra_runtime_print", "forged_marker_only",
+                       "wrong_print_id", "wrong_error_id", "wrong_error_description", "wrong_print_description",
+                       "wrong_source", "wrong_marker", "marker_after_description", "nonempty_wrapper_stack",
+                       "extra_wrapper_text", "duplicate_print", "print_after_error", "print_after_completion",
+                       "error_after_completion", "extra_late_error", "helper_only", "wrong_completion_result",
+                       "missing_print", "missing_actual", "wrong_print_type", "duplicate_print_description",
+                       "duplicate_actual_field"):
+            with self.subTest(defect=defect):
+                events = captured_flutter_events()
+                printed = next(event for event in events if event["type"] == "print")
+                error = next(event for event in events if event["type"] == "error")
+                completion = next(event for event in events if event["type"] == "testDone" and event["testID"] == 3)
+                marker = gate.ASSERTION_MARKERS[gate.LANDMARK_TEST]
+                if defect == "runtime_header":
+                    printed["message"] = printed["message"].replace("The following TestFailure", "The following StateError")
+                elif defect == "runtime_in_same_print":
+                    printed["message"] += "\nThe following FormatException was thrown running a test:\nruntime failure\n"
+                elif defect == "extra_runtime_print":
+                    events.insert(events.index(error), {"type": "print", "testID": 3, "messageType": "print",
+                                                        "message": "The following FormatException was thrown running a test:"})
+                elif defect == "forged_marker_only":
+                    printed["message"] = "Expected: 35.2\n  Actual: 43.956\n" + marker + ": test/browser/browser_mirror_test.dart\n"
+                elif defect == "wrong_print_id":
+                    printed["testID"] = 1
+                elif defect == "wrong_error_id":
+                    error["testID"] = 1
+                elif defect == "wrong_error_description":
+                    error["error"] = error["error"].replace(gate.LANDMARK_TEST, "different test")
+                elif defect == "wrong_print_description":
+                    printed["message"] = printed["message"].replace(gate.LANDMARK_TEST, "different test")
+                elif defect == "wrong_source":
+                    printed["message"] = printed["message"].replace("browser_mirror_test.dart", "another_test.dart")
+                elif defect == "wrong_marker":
+                    printed["message"] = printed["message"].replace(marker, gate.ASSERTION_MARKERS[gate.PAINTED_TEST])
+                elif defect == "marker_after_description":
+                    lines = printed["message"].splitlines()
+                    marker_line = next(line for line in lines if line.startswith(marker))
+                    lines.remove(marker_line)
+                    printed["message"] = "\n".join([*lines, marker_line])
+                elif defect == "nonempty_wrapper_stack":
+                    error["stackTrace"] = "test/browser/browser_mirror_test.dart 1231"
+                elif defect == "extra_wrapper_text":
+                    error["error"] += "\nadditional runtime failure"
+                elif defect == "duplicate_print":
+                    events.insert(events.index(error), dict(printed))
+                elif defect == "print_after_error":
+                    a, b = events.index(printed), events.index(error)
+                    events[a], events[b] = events[b], events[a]
+                elif defect == "print_after_completion":
+                    events.remove(printed)
+                    events.insert(events.index(completion) + 1, printed)
+                elif defect == "error_after_completion":
+                    a, b = events.index(error), events.index(completion)
+                    events[a], events[b] = events[b], events[a]
+                elif defect == "extra_late_error":
+                    events.insert(-1, {"type": "error", "testID": 3, "isFailure": True,
+                                       "error": "Expected: true\nActual: false\nhelper failed",
+                                       "stackTrace": "test/browser/browser_mirror_test.dart 999"})
+                elif defect == "helper_only":
+                    printed["message"] = printed["message"].replace(marker, "synthetic browser handshake or frame timed out")
+                elif defect == "wrong_completion_result":
+                    completion["result"] = "failure"
+                elif defect == "missing_print":
+                    events.remove(printed)
+                elif defect == "missing_actual":
+                    printed["message"] = printed["message"].replace("  Actual:", "  Observed:")
+                elif defect == "wrong_print_type":
+                    printed["messageType"] = "debug"
+                elif defect == "duplicate_print_description":
+                    printed["message"] += "\nThe test description was:\n  " + gate.LANDMARK_TEST + "\n"
+                elif defect == "duplicate_actual_field":
+                    printed["message"] += "\n  Actual: another failure\n"
+                self.assertEqual(self.verdict(events), "gate_failure")
+
+    def test_actual_wrapper_never_overrides_process_timeout_or_late_infrastructure(self):
+        events = captured_flutter_events()
+        self.assertEqual(self.verdict(events, timed_out=True), "gate_failure")
+        self.assertEqual(self.verdict(events, stderr="Compilation failed"), "gate_failure")
+        self.assertEqual(self.verdict(events, cleanup_confirmed=False), "gate_failure")
+        self.assertEqual(self.verdict(events, returncode=255), "gate_failure")
 
     def test_unexpected_mutant_pass_is_not_killed(self):
         self.assertEqual(self.verdict(machine_events((gate.LANDMARK_TEST,)), returncode=0), "mutant_survived")
