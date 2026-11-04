@@ -111,33 +111,14 @@ class _Rule {
 
 /// A tab's rules, and the requests they hold.
 class _Interception {
-  _Interception._(this.tab)
-    : _epoch = BrowserAgentControl.instance.epoch,
-      _lease = BrowserAgentControl.currentLease {
+  _Interception._(this.tab) {
     _subscription = BrowserBridge.instance.events.listen(_received);
-    BrowserAgentControl.instance.addListener(_controlChanged);
-  }
-
-  final int _epoch;
-  final BrowserAgentLease? _lease;
-  bool get _valid => BrowserAgentControl.instance.canObserve(_epoch) &&
-      (_lease?.valid ?? true);
-
-  void _controlChanged() {
-    if (_valid) return;
-    BrowserAgentControl.instance.removeListener(_controlChanged);
-    if (identical(_tabs[tab], this)) _tabs.remove(tab);
-    unawaited(_subscription?.cancel());
-    rules.clear();
   }
 
   static final Map<BrowserTab, _Interception> _tabs = {};
 
-  static _Interception of(BrowserTab tab) {
-    final previous = _tabs[tab];
-    if (previous != null && !previous._valid) previous._controlChanged();
-    return _tabs.putIfAbsent(tab, () => _Interception._(tab));
-  }
+  static _Interception of(BrowserTab tab) =>
+      _tabs.putIfAbsent(tab, () => _Interception._(tab));
 
   final BrowserTab tab;
   StreamSubscription<BrowserEvent>? _subscription;
@@ -165,7 +146,6 @@ class _Interception {
   }
 
   void _received(BrowserEvent event) {
-    if (!_valid || !event.observable) return;
     if (!identical(event.connection, tab.browser) || event.tabId != tab.tabId) {
       return;
     }

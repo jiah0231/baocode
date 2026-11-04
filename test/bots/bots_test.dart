@@ -184,8 +184,9 @@ void main() {
       expect(told, contains('generate_image'));
     });
 
-    test('what of Claude Code\'s it has: all of it; only chatting, the '
-        'web\'s, the browser\'s by the tool search, no files, no commands', () {
+    test('what of Claude Code\'s it has: an agent\'s but what waits on the '
+        'user at the computer; only chatting, the web\'s, the browser\'s by '
+        'the tool search, no files, no commands', () {
       Bot bot(Set<BotAbility> abilities, {bool chatOnly = false}) => Bot(
         id: 'b1',
         name: 'Mia',
@@ -193,7 +194,21 @@ void main() {
         abilities: abilities,
         chatOnly: chatOnly,
       );
-      expect(BotPermissions.tools(bot({})), isNull);
+      // An agent's, but for what would wait on someone at the computer.
+      final agent = BotPermissions.tools(bot({}));
+      expect(agent, containsAll(['Bash', 'Read', 'Edit', 'ToolSearch']));
+      for (final waits in [
+        'AskUserQuestion',
+        'EnterPlanMode',
+        'ExitPlanMode',
+        'Workflow',
+        'EnterWorktree',
+        'CronCreate',
+        'ScheduleWakeup',
+        'SendMessage',
+      ]) {
+        expect(agent, isNot(contains(waits)));
+      }
       for (final abilities in [
         <BotAbility>{},
         {BotAbility.agents},
@@ -454,6 +469,7 @@ void main() {
         expect(setup.settings['permission'], 'workspace-write');
         expect(setup.workspace().tools, isNull);
         expect(setup.workspace().approvesAll, isFalse);
+        expect(setup.workspace().userServers, isTrue);
         final optedCard = utf8.decode(folders.files[
             p.join(optedIn.folder, 'BOT.md')]!);
         expect(BotFiles.read(optedIn.folder, optedCard)!.chatOnly, isFalse);
@@ -546,9 +562,11 @@ void main() {
         isTrue,
       );
       expect(launch.sdkServers, [ClaudeSdkTools.server]);
-      // All of Claude Code's tools, as an agent's.
-      expect(launch.tools, isNull);
-      expect(launch.arguments, isNot(contains('--tools')));
+      // An agent's tools, but for what would wait on the user at the
+      // computer; the user's MCP servers too, as an agent's.
+      expect(launch.tools, BotPermissions.agentTools);
+      expect(launch.arguments, contains('--tools'));
+      expect(launch.arguments, isNot(contains('--strict-mcp-config')));
       // Nothing it is made to ask about.
       expect(
         (launch.settings['permissions'] as Map?)?.containsKey('ask'),

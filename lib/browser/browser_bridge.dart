@@ -8,7 +8,6 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import '../platform/data_dir.dart';
-import 'browser_agent_control.dart';
 
 /// The user's own browsers, reached through BaoCode's extension in them
 /// (browser_extension/): each runs the app's native messaging host
@@ -471,17 +470,7 @@ class BrowserTab {
 /// What a browser told: [event] (`cdp`, `tab`, `closed`, `detached`,
 /// `unshared`) and the rest of the message.
 class BrowserEvent {
-  BrowserEvent(this.connection, this.event, this.message)
-    : observationEpoch = BrowserAgentControl.instance.epoch,
-      observedWhileManual = BrowserAgentControl.instance.manualControl,
-      _authority = BrowserAgentControl.instance.captureConnection(connection);
-
-  /// Stamped on receipt, not when an asynchronous subscriber catches up.
-  final int observationEpoch;
-  final bool observedWhileManual;
-  final BrowserConnectionAuthority _authority;
-  bool get observable => !observedWhileManual && _authority.valid &&
-      BrowserAgentControl.instance.canObserve(observationEpoch);
+  const BrowserEvent(this.connection, this.event, this.message);
 
   final BrowserConnection connection;
   final String event;
@@ -543,8 +532,6 @@ class BrowserConnection {
   final BytesBuilder _buffer = BytesBuilder(copy: false);
   bool _closed = false;
 
-  bool get connected => !_closed;
-
   /// Asks the extension [method] (see background.js): its result, or an
   /// error thrown with what it said.
   Future<Object?> request(
@@ -552,47 +539,20 @@ class BrowserConnection {
     Map<String, Object?> params = const {},
     Duration timeout = const Duration(seconds: 30),
   ]) {
-    final lease = BrowserAgentControl.currentLease;
-    lease?.check(this);
-    // Every CDP request auto-attaches in the existing extension. Capture a
-    // one-way tab generation for both agent and human/background requests.
-    BrowserRequestAuthority? targetAuthority;
-    if ((lease != null || method == 'cdp') && params['tabId'] is int) {
-      final tab = BrowserTab(this, params['tabId'] as int);
-      targetAuthority = lease?.touch(tab) ??
-          BrowserAgentControl.instance.captureTab(tab);
-    } else if (params['tabId'] is! int) {
-      targetAuthority = lease?.touchConnection(this) ??
-          BrowserAgentControl.instance.captureConnection(this);
-    }
     if (_closed) {
       return Future.error(StateError('The browser is no longer connected.'));
     }
     final id = ++_lastId;
     final completer = Completer<Object?>();
     _pending[id] = completer;
-    // No await between this last authority check and the socket write.
-    lease?.check(this);
-    targetAuthority?.check();
-    if (lease != null) BrowserAgentControl.instance.track(this, params);
     _write({'id': id, 'method': method, 'params': params});
-    final result = completer.future.timeout(
+    return completer.future.timeout(
       timeout,
       onTimeout: () {
         _pending.remove(id);
         throw TimeoutException('The browser did not answer $method.');
       },
     );
-    if (lease == null && targetAuthority == null) return result;
-    final targetResult = targetAuthority?.wait(result) ?? result;
-    final guarded = lease?.wait(targetResult) ?? targetResult;
-    return guarded.whenComplete(() {
-      final pending = _pending.remove(id);
-      if (pending != null && !pending.isCompleted) {
-        // Settle the abandoned response too, cancelling its timeout timer.
-        pending.completeError(const BrowserControlError.paused());
-      }
-    });
   }
 
   /// Asks a shared tab's page [method] of the DevTools protocol; with
@@ -727,18 +687,6 @@ class BrowserConnection {
         _bridge._connected();
       case 'event':
         final event = message['event'] as String? ?? '';
-        if (event == 'cdp' && message['tabId'] is int &&
-            message['method'] == 'Tracing.tracingComplete') {
-          BrowserAgentControl.instance.traceCompleted(BrowserTab(this, message['tabId'] as int));
-        }
-        if (event == 'detached' && message['tabId'] is int) {
-          BrowserAgentControl.instance.markDetached(BrowserTab(this, message['tabId'] as int));
-        }
-        if ((event == 'closed' || event == 'unshared') && message['tabId'] is int) {
-          // Revoke before notifying UI or recorders. Re-sharing the same id
-          // cannot make an outstanding request or old agent lease valid again.
-          BrowserAgentControl.instance.markDetached(BrowserTab(this, message['tabId'] as int));
-        }
         _bridge._events.add(BrowserEvent(this, event, message));
     }
   }

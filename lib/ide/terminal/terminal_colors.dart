@@ -92,6 +92,7 @@ class TerminalColorTheme {
     required this.scrollbarSliderHoverBackground,
     required this.scrollbarSliderActiveBackground,
     required List<Color> ansi,
+    required Map<int, Color> indexedColors,
     required this.findMatchBackground,
     required this.findMatchBorder,
     required this.findMatchHighlightBackground,
@@ -105,7 +106,8 @@ class TerminalColorTheme {
     required this.border,
     required this.dropBackground,
     required this.initialHintForeground,
-  }) : ansi = List<Color>.unmodifiable(ansi);
+  }) : ansi = List<Color>.unmodifiable(ansi),
+       indexedColors = Map<int, Color>.unmodifiable(indexedColors);
 
   /// The terminal colors of the theme [getColor] reads: the theme's value
   /// for a color id, else the registry's default for the theme's [type]
@@ -117,13 +119,18 @@ class TerminalColorTheme {
     Color? Function(String colorId) getColor, {
     required ColorScheme type,
     bool inEditor = false,
+    Map<int, Color> indexedColors = const {},
   }) {
+    for (final index in indexedColors.keys) {
+      RangeError.checkValueInInterval(index, 16, 255, 'indexedColors index');
+    }
     // getXtermTheme, with TerminalInstanceColorProvider's background.
     final foreground = getColor('terminal.foreground');
     final background =
         getColor('terminal.background') ??
         getColor(inEditor ? 'editor.background' : 'panel.background');
     return TerminalColorTheme._(
+      indexedColors: indexedColors,
       type: type,
       foreground: foreground,
       background: background,
@@ -225,6 +232,10 @@ class TerminalColorTheme {
   /// `terminal.ansiBlack` ... `terminal.ansiBrightWhite`.
   final List<Color> ansi;
 
+  /// Sparse theme overrides for indexed colors 16–255. ANSI 0–15 remain
+  /// owned by [ansi]. Kept in the application, not the terminal core.
+  final Map<int, Color> indexedColors;
+
   /// `terminal.findMatchBackground`: the current search match.
   final Color? findMatchBackground;
 
@@ -268,10 +279,16 @@ class TerminalColorTheme {
   final Color? initialHintForeground;
 
   /// The 256 colors of the terminal's palette: [ansi], then xterm.js' color
-  /// cube and grays ([terminalAnsiColors]).
-  late final List<Color> palette = List<Color>.unmodifiable(
-    terminalAnsiColors(ansi),
-  );
+  /// cube and grays ([terminalAnsiColors]), with [indexedColors] applied.
+  late final List<Color> palette = List<Color>.unmodifiable(_resolvedPalette());
+
+  List<Color> _resolvedPalette() {
+    final colors = terminalAnsiColors(ansi);
+    for (final entry in indexedColors.entries) {
+      colors[entry.key] = entry.value;
+    }
+    return colors;
+  }
 
   /// [findMatchHighlightBackground] blended onto [background], as VS Code
   /// passes it to the search addon (`matchBackground`: "decoration bgs don't
@@ -334,6 +351,9 @@ class TerminalColorTheme {
     brightMagenta: cssColor(ansi[13]),
     brightCyan: cssColor(ansi[14]),
     brightWhite: cssColor(ansi[15]),
+    extendedAnsi: indexedColors.isEmpty
+        ? null
+        : palette.skip(16).map(cssColor).toList(growable: false),
   );
 
   /// VS Code's `_updateFindColors`: the search addon's decorations. Theme
@@ -365,7 +385,7 @@ class TerminalColorTheme {
     scrollbarSliderBackground,
     scrollbarSliderHoverBackground,
     scrollbarSliderActiveBackground,
-    ...ansi,
+    ...palette,
     findMatchBackground,
     findMatchBorder,
     findMatchHighlightBackground,

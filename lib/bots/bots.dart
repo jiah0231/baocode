@@ -480,12 +480,19 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
         ),
         // Told only who it is and how it talks: no coding agent's prompt.
         ownPrompt: true,
-        // All of an agent's, and its own; only the web's and its own when
+        // An agent's, but for what waits on someone at the computer
+        // (BotPermissions), and its own; only the web's and its own when
         // it only chats (with the tool search, for the browser's, which
         // are deferred). Claude and restricted bots do not ask; opted-in
         // Codex uses its normal workspace sandbox and approval requests,
         // carried to the phone by WorkspaceBridge.
-        tools: BotPermissions.tools(bot),
+        // Claude's explicit tool allowlist must not mark an opted-in Codex
+        // agent as restricted: Codex uses a non-null list for chat-only bots.
+        tools: bot.kernel == 'codex' && !bot.chatOnly
+            ? null
+            : BotPermissions.tools(bot),
+        // Full Claude agents keep their user's MCP servers too.
+        userServers: !bot.chatOnly,
         approvesAll: bot.kernel != 'codex' || bot.chatOnly,
         // What the user writes while it talks, taken up as it does: as a
         // person hears what is said meanwhile; and shown where they wrote

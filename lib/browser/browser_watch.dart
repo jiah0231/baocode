@@ -22,26 +22,7 @@ const _watchBinding = '__baoWatchStep';
 /// (an agent's browser_watch): the conversation shows it, and its buttons
 /// say they are done or give up.
 class BrowserWatching extends ChangeNotifier {
-  BrowserWatching._(this.tab, this.task, this.started)
-    : _epoch = BrowserAgentControl.instance.epoch,
-      _lease = BrowserAgentControl.currentLease,
-      _authority = BrowserAgentControl.instance.captureTab(tab),
-      _token = '${BrowserAgentControl.recordingNonce}-watch-${++_nextToken}';
-
-  static int _nextToken = 0;
-  static Future<void> _cleanup = Future<void>.value();
-  final String _token;
-  final int _epoch;
-  final BrowserAgentLease? _lease;
-  final BrowserTabAuthority _authority;
-  bool get _valid => BrowserAgentControl.instance.canObserve(_epoch) &&
-      _authority.valid && (_lease?.valid ?? true);
-
-  void _controlChanged() {
-    if (_valid) return;
-    _steps.clear();
-    _end(false);
-  }
+  BrowserWatching._(this.tab, this.task, this.started);
 
   final BrowserTab tab;
 
@@ -74,26 +55,14 @@ class BrowserWatching extends ChangeNotifier {
     if (_ended.isCompleted) return;
     _ended.complete(finished);
     _limit?.cancel();
-    BrowserAgentControl.instance.removeListener(_controlChanged);
     unawaited(_events?.cancel());
     if (current.value == this) current.value = null;
-    // Takeover's central cleanup also handles half-installed scripts. Normal
-    // completion uses only this recorder's fixed teardown, outside its lease.
-    if (!BrowserAgentControl.instance.manualControl &&
-        !BrowserAgentControl.instance.isDetached(tab)) {
-      _cleanup = _cleanup.then((_) => BrowserAgentControl.withoutAgentLease(_unhook));
-      unawaited(_cleanup);
-    }
+    unawaited(_unhook());
     notifyListeners();
   }
 
   /// Starts watching the user in [tab].
   static Future<BrowserWatching> start(BrowserTab tab, String task) async {
-    await _cleanup;
-    BrowserAgentControl.currentLease?.check(tab.browser);
-    if (BrowserAgentControl.instance.manualControl) {
-      throw const BrowserControlError.paused();
-    }
     if (current.value case final other? when !other.ended) {
       throw StateError(
         'Already watching the user in tab ${other.tab.tabId}: wait for it '
@@ -101,43 +70,31 @@ class BrowserWatching extends ChangeNotifier {
       );
     }
     final watching = BrowserWatching._(tab, task, DateTime.now());
-    current.value = watching;
-    BrowserAgentControl.instance.addListener(watching._controlChanged);
     watching._events = BrowserBridge.instance.events.listen(watching._received);
     final browser = tab.browser;
-    try {
-      await browser.cdp(tab.tabId, 'Runtime.evaluate', {
-        'expression': 'window.__baoWatch?.stop(true)',
-      });
-      await browser.cdp(tab.tabId, 'Runtime.addBinding', {'name': _watchBinding});
-      final added = await browser.cdp(
-        tab.tabId,
-        'Page.addScriptToEvaluateOnNewDocument',
-        {'source': _watchScript.replaceAll('__BAO_WATCH_TOKEN__', watching._token)},
-      );
-      watching._script = added['identifier'] as String?;
-      await browser.cdp(tab.tabId, 'Runtime.evaluate', {
-        'expression': _watchScript.replaceAll('__BAO_WATCH_TOKEN__', watching._token),
-      });
-      final page = await BrowserTools._tab(browser, tab.tabId);
-      watching._add(
-        WatchedStep(
-          kind: 'page',
-          at: Duration.zero,
-          target: page?['title'] as String? ?? '',
-          value: page?['url'] as String?,
-        ),
-      );
-      unawaited(_badge(tab, on: true));
-      watching._limit = Timer(_watchLimit, watching.finish);
-      if (!watching._valid || watching.ended) {
-        throw const BrowserControlError.paused();
-      }
-      return watching;
-    } on Object {
-      watching._end(false);
-      rethrow;
-    }
+    await browser.cdp(tab.tabId, 'Runtime.addBinding', {'name': _watchBinding});
+    final added = await browser.cdp(
+      tab.tabId,
+      'Page.addScriptToEvaluateOnNewDocument',
+      {'source': _watchScript},
+    );
+    watching._script = added['identifier'] as String?;
+    await browser.cdp(tab.tabId, 'Runtime.evaluate', {
+      'expression': _watchScript,
+    });
+    final page = await BrowserTools._tab(browser, tab.tabId);
+    watching._add(
+      WatchedStep(
+        kind: 'page',
+        at: Duration.zero,
+        target: page?['title'] as String? ?? '',
+        value: page?['url'] as String?,
+      ),
+    );
+    unawaited(_badge(tab, on: true));
+    watching._limit = Timer(_watchLimit, watching.finish);
+    current.value = watching;
+    return watching;
   }
 
   static Future<void> _badge(BrowserTab tab, {required bool on}) async {
@@ -150,15 +107,13 @@ class BrowserWatching extends ChangeNotifier {
 
   Future<void> _unhook() async {
     final browser = tab.browser;
-    if (!_authority.valid) return;
     await _badge(tab, on: false);
     for (final (method, params) in [
-      ('Runtime.evaluate', {'expression': 'window.__baoWatch?.stop(true)'}),
+      ('Runtime.evaluate', {'expression': 'window.__baoWatch?.stop()'}),
       ('Runtime.removeBinding', {'name': _watchBinding}),
       if (_script case final id?)
         ('Page.removeScriptToEvaluateOnNewDocument', {'identifier': id}),
     ]) {
-      if (!_authority.valid) return;
       try {
         await browser.cdp(tab.tabId, method, params);
       } on Object {
@@ -181,7 +136,6 @@ class BrowserWatching extends ChangeNotifier {
   }
 
   void _add(WatchedStep step) {
-    if (ended || !_valid) return;
     // Typing on in a field, scrolling on: one step, its last.
     final last = _steps.lastOrNull;
     if (last != null &&
@@ -197,13 +151,6 @@ class BrowserWatching extends ChangeNotifier {
   Duration get _now => DateTime.now().difference(started);
 
   void _received(BrowserEvent event) {
-    if (event.event == 'detached' &&
-        identical(event.connection, tab.browser) && event.tabId == tab.tabId) {
-      _steps.clear();
-      _end(false);
-      return;
-    }
-    if (ended || !_valid || !event.observable) return;
     if (!identical(event.connection, tab.browser)) return;
     if (event.event == 'watchDone') return finish();
     if (event.tabId != tab.tabId) return;
@@ -219,7 +166,6 @@ class BrowserWatching extends ChangeNotifier {
         final Map step;
         try {
           step = jsonDecode(params['payload'] as String) as Map;
-          if (step['recording'] != _token) return;
         } on Object {
           return;
         }
@@ -245,10 +191,17 @@ class BrowserWatching extends ChangeNotifier {
           unawaited(_shoot(watched));
         }
       case 'Page.frameNavigated':
-        // No recorder token or creation timestamp: an old manual URL could
-        // arrive during a new watch. The next explicit page read is safe;
-        // this unverifiable notification is not a recorded navigation step.
-        return;
+        final frame = (params['frame'] as Map?) ?? const {};
+        final url = frame['url'] as String? ?? '';
+        if (frame['parentId'] != null || url == 'about:blank') return;
+        final step = WatchedStep(
+          kind: 'navigate',
+          at: _now,
+          target: '',
+          value: url,
+        );
+        _add(step);
+        unawaited(_shoot(step, after: const Duration(milliseconds: 1200)));
     }
   }
 
@@ -260,10 +213,9 @@ class BrowserWatching extends ChangeNotifier {
     if (_shots >= 40) return;
     _shots++;
     await Future<void>.delayed(after);
-    if (ended || !_valid) return;
+    if (ended) return;
     try {
-      final screenshot = await BrowserTools.screenshot(tab.browser, tab.tabId);
-      if (!ended && _valid) step.screenshot = screenshot;
+      step.screenshot = await BrowserTools.screenshot(tab.browser, tab.tabId);
     } on Object {
       // Between pages: none.
     }
@@ -272,7 +224,6 @@ class BrowserWatching extends ChangeNotifier {
   /// What the agent is told: the steps, what went wrong after each, and
   /// pictures of what some led to.
   Future<List<Object?>> report({required bool finished}) async {
-    if (!_valid) throw const BrowserControlError.paused();
     final records = BrowserRecords.instance;
     final start = started;
     const calls = {'XHR', 'Fetch', 'WebSocket', 'EventSource', 'Document'};
@@ -425,7 +376,7 @@ class BrowserWatching extends ChangeNotifier {
   static const _watchScript = r'''
 (() => {
   if (window.__baoWatch || typeof window.__baoWatchStep !== 'function') return;
-  const send = (step) => { try { window.__baoWatchStep(JSON.stringify({ ...step, recording: '__BAO_WATCH_TOKEN__', time: Date.now() })); } catch (e) {} };
+  const send = (step) => { try { window.__baoWatchStep(JSON.stringify({ ...step, time: Date.now() })); } catch (e) {} };
   const clip = (t, n) => { t = (t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
   const field = (e) => ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.tagName);
   const labelOf = (e) => clip(e.getAttribute('aria-label') ||
@@ -548,12 +499,8 @@ class BrowserWatching extends ChangeNotifier {
   };
   for (const [type, listener] of Object.entries(listeners)) window.addEventListener(type, listener, true);
   window.__baoWatch = {
-    stop(discard = false) {
-      if (!discard) flushAll();
-      for (const timer of pending.values()) clearTimeout(timer);
-      pending.clear();
-      for (const timer of scrolls.values()) clearTimeout(timer);
-      scrolls.clear();
+    stop() {
+      flushAll();
       for (const [type, listener] of Object.entries(listeners)) window.removeEventListener(type, listener, true);
       delete window.__baoWatch;
     },

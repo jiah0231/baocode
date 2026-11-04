@@ -38,38 +38,14 @@ class _Breakpoint {
 /// A tab's debugging: its scripts, their source maps, the breakpoints, and
 /// whether (and where) it is paused.
 class _Debugging {
-  _Debugging._(this.tab)
-    : _epoch = BrowserAgentControl.instance.epoch,
-      _lease = BrowserAgentControl.currentLease {
+  _Debugging._(this.tab) {
     _subscription = BrowserBridge.instance.events.listen(_received);
-    BrowserAgentControl.instance.addListener(_controlChanged);
-  }
-
-  final int _epoch;
-  final BrowserAgentLease? _lease;
-  bool get _valid => BrowserAgentControl.instance.canObserve(_epoch) &&
-      (_lease?.valid ?? true);
-
-  void _controlChanged() {
-    if (_valid) return;
-    BrowserAgentControl.instance.removeListener(_controlChanged);
-    if (identical(_tabs[tab], this)) _tabs.remove(tab);
-    unawaited(_subscription?.cancel());
-    scripts.clear();
-    _maps.clear();
-    _sources.clear();
-    paused = null;
-    pausedAt = null;
-    _changes.add(null);
   }
 
   static final Map<BrowserTab, _Debugging> _tabs = {};
 
-  static _Debugging of(BrowserTab tab) {
-    final previous = _tabs[tab];
-    if (previous != null && !previous._valid) previous._controlChanged();
-    return _tabs.putIfAbsent(tab, () => _Debugging._(tab));
-  }
+  static _Debugging of(BrowserTab tab) =>
+      _tabs.putIfAbsent(tab, () => _Debugging._(tab));
 
   final BrowserTab tab;
   StreamSubscription<BrowserEvent>? _subscription;
@@ -154,7 +130,6 @@ class _Debugging {
   }
 
   void _received(BrowserEvent event) {
-    if (!_valid || !event.observable) return;
     if (!identical(event.connection, tab.browser) || event.tabId != tab.tabId) {
       return;
     }
@@ -223,7 +198,7 @@ class _Debugging {
     try {
       final at = await _frameWhere(frames.first)
           .timeout(const Duration(seconds: 3));
-      if (_valid && identical(paused, params)) pausedAt = '${_reason(params)} at $at';
+      if (identical(paused, params)) pausedAt = '${_reason(params)} at $at';
     } on Object {
       // As it is.
     }

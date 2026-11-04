@@ -12,6 +12,14 @@ import 'workbench_theme.dart' hide ColorScheme;
 abstract final class AppColors {
   static WorkbenchColors get _colors => WorkbenchThemeService.instance.colors;
 
+  /// Pebrel's palette is projected without modifying layout or typography.
+  /// Only explicitly supplied Pebrel tokens override the VS Code adaptation.
+  /// Missing tokens (including in every existing theme) keep its old behavior.
+  static Color? _pebrel(String name) {
+    final id = 'pebrel.$name';
+    return _colors.theme.defines(id) ? _colors.get(id) : null;
+  }
+
   /// The first of [ids] the theme or the registry gives a color.
   static Color _first(List<String> ids) {
     final colors = _colors;
@@ -21,8 +29,10 @@ abstract final class AppColors {
     return const Color(0x00000000);
   }
 
-  /// `sideBar.background`.
-  static Color get background => _colors['sideBar.background'];
+  /// `sideBar.background`: the side bar's color; the window's, the
+  /// agents' window's about its cards too.
+  static Color get background =>
+      _pebrel('shell') ?? _colors['sideBar.background'];
 
   /// Whether the window has the system's material under it, to show
   /// through the sidebar and the conversation: macOS (see
@@ -53,7 +63,7 @@ abstract final class AppColors {
   /// The conversation's: `editor.background`, as VS Code's agent sessions
   /// window has it; over the material a denser tint than the sidebar's.
   static Color get conversationSurface {
-    final color = _colors['editor.background'];
+    final color = code;
     return usesSystemMaterial
         ? color.withValues(alpha: color.a * _conversationTint)
         : color;
@@ -67,16 +77,19 @@ abstract final class AppColors {
       : background;
 
   /// `editorWidget.background`: cards and panels.
-  static Color get surface => _colors['editorWidget.background'];
+  static Color get surface =>
+      _pebrel('background') ?? _colors['editorWidget.background'];
 
   /// `menu.background`: menus and popups over the rest.
-  static Color get surfaceRaised => _colors['menu.background'];
+  static Color get surfaceRaised =>
+      _pebrel('background') ?? _colors['menu.background'];
 
   /// `editor.background`: code and terminal output.
-  static Color get code => _colors['editor.background'];
+  static Color get code =>
+      _pebrel('background') ?? _colors['editor.background'];
 
   /// `panel.border`.
-  static Color get border => _colors['panel.border'];
+  static Color get border => _pebrel('line') ?? _colors['panel.border'];
 
   /// Between the window's parts, the IDE's line between its side bar, editor
   /// and chat: `sideBar.border`, else the Modern UI's `surface.border`
@@ -86,18 +99,20 @@ abstract final class AppColors {
   /// transparent (Red, Kimbie Dark…) or a background's own color (Dark+).
   /// Then the editor's foreground, faintly, as Cursor's strokes.
   static Color get partBorder {
+    if (_pebrel('line') case final line?) return line;
     final line = _first(['sideBar.border', 'surface.border', 'panel.border']);
     if (_stands(line, background) && _stands(line, code)) return line;
     final foreground = _colors['editor.foreground'];
     return foreground.withValues(alpha: foreground.a * 0.1);
   }
 
-  /// The chat's message bubbles and its input: their own color
-  /// (`agentsChatInput.background`, over [code]) a step towards the
-  /// editor's text, so it stands out from them however far they are from
-  /// the page, tinged with [accent]; the input's when typed into, a step on
-  /// towards [accent].
+  /// The chat's message bubbles and its input: their fill ([bubbleFill]) a
+  /// step towards the editor's text, so it stands out from them however far
+  /// they are from the page, tinged with [accent]; the input's when typed
+  /// into, a step on towards [accent]. Not the theme's border, which may be
+  /// of another hue (Solarized Dark's violet around its teal).
   static Color bubbleBorder({bool focused = false}) {
+    if (_pebrel(focused ? 'frame' : 'line') case final line?) return line;
     final line = Color.lerp(
       _towardsText(bubbleFill, 0.12),
       accent.withValues(alpha: 1),
@@ -106,12 +121,21 @@ abstract final class AppColors {
     return focused ? Color.lerp(line, accent.withValues(alpha: 1), 0.2)! : line;
   }
 
-  /// The chat's message bubbles and its input, typed into or not:
-  /// `agentsChatInput.background` over [code].
-  static Color get bubbleFill => _bubble;
+  /// The chat's message bubbles and its input, typed into or not, in the
+  /// agents' window and the IDE alike: `agentsChatInput.background` over
+  /// [code].
+  static Color get bubbleFill => Color.alphaBlend(
+    _pebrel('selection') ?? _colors['agentsChatInput.background'],
+    code,
+  );
 
-  static Color get _bubble =>
-      Color.alphaBlend(_colors['agentsChatInput.background'], code);
+  /// A row hovered on a [bubbleFill] panel: the text's color faintly over
+  /// it, lighter on a dark one, darker on a light one, of its hue (a
+  /// theme's `list.hoverBackground` is the side bar's, maybe darker than
+  /// the panel and of another hue).
+  static Color get bubbleHover =>
+      (_pebrel('foreground') ?? _colors['editor.foreground'])
+          .withValues(alpha: 0.07);
 
   static Color _towardsText(Color color, double t) =>
       Color.lerp(color, _colors['editor.foreground'].withValues(alpha: 1), t)!;
@@ -126,28 +150,34 @@ abstract final class AppColors {
   }
 
   /// `input.border`, else `dropdown.border`.
-  static Color get borderStrong => _first(['input.border', 'dropdown.border']);
+  static Color get borderStrong =>
+      _pebrel('frame') ?? _first(['input.border', 'dropdown.border']);
 
   /// `list.hoverBackground`.
-  static Color get hover => _colors['list.hoverBackground'];
+  static Color get hover =>
+      _pebrel('selection') ?? _colors['list.hoverBackground'];
 
   /// `settings.headerForeground`: titles and what stands out.
-  static Color get textPrimary => _colors['settings.headerForeground'];
+  static Color get textPrimary =>
+      _pebrel('foreground') ?? _colors['settings.headerForeground'];
 
   /// `foreground`.
-  static Color get text => _colors['foreground'];
+  static Color get text => _pebrel('foreground') ?? _colors['foreground'];
 
   /// `descriptionForeground`.
-  static Color get textMuted => _colors['descriptionForeground'];
+  static Color get textMuted =>
+      _pebrel('muted') ?? _colors['descriptionForeground'];
 
   /// `disabledForeground`.
-  static Color get textFaint => _colors['disabledForeground'];
+  static Color get textFaint =>
+      _pebrel('muted') ?? _colors['disabledForeground'];
 
   /// The theme's own `textLink.foreground`, else its `focusBorder`: links
   /// in the theme's color, not the registry's blue, in a theme that sets
   /// none (Kimbie Dark, Solarized Light). The registry's link color in
   /// neither.
   static Color get accent {
+    if (_pebrel('accent') case final accent?) return accent;
     final colors = _colors;
     for (final id in const ['textLink.foreground', 'focusBorder']) {
       if (colors.theme.defines(id)) return colors[id];
@@ -170,32 +200,40 @@ abstract final class AppColors {
   /// (see [seeThroughSelection]), for editors that may paint it over the
   /// text rather than under.
   static Color get textSelection => seeThroughSelection(
-    _colors['editor.selectionBackground'],
-    _colors['editor.background'],
+    _pebrel('selection') ?? _colors['editor.selectionBackground'],
+    code,
   );
 
   /// `gitDecoration.addedResourceForeground`.
-  static Color get added => _colors['gitDecoration.addedResourceForeground'];
+  static Color get added =>
+      _pebrel('success') ?? _colors['gitDecoration.addedResourceForeground'];
 
-  /// `diffEditor.insertedLineBackground`, else the inserted text's.
-  static Color get addedBackground => _first([
-    'diffEditor.insertedLineBackground',
-    'diffEditor.insertedTextBackground',
-  ]);
+  /// Pebrel success tinted over the page, else `diffEditor.insertedLineBackground`
+  /// or the inserted text's background. The tint leaves diff text readable.
+  static Color get addedBackground =>
+      _pebrel('success')?.withValues(alpha: 0.12) ??
+      _first([
+        'diffEditor.insertedLineBackground',
+        'diffEditor.insertedTextBackground',
+      ]);
 
   /// `gitDecoration.deletedResourceForeground`.
   static Color get removed =>
-      _colors['gitDecoration.deletedResourceForeground'];
+      _pebrel('error') ?? _colors['gitDecoration.deletedResourceForeground'];
 
-  /// `diffEditor.removedLineBackground`, else the removed text's.
-  static Color get removedBackground => _first([
-    'diffEditor.removedLineBackground',
-    'diffEditor.removedTextBackground',
-  ]);
+  /// Pebrel error tinted over the page, else `diffEditor.removedLineBackground`
+  /// or the removed text's background.
+  static Color get removedBackground =>
+      _pebrel('error')?.withValues(alpha: 0.12) ??
+      _first([
+        'diffEditor.removedLineBackground',
+        'diffEditor.removedTextBackground',
+      ]);
 
   /// `editorWarning.foreground`: a risky choice, e.g. running with no
   /// permission checks.
-  static Color get caution => _colors['editorWarning.foreground'];
+  static Color get caution =>
+      _pebrel('warning') ?? _colors['editorWarning.foreground'];
 
   // Shell commands, in the terminal's colors: the program run, quoted
   // strings, options. As the terminal resolves them ([terminalColorTheme]):
@@ -213,8 +251,14 @@ abstract final class AppColors {
 
 /// Window chrome shared by the sidebar and the chat, so their edges line up.
 abstract final class AppMetrics {
-  /// The Flutter-drawn title bar, level with the native traffic lights.
+  /// The Flutter-drawn title bar, the native traffic lights moved down to
+  /// its middle (see [nativeTitleBarHeight]): a row of the window's color
+  /// over the cards (see Islands), a part's tabs at its foot.
   static const titleBarHeight = 30.0;
+
+  /// The title bar AppKit lays the traffic lights out in, unmoved: their
+  /// middle half that down.
+  static const nativeTitleBarHeight = 28.0;
 
   /// From the title bar to the first content under it (the sidebar's New
   /// Agent button, the chat's stuck message).
@@ -312,6 +356,12 @@ abstract final class AppFonts {
 ThemeData buildAppTheme() {
   final colors = WorkbenchThemeService.instance.colors;
   final brightness = colors.dark ? Brightness.dark : Brightness.light;
+  final pebrelAccent = AppColors._pebrel('accent');
+  final scheme = ColorScheme.fromSeed(
+    seedColor: colors['button.background'],
+    brightness: brightness,
+    surface: AppColors.surface,
+  );
   return ThemeData(
     brightness: brightness,
     fontFamilyFallback: AppPlatform.isWindows
@@ -319,11 +369,18 @@ ThemeData buildAppTheme() {
         : null,
     // The conversation's own color is under it (see Workbench).
     scaffoldBackgroundColor: AppColors.windowCanvas,
-    colorScheme: ColorScheme.fromSeed(
-      seedColor: colors['button.background'],
-      brightness: brightness,
-      surface: AppColors.surface,
-    ),
+    // Material otherwise generates a different primary hue from the seed.
+    // Keep explicit Pebrel buttons and text on the same palette as the shell.
+    colorScheme: pebrelAccent == null
+        ? scheme
+        : scheme.copyWith(
+            primary: pebrelAccent,
+            onPrimary: colors['button.foreground'],
+            secondary: pebrelAccent,
+            onSecondary: colors['button.foreground'],
+            onSurface: AppColors.text,
+            error: AppColors._pebrel('error') ?? scheme.error,
+          ),
     dividerColor: AppColors.partBorder,
     visualDensity: VisualDensity.compact,
     textSelectionTheme: TextSelectionThemeData(

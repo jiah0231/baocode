@@ -100,6 +100,10 @@ void main() {
     expect(bots.byId(bot.id)!.chatOnly, isTrue);
     await bridge.handle(LinkMethods.saveBot, {...patch, 'chatOnly': false});
     expect(bridge.state().bots.single.chatOnly, isFalse);
+    final fullAgent = workspace.agentSetup!(bot.folder)!.workspace();
+    expect(fullAgent.tools, isNull);
+    expect(fullAgent.approvesAll, isFalse);
+    expect(fullAgent.userServers, isTrue);
     final reply = await bridge.handle(LinkMethods.send, {
       'bot': bot.id, 'text': 'Make the requested change',
     }) as Map;

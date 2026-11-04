@@ -599,10 +599,11 @@ final _inspectTools = [
   ClaudeSdkTool(
     name: 'browser_dialog',
     description:
-        "Answers a dialog open now in a shared tab (alert, confirm, prompt, "
-        'or leaving-page confirmation), without reading or retaining its '
-        'text. Dialogs are not answered automatically. Future-dialog presets '
-        'are unavailable; the user can also answer in Chrome.',
+        "Answers a shared tab's dialog (alert, confirm, prompt, the page "
+        'asking before it is left): the one open now, else the next (all '
+        'the next, with always). While you act, an alert is accepted and a '
+        "question (confirm, prompt) dismissed unless you say; the action's "
+        'answer tells what a dialog said.',
     inputSchema: {
       'type': 'object',
       'properties': {
@@ -615,19 +616,21 @@ final _inspectTools = [
     },
     run: (input, call) async {
       final tab = BrowserTab(BrowserTools._browser(), input['tabId'] as int);
-      if (input['always'] == true) {
-        throw const BrowserError(
-          'Future-dialog presets are unavailable. Answer the current dialog '
-          'with always omitted, or answer it directly in Chrome.',
-        );
-      }
+      final records = BrowserRecords.instance;
       final accept = input['accept'] == true;
-      await tab.browser.cdp(tab.tabId, 'Page.handleJavaScriptDialog', {
-        'accept': accept,
-        if (input['text'] case final String text) 'promptText': text,
-      });
-      return 'Current dialog ${accept ? 'accepted' : 'dismissed'}. '
-          'Its text was not read or retained.';
+      final text = input['text'] as String?;
+      if (await records.answerOpenDialog(tab, accept: accept, text: text)
+          case final dialog?) {
+        return 'Answered: ${dialog.describe()}';
+      }
+      records.answerDialogs(
+        tab,
+        accept: accept,
+        text: text,
+        always: input['always'] == true,
+      );
+      return 'No dialog is open: the ${input['always'] == true ? 'next ones' : 'next one'} '
+          'will be ${accept ? 'accepted' : 'dismissed'}.';
     },
   ),
 ];

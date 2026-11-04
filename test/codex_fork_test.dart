@@ -712,6 +712,61 @@ void main() {
     },
   );
 
+  test('/fork waits for lazy Codex history before sending its message', () async {
+    final h = _Harness();
+    final workspace = Workspace(
+      kernels: [h.descriptor],
+      preferences: MemoryPreferenceStore(),
+    );
+    addTearDown(workspace.dispose);
+    await workspace.load();
+    final source = workspace.threads.firstWhere((t) => t.id == 'source');
+    expect(await source.session.prepareConversation(), isTrue);
+    h.configureServer = (server) => server.holdResume = true;
+    final forked = await workspace.fork(
+      source,
+      message: const ComposerMessage(text: 'Continue in the copy'),
+    );
+    expect(forked, isNotNull);
+    await pumpEventQueue(times: 100);
+    final child = h.resumed('forked');
+    expect(child.pendingResume, isNotNull);
+    expect(child.requests('turn/start'), isEmpty);
+    expect(_items(forked!.session).whereType<UserMessageItem>(), isEmpty);
+    child.releaseResume();
+    await pumpEventQueue(times: 100);
+    expect(child.requests('turn/start'), hasLength(1));
+    expect(
+      _items(forked.session).whereType<UserMessageItem>().map((i) => i.text),
+      ['Kept question', 'Continue in the copy'],
+    );
+    expect(h.resumed('source').requests('turn/start'), isEmpty);
+  });
+
+  test('/fork does not send when lazy Codex history fails to load', () async {
+    final h = _Harness();
+    final workspace = Workspace(
+      kernels: [h.descriptor],
+      preferences: MemoryPreferenceStore(),
+    );
+    addTearDown(workspace.dispose);
+    await workspace.load();
+    final source = workspace.threads.firstWhere((t) => t.id == 'source');
+    expect(await source.session.prepareConversation(), isTrue);
+    h.configureServer = (server) => server.failResume = true;
+    final forked = await workspace.fork(
+      source,
+      message: const ComposerMessage(text: 'Do not send without history'),
+    );
+    expect(forked, isNotNull);
+    await pumpEventQueue(times: 100);
+    expect(h.resumed('forked').requests('turn/start'), isEmpty);
+    expect(_items(forked!.session).whereType<UserMessageItem>(), isEmpty);
+    expect(forked.session.health.status, KernelHealthStatus.failed);
+    expect(forked.session.health.detail, contains('Resume rejected'));
+    expect(h.resumed('source').requests('turn/start'), isEmpty);
+  });
+
   for (final running in [false, true]) {
     test(
       '/btw uses a Codex fork with ordered history (running: $running)',

@@ -85,6 +85,35 @@ void main() {
       expect(RemoteLocation.pathOf('ssh://dev'), '/');
     });
 
+    test("a Windows host's paths are its own, with slashes in a location", () {
+      const location = 'ssh://win/C:/Users/me/app';
+      expect(RemoteLocation.of('win', r'C:\Users\me\app\'), location);
+      expect(RemoteLocation.pathOf(location), r'C:\Users\me\app');
+      expect(RemoteLocation.pathOf('ssh://win/D:'), r'D:\');
+      expect(RemoteLocation.pathsOf(location), p.windows);
+      expect(RemoteLocation.nameOf(location), 'app');
+      expect(RemoteLocation.pathsOf('ssh://dev/home/me'), p.posix);
+      expect(RemoteLocation.pathsFor(r'C:\x'), p.windows);
+      expect(RemoteLocation.pathsFor(r'\\server\share'), p.windows);
+      expect(RemoteLocation.pathsFor('/C:/x'), p.posix);
+      final project = Project.at(location);
+      expect(project.name, 'app');
+      expect(project.root, r'C:\Users\me\app');
+    });
+
+    test("a Windows host's Git spells its paths so before it connects", () {
+      // Never connects: its hello, which says it is Windows, never comes.
+      final host = SshHost(
+        'win',
+        connect: (_, {onProgress}) => Completer<SshConnection>().future,
+      );
+      addTearDown(host.dispose);
+      expect(host.paths, p.posix);
+      final git = remoteGitService(host, r'C:\Users\me\app');
+      expect(git.pathContext.style, p.windows.style);
+      expect(git.pathContext.normalize('C:/Users/me/app'), r'C:\Users\me\app');
+    });
+
     test('projects are told apart by host and path', () {
       final remote = Project.at('ssh://dev/home/me/app');
       expect(remote.name, 'app');
@@ -1185,8 +1214,24 @@ printf '%s\n' "$line"
         englishLocalizations.remoteInstallingClaude('Ubuntu'),
       );
 
-      // Installing Claude Code there: how far once its size is known.
+      // Connected: the system there, as its server says.
       await tester.runAsync(() => hosts['dev'].reconnect());
+      expect(
+        SshStatusIndicator(hosts['dev']).item(context).tooltip,
+        contains(
+          englishLocalizations.remoteStatusSystem(
+            systemName(hosts['dev'].hello!.platform),
+          ),
+        ),
+      );
+      expect(systemName(const RemotePlatform('win', 'x64')), 'Windows x64');
+      expect(systemName(const RemotePlatform('win', 'arm64')), 'Windows arm64');
+      expect(
+        systemName(const RemotePlatform('linux', 'x64', libc: 'musl')),
+        'Linux x64',
+      );
+
+      // Installing Claude Code there: how far once its size is known.
       hosts['dev'].installingClaude = const ClaudeInstallProgress(10, null);
       expect(
         SshStatusIndicator(hosts['dev']).item(context).text,
