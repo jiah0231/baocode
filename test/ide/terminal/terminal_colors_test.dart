@@ -126,8 +126,8 @@ void main() {
       expect(extended, hasLength(240));
       expect(extended.first, cssColor(const Color(0xFF123456)));
       expect(extended.last, cssColor(const Color(0xFF654321)));
-      expect(() => theme.indexedColors[16] = const Color(0), throwsUnsupportedError);
-      expect(() => theme.palette[16] = const Color(0), throwsUnsupportedError);
+      expect(() => theme.indexedColors[16] = const Color(0x00000000), throwsUnsupportedError);
+      expect(() => theme.palette[16] = const Color(0x00000000), throwsUnsupportedError);
     });
 
     test('indexed changes participate in theme equality', () {

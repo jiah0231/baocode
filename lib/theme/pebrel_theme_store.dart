@@ -167,7 +167,7 @@ class PebrelThemeStore {
     final key = p.normalize(p.absolute(directory.path));
     final previous = _queues[key] ?? Future<void>.value();
     final result = previous.then((_) => operation());
-    final tail = result.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    final tail = result.then<void>((_) {}, onError: (Object _, StackTrace _) {});
     _queues[key] = tail;
     unawaited(tail.then((_) {
       if (identical(_queues[key], tail)) _queues.remove(key);
