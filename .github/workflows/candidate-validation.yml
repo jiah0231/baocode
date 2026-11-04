@@ -37,6 +37,31 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Package resolution failed' }
           flutter gen-l10n
           if ($LASTEXITCODE -ne 0) { throw 'Localization generation failed' }
+      - name: Capture dependency-generated changes separately
+        id: preparation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dirty = @(git -c core.quotepath=false diff --name-only HEAD --)
+          if ($LASTEXITCODE -ne 0) { throw 'Preparation difference enumeration failed' }
+          if ($dirty.Count) {
+            New-Item -ItemType Directory -Force build/formatter-evidence | Out-Null
+            git diff --binary --output=build/formatter-evidence/preparation.patch HEAD --
+            if ($LASTEXITCODE -ne 0) { throw 'Preparation patch generation failed' }
+            $dirty | Set-Content build/formatter-evidence/preparation-files.txt
+            "Source commit: $env:GITHUB_SHA" | Set-Content build/formatter-evidence/source.txt
+            for ($offset = 0; $offset -lt $dirty.Count; $offset += 20) {
+              $last = [Math]::Min($offset + 19, $dirty.Count - 1)
+              $batch = @($dirty[$offset..$last])
+              git restore --worktree --source=HEAD -- @batch
+              if ($LASTEXITCODE -ne 0) { throw 'Preparation source restore failed' }
+            }
+            git diff --quiet HEAD --
+            if ($LASTEXITCODE -ne 0) { throw 'Preparation source was not restored' }
+            "changed=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } else {
+            "changed=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          }
       - name: Analyze candidate
         id: analyze
         run: flutter analyze --no-pub --fatal-infos
@@ -88,8 +113,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Tracked source differs from exact candidate after formatting' }
           "source_exact=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           if ($formatFailed) { throw 'Changed Dart files need formatting; diagnostic patch retained' }
+          if ('${{ steps.preparation.outputs.changed }}' -ne 'false') { throw 'Dependency-generated differences require review; diagnostic patch retained' }
       - name: Run explicitly selected non-browser regressions
-        if: ${{ !cancelled() && steps.analyze.outcome == 'success' && steps.formatting.outputs.source_exact == 'true' }}
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' && steps.formatting.outputs.source_exact == 'true' && steps.preparation.outputs.changed == 'false' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -124,7 +150,7 @@ jobs:
           flutter test --no-pub @tests
           if ($LASTEXITCODE -ne 0) { throw 'Non-browser candidate regressions failed' }
       - name: Retain exact-source formatter patch only
-        if: ${{ always() && hashFiles('build/formatter-evidence/format.patch') != '' }}
+        if: ${{ always() && hashFiles('build/formatter-evidence/*.patch') != '' }}
         uses: actions/upload-artifact@v6
         with:
           name: formatter-evidence-${{ github.sha }}
