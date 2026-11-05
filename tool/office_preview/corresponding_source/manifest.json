@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "purpose": "Complete pinned CAD copyleft dependency sources, provided alongside the BaoCode application corresponding source.",
+  "archives": [
+    {
+      "file": "libredwg-web-0.7.9.tar.gz",
+      "repository": "https://github.com/mlightcad/libredwg-web",
+      "commit": "b70b5573a6bf2345e5fb10f2adff7fb74a8123c5",
+      "license": "GPL-3.0-only",
+      "sha256": "af350d628535a2842262af5b49d50568b6dae62854667e13bb9f161b26c00431",
+      "bytes": 23621657,
+      "archiveRoot": "libredwg-web-b70b5573a6bf2345e5fb10f2adff7fb74a8123c5"
+    },
+    {
+      "file": "cad-viewer-0.8.3.tar.gz",
+      "repository": "https://github.com/flyfish-dev/cad-viewer",
+      "commit": "6366d2f7b1013cd5c300008c3c3fbf017ca9aace",
+      "license": "AGPL-3.0-only",
+      "sha256": "65d00f07230553734262d671abf45be94d83d3068318c0f25f8665494ec82bcb",
+      "bytes": 203282,
+      "archiveRoot": "cad-viewer-6366d2f7b1013cd5c300008c3c3fbf017ca9aace"
+    },
+    {
+      "file": "dwf-viewer-0.6.7.tar.gz",
+      "repository": "https://github.com/flyfish-dev/dwf-viewer",
+      "commit": "5c7eebd01648b95536f9f97a3ce3300213be0dfd",
+      "license": "AGPL-3.0-only",
+      "sha256": "f41e736455f7f52292c979831cbd1d957e854d64952cd82dc8e5b3073464c758",
+      "bytes": 17715681,
+      "archiveRoot": "dwf-viewer-5c7eebd01648b95536f9f97a3ce3300213be0dfd"
+    },
+    {
+      "file": "jsmn-85695f3.tar.gz",
+      "repository": "https://github.com/zserge/jsmn",
+      "commit": "85695f3d5903b1cd5b4030efe50db3b4f5f3c928",
+      "license": "MIT",
+      "sha256": "715610f7fdbaf6aa2d90b1f3d10cc6b9e89cfb58eab74fb4c057b12fd913f993",
+      "bytes": 12597,
+      "archiveRoot": "jsmn-85695f3d5903b1cd5b4030efe50db3b4f5f3c928"
+    }
+  ],
+  "libredwgBinaryProof": {
+    "wasmGitBlob": "18ee41cf35544c8e5a000680e7e709e728f4ed1f",
+    "glueGitBlob": "988fa7e0ee6f66a052e3ee1a8f5f0e380ea3087d",
+    "verifiedAgainst": "@flyfish-dev/cad-viewer 0.8.3 dist/wasm and @mlightcad/libredwg-web 0.7.9 wasm",
+    "patch": "The upstream NoteBoard cspCompatibleRuntime transformation is applied to the glue at bundle time. The WASM bytes are unchanged."
+  }
+}

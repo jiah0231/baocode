@@ -63,3 +63,14 @@ app.*.map.json
 
 # npm dependencies of the extension host code generators.
 tool/exthost_codegen/node_modules/
+
+# Bundled NoteBoard previews are built from the pinned lockfile.
+tool/office_preview/node_modules/
+
+# Exact local reconstructions from hash-checked preview transport parts.
+/assets/office_preview/cad.js
+/assets/office_preview/goodnotes.js
+/assets/office_preview/notability.js
+/assets/office_preview/pdf.js
+/tool/office_preview/corresponding_source/dwf-viewer-0.6.7.tar.gz
+/tool/office_preview/corresponding_source/libredwg-web-0.7.9.tar.gz

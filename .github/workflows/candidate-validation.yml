@@ -19,6 +19,16 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Restore exact offline preview bundles and corresponding source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python tool/ci/test_reassemble_preview_assets.py
+          if ($LASTEXITCODE -ne 0) { throw 'Preview transport unit tests failed' }
+          python tool/ci/reassemble_preview_assets.py
+          if ($LASTEXITCODE -ne 0) { throw 'Preview original-byte reconstruction failed' }
+          git diff --quiet HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Preview reconstruction changed tracked source' }
       - name: Verify and reassemble the unchanged Maple font
         id: font_asset
         shell: pwsh
@@ -128,11 +138,46 @@ jobs:
           "source_exact=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           if ($formatFailed) { throw 'Changed Dart files need formatting; diagnostic patch retained' }
           if ('${{ steps.preparation.outputs.changed }}' -ne 'false') { throw 'Dependency-generated differences require review; diagnostic patch retained' }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.12.0'
+      - name: Verify unchanged NoteBoard source, licenses and offline bundles
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location tool/office_preview
+          try {
+            npm ci --ignore-scripts
+            if ($LASTEXITCODE -ne 0) { throw 'Pinned preview package resolution failed' }
+            npm run build
+            if ($LASTEXITCODE -ne 0) { throw 'Offline preview bundle reconstruction failed' }
+            node test-upstream.mjs
+            if ($LASTEXITCODE -ne 0) { throw 'Unchanged NoteBoard Node regressions failed' }
+            node --test test_vendor_integrity.mjs
+            if ($LASTEXITCODE -ne 0) { throw 'Preview source, license or bundle integrity failed' }
+          } finally {
+            Pop-Location
+          }
+          python tool/ci/reassemble_preview_assets.py --verify-only
+          if ($LASTEXITCODE -ne 0) { throw 'Rebuilt preview bytes differ from pinned originals' }
+          git diff --quiet HEAD -- assets/office_preview tool/office_preview
+          if ($LASTEXITCODE -ne 0) { throw 'Preview reconstruction changed the exact candidate source' }
+          python tool/office_preview/test/verify_fixtures.py
+          if ($LASTEXITCODE -ne 0) { throw 'Preview fixture provenance or geometry failed' }
       - name: Test local Office document previews
         if: ${{ !cancelled() && steps.font_asset.outcome == 'success' && steps.analyze.outcome == 'success' && steps.formatting.outputs.source_exact == 'true' && steps.preparation.outputs.changed == 'false' }}
         run: >-
           flutter test --no-pub --reporter expanded --timeout 2m
           test/ide/document/document_reader_test.dart
+          test/ide/document/faithful_office_preview_test.dart
+          test/ide/document/office_preflight_test.dart
+          test/ide/preview_binary_guard_test.dart
+          test/settings/about_page_test.dart
+          test/floating_test.dart
+          test/ide/ide_hover_test.dart
+          test/workspace/chat_button_tooltips_test.dart
+          test/ide/workbench/button_tooltips_test.dart
           test/ide/document/document_byte_read_test.dart
           test/ide/document_preview_test.dart
           test/chat/side_panel/file_preview_document_test.dart

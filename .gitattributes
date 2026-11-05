@@ -1,0 +1,11 @@
+# Preserve pinned upstream files, generated bundles and transport chunks byte for
+# byte on Windows as well as Unix; hashes must not depend on core.autocrlf.
+/tool/office_preview/** -text
+/assets/office_preview/** -text
+/test/fixtures/office_preview/** -text
+
+# Preserve intentional whitespace in upstream licenses/source and emitted code.
+# First-party Dart, native code and build scripts retain normal whitespace checks.
+/tool/office_preview/vendor/** -whitespace
+/tool/office_preview/licenses/** -whitespace
+/assets/office_preview/** -whitespace

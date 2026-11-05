@@ -57,30 +57,48 @@ void main() {
   });
 
   group('document paths', () {
-    test('Office and legacy paths match without case sensitivity', () {
-      for (final extension in ['docx', 'pptx', 'xlsx', 'doc', 'ppt', 'xls']) {
-        expect(ideIsDocumentPath('/project/report.$extension'), isTrue);
-        expect(
-          ideIsDocumentPath('C:\\work\\REPORT.${extension.toUpperCase()}'),
-          isTrue,
-        );
-      }
-      for (final extension in ['csv', 'tsv', 'CSV', 'TSV']) {
-        final path = '/project/report.$extension';
-        expect(ideIsDocumentPath(path), isFalse);
-        expect(documentKindForPath(path), DocumentKind.delimited);
-      }
-      for (final path in [
-        '/project/docx',
-        '/project/report.docx.txt',
-        '/project/report.pdf',
-        '/project/report.png',
-        '/project/report.md',
-        '/project/report.zip',
-      ]) {
-        expect(ideIsDocumentPath(path), isFalse, reason: path);
-      }
-    });
+    test(
+      'the exact bundled preview extensions match without case sensitivity',
+      () {
+        for (final extension in [
+          'docx',
+          'pptx',
+          'xlsx',
+          'doc',
+          'ppt',
+          'xls',
+          'pdf',
+          'epub',
+          'dwg',
+          'dxf',
+          'note',
+          'goodnotes',
+        ]) {
+          expect(ideIsDocumentPath('/project/report.$extension'), isTrue);
+          expect(nativeDocumentFormat('/project/report.$extension'), extension);
+          expect(
+            ideIsDocumentPath('C:\\work\\REPORT.${extension.toUpperCase()}'),
+            isTrue,
+          );
+        }
+        for (final extension in ['csv', 'tsv', 'CSV', 'TSV']) {
+          final path = '/project/report.$extension';
+          expect(ideIsDocumentPath(path), isFalse);
+          expect(nativeDocumentFormat(path), isNull);
+          expect(documentKindForPath(path), DocumentKind.delimited);
+        }
+        for (final path in [
+          '/project/docx',
+          '/project/report.docx.txt',
+          '/project/report.png',
+          '/project/report.md',
+          '/project/report.zip',
+        ]) {
+          expect(ideIsDocumentPath(path), isFalse, reason: path);
+          expect(nativeDocumentFormat(path), isNull, reason: path);
+        }
+      },
+    );
 
     test('old binary formats produce a clear unsupported result', () {
       final compoundFile = Uint8List.fromList([

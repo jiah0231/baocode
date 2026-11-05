@@ -15,6 +15,7 @@ add_executable(${BINARY_NAME} WIN32
   "crash_report.cpp"
   "drag_source.cpp"
   "drop_target.cpp"
+  "document_preview_host.cpp"
   "flutter_window.cpp"
   "hang_watchdog.cpp"
   "log_folder.cpp"

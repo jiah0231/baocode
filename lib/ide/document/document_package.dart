@@ -53,6 +53,48 @@ class DocumentPackage {
 
   bool contains(String path) => _files.containsKey(path);
 
+  Iterable<String> get entryPaths => _files.keys;
+
+  /// Validate every part before handing the package to browser renderers. The
+  /// original bytes remain unchanged: this checks safety, not document layout.
+  /// In particular, do not rebuild paragraphs, slides, or spreadsheet styles.
+  void validateForBrowser() {
+    for (final path in _files.keys) {
+      final lower = path.toLowerCase();
+      if (lower.endsWith('.xml') ||
+          lower.endsWith('.rels') ||
+          lower.endsWith('.svg')) {
+        xml(path, required: true);
+      }
+      // Validate actual inflation/CRC for *all* parts, including embedded fonts
+      // and opaque payloads which the original simplified parser never read.
+      final data = bytes(path)!;
+      final size = _browserRasterSize(data);
+      if (size == null) continue;
+      if (data.length > limits.maxImageBytes) {
+        documentTooLarge('embedded image');
+      }
+      if (++_images > limits.maxImages) {
+        documentTooLarge('embedded image count');
+      }
+      _imageBytes += data.length;
+      if (_imageBytes > limits.maxTotalImageBytes) {
+        documentTooLarge('embedded image data');
+      }
+      if (size.$1 <= 0 ||
+          size.$2 <= 0 ||
+          size.$1 > 8192 ||
+          size.$2 > 8192 ||
+          size.$1 * size.$2 > limits.maxImagePixels) {
+        documentTooLarge('image dimensions');
+      }
+      _imagePixels += size.$1 * size.$2;
+      if (_imagePixels > limits.maxTotalImagePixels) {
+        documentTooLarge('total decoded image dimensions');
+      }
+    }
+  }
+
   void checkTextUnit(int length) {
     if (length > limits.maxTextUnitChars) {
       documentTooLarge('paragraph or cell text length');
@@ -555,6 +597,50 @@ Map<String, int> _validateZip(Uint8List bytes, DocumentPreviewLimits limits) {
         return (d.getUint16(at + 5), d.getUint16(at + 3));
       }
       at += length;
+    }
+  }
+  return null;
+}
+
+// Browser codecs also accept animated PNG/GIF/WebP. Check their canvas before
+// any engine receives them; media may occur anywhere in EPUB or notebook ZIPs.
+(int, int)? _browserRasterSize(Uint8List bytes) {
+  final staticSize = _rasterSize(bytes);
+  if (staticSize != null) return staticSize;
+  final d = ByteData.sublistView(bytes);
+  if (bytes.length >= 24 &&
+      d.getUint32(0) == 0x89504e47 &&
+      d.getUint32(4) == 0x0d0a1a0a &&
+      d.getUint32(12) == 0x49484452) {
+    return (d.getUint32(16), d.getUint32(20));
+  }
+  if (bytes.length >= 10 &&
+      bytes[0] == 0x47 &&
+      bytes[1] == 0x49 &&
+      bytes[2] == 0x46) {
+    return (d.getUint16(6, Endian.little), d.getUint16(8, Endian.little));
+  }
+  if (bytes.length >= 30 &&
+      d.getUint32(0) == 0x52494646 &&
+      d.getUint32(8) == 0x57454250) {
+    final chunk = d.getUint32(12);
+    if (chunk == 0x56503858) {
+      int u24(int at) =>
+          bytes[at] | (bytes[at + 1] << 8) | (bytes[at + 2] << 16);
+      return (u24(24) + 1, u24(27) + 1);
+    }
+    if (chunk == 0x56503820 &&
+        bytes[23] == 0x9d &&
+        bytes[24] == 1 &&
+        bytes[25] == 0x2a) {
+      return (
+        d.getUint16(26, Endian.little) & 0x3fff,
+        d.getUint16(28, Endian.little) & 0x3fff,
+      );
+    }
+    if (chunk == 0x5650384c && bytes[20] == 0x2f) {
+      final bits = d.getUint32(21, Endian.little);
+      return ((bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1);
     }
   }
   return null;

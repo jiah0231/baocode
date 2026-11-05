@@ -8,6 +8,17 @@ class DocumentStrings {
   final bool zh;
   String get loading => zh ? '正在读取文档…' : 'Loading document…';
   String get readOnly => zh ? '只读 · 本地解析' : 'Read only · Offline';
+  String get windowsPreview => zh
+      ? '此格式使用内置 NoteBoard 预览器，目前在 Windows 上可用。也可以用系统应用打开。'
+      : 'The embedded NoteBoard viewer for this format is currently available on Windows. You can also open it in the default app.';
+  String get originalLayout =>
+      zh ? '只读 · NoteBoard · 离线' : 'Read only · NoteBoard · Offline';
+  String get layoutFidelity => zh
+      ? '保留文档自身的页面、颜色和字体。未安装的字体或引擎不支持的格式特性仍可能有差异；公式使用已保存的结果。'
+      : 'Preserves document pages, colors and fonts. Missing fonts or unsupported format features may differ; formulas use saved results.';
+  String get rendererError => zh
+      ? '本地文档渲染器无法启动。请确认 Microsoft Edge WebView2 Runtime 已安装，或用系统应用打开。'
+      : 'The offline renderer could not start. Check that Microsoft Edge WebView2 Runtime is installed, or open this file in its default app.';
   String get reload => zh ? '重新加载' : 'Reload';
   String get retry => zh ? '重试' : 'Try again';
   String get openExternal => zh ? '用系统应用打开' : 'Open in default app';
@@ -47,6 +58,8 @@ class DocumentStrings {
       'encrypted' => '不支持预览加密或密码保护的 Office 文档，请用原应用打开。',
       'empty' => '此文档为空。',
       'read' => readError,
+      'previewLimit' => '同时打开的预览过多，请关闭另一个文档预览后重试。',
+      'renderer' => '本地文档渲染未能完成。请重试，或用系统应用打开。',
       'unsupported' => '暂不支持预览此文档格式。',
       _ => '文档已损坏或包含不支持的结构，请用原应用检查。',
     };

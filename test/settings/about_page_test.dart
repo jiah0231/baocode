@@ -1,4 +1,5 @@
 import 'package:baocode/l10n/app_localizations.dart';
+import 'package:baocode/ide/document/document_preview_notices.dart';
 import 'package:baocode/settings/pages/about_page.dart';
 import 'package:baocode/update/version.dart';
 import 'package:flutter/material.dart';
@@ -43,10 +44,21 @@ void main() {
     expect(find.text('baocode.dev'), findsOneWidget);
     expect(find.text('更新日志'), findsOneWidget);
     expect(find.text('反馈问题'), findsOneWidget);
+    expect(find.text('NoteBoard 内置预览器'), findsOneWidget);
+    expect(find.text('预览器对应源码'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
   test('its links', () {
+    expect(
+      DocumentPreviewNotices.upstream.toString(),
+      contains('/43be834d892541d3fda51cab6e5496371331e341/plugins'),
+    );
+    expect(DocumentPreviewNotices.source.host, 'github.com');
+    expect(
+      DocumentPreviewNotices.source.path,
+      startsWith('/jiah0231/baocode/tree/'),
+    );
     expect(
       AboutSettingsPage.issues,
       Uri.parse('https://github.com/baocode-dev/baocode/issues'),

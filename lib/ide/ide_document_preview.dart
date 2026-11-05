@@ -1,6 +1,7 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show compute;
+import 'package:flutter/foundation.dart'
+    show compute, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -11,14 +12,15 @@ import 'document/document_parser.dart' show parseDocumentPreview;
 import 'document/document_read.dart';
 import 'document/document_strings.dart';
 import 'document/document_view.dart';
+import 'document/faithful_office_preview.dart';
 import 'file_service.dart';
 import 'ide_button.dart';
 import 'ide_hover.dart';
 import 'ide_spinning.dart';
 
-/// Office documents are parsed in memory, without a browser, network requests,
-/// macros, formula evaluation or writes to the source file. A stale read cannot
-/// replace the document selected after it.
+/// Windows uses the bundled, offline NoteBoard viewer behind a constrained
+/// native host. Other platforms keep the basic reading preview. Neither path
+/// writes to the source or lets a stale read replace the selected document.
 class IdeDocumentPreview extends StatefulWidget {
   const IdeDocumentPreview({
     super.key,
@@ -105,7 +107,7 @@ class _IdeDocumentPreviewState extends State<IdeDocumentPreview> {
   int _section = 0;
   int _sheet = 0;
   double _zoom = 1;
-  bool _originalColors = false;
+  bool _originalColors = true;
   bool _reading = false;
 
   @override
@@ -137,6 +139,11 @@ class _IdeDocumentPreviewState extends State<IdeDocumentPreview> {
     super.dispose();
   }
 
+  bool get _faithful =>
+      !kIsWeb &&
+      defaultTargetPlatform == TargetPlatform.windows &&
+      nativeDocumentFormat(widget.path) != null;
+
   Future<void> _load() async {
     final generation = ++_generation;
     _cancel?.complete();
@@ -145,8 +152,10 @@ class _IdeDocumentPreviewState extends State<IdeDocumentPreview> {
       _data = null;
       _error = null;
     });
-    if (widget.historical ||
-        documentKindForPath(widget.path) == DocumentKind.legacy) {
+    if (_faithful ||
+        widget.historical ||
+        documentKindForPath(widget.path) == DocumentKind.legacy ||
+        documentKindForPath(widget.path) == DocumentKind.embedded) {
       return;
     }
     try {
@@ -181,6 +190,16 @@ class _IdeDocumentPreviewState extends State<IdeDocumentPreview> {
 
   @override
   Widget build(BuildContext context) {
+    if (_faithful) {
+      return FaithfulOfficePreview(
+        path: widget.path,
+        files: widget.files,
+        read: widget.read,
+        revision: widget.revision,
+        historical: widget.historical,
+        onOpenInDefaultApp: widget.onOpenInDefaultApp,
+      );
+    }
     final strings = DocumentStrings(context);
     final data = _data;
     final presentation = data?.kind == DocumentKind.presentation;
@@ -364,6 +383,9 @@ class _IdeDocumentPreviewState extends State<IdeDocumentPreview> {
     if (widget.historical) return _message(strings.revision);
     if (documentKindForPath(widget.path) == DocumentKind.legacy) {
       return _message(strings.legacy);
+    }
+    if (documentKindForPath(widget.path) == DocumentKind.embedded) {
+      return _message(strings.windowsPreview);
     }
     final error = _error;
     if (error != null) {

@@ -1,0 +1,214 @@
+{
+  "repository": "https://github.com/CrazyFigure/NoteBoard",
+  "commit": "43be834d892541d3fda51cab6e5496371331e341",
+  "files": [
+    {
+      "path": "plugins/cad/cspRuntime.mjs",
+      "sha": "c79c92053a1009206249e14cb2af8f2ca006c18b"
+    },
+    {
+      "path": "plugins/cad/index.mjs",
+      "sha": "41d412167c4173803f576853be4672000ae63451"
+    },
+    {
+      "path": "licenses/GPL-3.0.txt",
+      "sha": "f288702d2fa16d3cdf0035b15a9fcbc552cd88e7"
+    },
+    {
+      "path": "plugins/cad/dxf-worker.mjs",
+      "sha": "46d515ca6d5f22512c21540d67112c9b70fb78ce"
+    },
+    {
+      "path": "plugins/cad/scene-worker.mjs",
+      "sha": "2ca1b5df13f0391ce1b2cde701a73c9e70b510d4"
+    },
+    {
+      "path": "plugins/build.mjs",
+      "sha": "fb11717a5b96bb3c99c2ffdcc9df2906d2b7794e"
+    },
+    {
+      "path": "plugins/cad/dxfEncoding.mjs",
+      "sha": "3771c7a756d96c57774e2723d4a305092b6db7c1"
+    },
+    {
+      "path": "LICENSE",
+      "sha": "be3f7b28e564e7dd05eaf59d64adba1a4065ac0e"
+    },
+    {
+      "path": "plugins/cad/scene.mjs",
+      "sha": "cfb548c4264e139d7a781b7ca41976f20b2ae4fb"
+    },
+    {
+      "path": "plugins/epub/index.mjs",
+      "sha": "4e68fb6f786e651eef7f2bcb519126575b2b0a29"
+    },
+    {
+      "path": "plugins/excel/index.mjs",
+      "sha": "2f693c664eae00bb640e97cfaa077397e3ecf662"
+    },
+    {
+      "path": "plugins/epub/book.mjs",
+      "sha": "052ba86aaa884d0a5b430beb67f95ee967693fc4"
+    },
+    {
+      "path": "plugins/goodnotes/binary.mjs",
+      "sha": "abcf6e378b88fac95c2a8850d5fab86943ccc38c"
+    },
+    {
+      "path": "plugins/goodnotes/book.mjs",
+      "sha": "e632f754cd69c51491961c2c7ac14e9e1837cd4d"
+    },
+    {
+      "path": "plugins/notability/book.mjs",
+      "sha": "aa267e70c43325cdaf8e8dc442603e71e9f41619"
+    },
+    {
+      "path": "plugins/goodnotes/index.mjs",
+      "sha": "679eb9e6351b5a8b32293132d3c288bb15c39b61"
+    },
+    {
+      "path": "plugins/package.json",
+      "sha": "a47b7f40e4bace1bbd478502e15bb39212241b3f"
+    },
+    {
+      "path": "plugins/pnpm-lock.yaml",
+      "sha": "ef9853526b004d08925a9d5c2940171530ad7108"
+    },
+    {
+      "path": "plugins/pnpm-workspace.yaml",
+      "sha": "5ed0b5af0d45919f64c66edfb16a5f4512461fa1"
+    },
+    {
+      "path": "plugins/powerpoint/groupGeometry.mjs",
+      "sha": "3902d7ee234730ae81da6735edc112e6fc3b2db3"
+    },
+    {
+      "path": "plugins/pdf/index.mjs",
+      "sha": "f0bc853ef3b5fe1b5d81579fbf35fa42cbbfbda4"
+    },
+    {
+      "path": "plugins/notability/index.mjs",
+      "sha": "e7e589e85b696dedf8d301cb2f3ce3b4da1882a7"
+    },
+    {
+      "path": "plugins/pdf/range.mjs",
+      "sha": "eaa79fac142d9db81733c4bce07d7738ffb58f0b"
+    },
+    {
+      "path": "plugins/notability/plist.mjs",
+      "sha": "09129c404cd1c1613c101bdbeacb2057dd10c31a"
+    },
+    {
+      "path": "plugins/shared/openXml.mjs",
+      "sha": "3e7bdc6772efa15d6e2c54cf6ba04ffe5a27c044"
+    },
+    {
+      "path": "plugins/publish.mjs",
+      "sha": "50e94939fa2dac13924b6a76c4a8b79942abc571"
+    },
+    {
+      "path": "plugins/shared/openXml.d.mts",
+      "sha": "62f27a8402c07f7dde2a064115817695e4577808"
+    },
+    {
+      "path": "plugins/shared/noteArchive.mjs",
+      "sha": "45e87c75a5295047c8374ce8e64be6365f7132b5"
+    },
+    {
+      "path": "plugins/powerpoint/index.mjs",
+      "sha": "57ddeca7e3607317d88d99b1a6cfe8c7a6f89c78"
+    },
+    {
+      "path": "plugins/shared/noteView.mjs",
+      "sha": "86e711aaea7ecfc962687c3aa8e851927b5c8311"
+    },
+    {
+      "path": "plugins/shared/view.mjs",
+      "sha": "7c0f0d776a2e7856d7eef03b8bea620e0267039b"
+    },
+    {
+      "path": "plugins/test/cadRuntime.test.mjs",
+      "sha": "37927815250a9667e33e1bb050a427580d70caa5"
+    },
+    {
+      "path": "plugins/test/powerpointThumbs.test.mjs",
+      "sha": "0f5fd51747ea72c335d8233e614b54ec45640159"
+    },
+    {
+      "path": "plugins/test/powerpoint.test.mjs",
+      "sha": "9e1b4979cb75336589388609c52510c7dac718a8"
+    },
+    {
+      "path": "plugins/test/excel.test.mjs",
+      "sha": "c19656dff94e84fa0c2f1170716d46392fbddafd"
+    },
+    {
+      "path": "plugins/test/cadScene.test.mjs",
+      "sha": "7c0ff330ee2bedbcdb739247f80e7ba99e9458d5"
+    },
+    {
+      "path": "plugins/test/notes.test.mjs",
+      "sha": "4da026d72c11e3852d1e3bc8e72d20bd7da0fcdc"
+    },
+    {
+      "path": "plugins/test/noteView.test.mjs",
+      "sha": "e2ad0506001e35379ddfc9bea7f33b2f491772c7"
+    },
+    {
+      "path": "plugins/test/epub.test.mjs",
+      "sha": "bbf434247f8d353b95ae5f86d0f69eff20e6a44f"
+    },
+    {
+      "path": "plugins/test/pdfRange.test.mjs",
+      "sha": "fef2c2abda62071893b5530b660faa73f75ed147"
+    },
+    {
+      "path": "plugins/word/pageFields.mjs",
+      "sha": "31fd56dc643b4a699e6fd05989006fab57a68e86"
+    },
+    {
+      "path": "plugins/test/word.test.mjs",
+      "sha": "1c7749801753f50dd0fad7be23b21019443b7903"
+    },
+    {
+      "path": "plugins/versions.json",
+      "sha": "70fc3b10826746001bb41234f6cd4c95c062b5fc"
+    },
+    {
+      "path": "plugins/test/workbench.test.mjs",
+      "sha": "7aa200ba3a61434d584f72f4fcc1fdb73a5cb717"
+    },
+    {
+      "path": "plugins/test/view.test.mjs",
+      "sha": "36111e9265e2f0c3db509443c9faf3e58674ae1e"
+    },
+    {
+      "path": "plugins/word/pagination.mjs",
+      "sha": "3787523fad578bd8a6a08335950b6666aa78c29d"
+    },
+    {
+      "path": "plugins/workbench/index.mjs",
+      "sha": "a064fd0a6867b79fdefa05c852d61c22ba082b63"
+    },
+    {
+      "path": "plugins/word/index.mjs",
+      "sha": "a7f0980c2db0aed1d41a38db24ce772887a18ca5"
+    },
+    {
+      "path": "plugins/test/fixtures/README.md",
+      "sha": "7bb04e02e4932bfd326fb5a0568b7774f1825be3"
+    },
+    {
+      "path": "plugins/test/fixtures/gn-mixed-pens.goodnotes",
+      "sha": "edcfc5f8c7aabc63e0a4ec8266c219b6772d76aa"
+    },
+    {
+      "path": "plugins/test/fixtures/line-2000.dwg",
+      "sha": "72d554dad8d64089e37355bba2d1f63575ac7c52"
+    },
+    {
+      "path": "plugins/test/fixtures/note-session.plist",
+      "sha": "9b1211aa0b2b61e096a3fde2a3254411d5f99b75"
+    }
+  ]
+}

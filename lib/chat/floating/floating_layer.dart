@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../../workspace/window_controls.dart';
+import '../../platform/native_overlay_occlusion.dart';
 import 'floating_placement.dart';
 
 /// A floating element (popover, menu, tooltip) anchored to [child], shown
@@ -311,7 +312,10 @@ class _FloatingLayerState extends State<FloatingLayer>
             ignoring: !widget.visible,
             child: FadeTransition(
               opacity: _opacity,
-              child: ScaleTransition(scale: _scale, child: content),
+              child: ScaleTransition(
+                scale: _scale,
+                child: NativeOverlayOcclusion(child: content),
+              ),
             ),
           ),
         ),

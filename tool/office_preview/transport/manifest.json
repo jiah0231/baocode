@@ -1,0 +1,174 @@
+{
+  "schema": 1,
+  "chunk_size": 4194304,
+  "files": [
+    {
+      "path": "assets/office_preview/cad.js",
+      "size": 14035150,
+      "sha256": "19bdd7fca435145b7b4fe70561713a19c93fddea96d9ffda553ab795a35e4956",
+      "parts": [
+        {
+          "path": "tool/office_preview/transport/cad.js.part000",
+          "size": 4194304,
+          "sha256": "4e07d0f3fe13e4e7640e74630395581dfd967f751da97443c981adb31aebd57b",
+          "git_blob": "3ba289be57bb0ac09ff6553c86562212fd555e4b"
+        },
+        {
+          "path": "tool/office_preview/transport/cad.js.part001",
+          "size": 4194304,
+          "sha256": "1c0228331a6ebc89d090e26ca19ee5ce0dfa62fd19a95a6b0a6f663b9f78c711",
+          "git_blob": "aadeb57863dac3d77a3ffa50307894ab7e241969"
+        },
+        {
+          "path": "tool/office_preview/transport/cad.js.part002",
+          "size": 4194304,
+          "sha256": "4f458e81da659f00c5f4679b57af654e6fe6818574c07a2d823f794e1fa4d09c",
+          "git_blob": "aa1ce456935a69a949eb01586fa01eb2d9b3e00b"
+        },
+        {
+          "path": "tool/office_preview/transport/cad.js.part003",
+          "size": 1452238,
+          "sha256": "4370256d9e036f5519577e052dd8ffcdf131c6b9af89988d316d2d753a1083ff",
+          "git_blob": "302d4a9df833cf454b75ab3884efb6619846fddb"
+        }
+      ]
+    },
+    {
+      "path": "assets/office_preview/goodnotes.js",
+      "size": 4565840,
+      "sha256": "1e7d267d1dd49b181e72927f9ff0b5a28010da43482c344bdae82748eb555ad8",
+      "parts": [
+        {
+          "path": "tool/office_preview/transport/goodnotes.js.part000",
+          "size": 4194304,
+          "sha256": "ede9432388ea70589fc86c617f149a86938bfc2daca1f0ec10a87d72b2e8783a",
+          "git_blob": "1dca7a9f5e805c1dc7fbceacd56e2423b0d7dc26"
+        },
+        {
+          "path": "tool/office_preview/transport/goodnotes.js.part001",
+          "size": 371536,
+          "sha256": "8c61e09f934370fcb4a9f520e4dab95f5fb969c66711807c503f37614a9222d4",
+          "git_blob": "f5b4f44840a2eb87b5a4c339615a46354b4976aa"
+        }
+      ]
+    },
+    {
+      "path": "assets/office_preview/notability.js",
+      "size": 4563930,
+      "sha256": "867beae37e7b6d0242bb4b89c3bdad6fdd5effe3e029f509daac0bc04b25cd2c",
+      "parts": [
+        {
+          "path": "tool/office_preview/transport/notability.js.part000",
+          "size": 4194304,
+          "sha256": "986166033098f7ba619f63a91389c598576798f072191de13032655d2618e550",
+          "git_blob": "8326aa787c24ba48a56728c5829816b394f1aca1"
+        },
+        {
+          "path": "tool/office_preview/transport/notability.js.part001",
+          "size": 369626,
+          "sha256": "ac1f3c8e896f48971336f83737007f4beface75051c00b7ca4423252edbfd482",
+          "git_blob": "bcde0792af4e5bef7785ac117d2ffac8617a7b61"
+        }
+      ]
+    },
+    {
+      "path": "assets/office_preview/pdf.js",
+      "size": 4449241,
+      "sha256": "8cadd72b03c3de83cc36e0bbb21c927c24efe24a558d774f80dc5a7cfb3827e5",
+      "parts": [
+        {
+          "path": "tool/office_preview/transport/pdf.js.part000",
+          "size": 4194304,
+          "sha256": "d5907bc9e9aedfc2db63175c9d6cbcb874685740808fe7bdd77f083e3d7425e5",
+          "git_blob": "c48dbd068e761205e618117bb259dee10ac85111"
+        },
+        {
+          "path": "tool/office_preview/transport/pdf.js.part001",
+          "size": 254937,
+          "sha256": "20adb920f9f96606d0b8d591a320fdea3fee6f8c284ab5e7a0aca200cbe2f803",
+          "git_blob": "6b7a785eb0a91058dc2f6bc2664e2430f1382b80"
+        }
+      ]
+    },
+    {
+      "path": "tool/office_preview/corresponding_source/dwf-viewer-0.6.7.tar.gz",
+      "size": 17715681,
+      "sha256": "f41e736455f7f52292c979831cbd1d957e854d64952cd82dc8e5b3073464c758",
+      "parts": [
+        {
+          "path": "tool/office_preview/transport/dwf-viewer-0.6.7.tar.gz.part000",
+          "size": 4194304,
+          "sha256": "57ee2b2aec084b1ad30c562ffb3e2c8a1fe009fc9d1bddc9d20c90ad85255c6a",
+          "git_blob": "d8e7107b2dfe93131ca3aa521d9e31655621ab52"
+        },
+        {
+          "path": "tool/office_preview/transport/dwf-viewer-0.6.7.tar.gz.part001",
+          "size": 4194304,
+          "sha256": "3fff8875a8fa39d6dcdd58b619e6decb505d3065c2506f46e0055806786c72c8",
+          "git_blob": "a5cc66bda9db3d55d57589e36d684e70f4842d43"
+        },
+        {
+          "path": "tool/office_preview/transport/dwf-viewer-0.6.7.tar.gz.part002",
+          "size": 4194304,
+          "sha256": "90ad1885c30dce4c6cab8a3bb7590f02086e533d81c49f852c0d4874cdf4c95a",
+          "git_blob": "bc1cb63ec227937b3a9895a46531467b33e0cd2a"
+        },
+        {
+          "path": "tool/office_preview/transport/dwf-viewer-0.6.7.tar.gz.part003",
+          "size": 4194304,
+          "sha256": "2fa0e3513a26c04cd074e54725a28d2dcb2a81024dda31c635c75d3ea9ee8bcd",
+          "git_blob": "536eafe8564b38018ee923e0163d0f196ebc3d09"
+        },
+        {
+          "path": "tool/office_preview/transport/dwf-viewer-0.6.7.tar.gz.part004",
+          "size": 938465,
+          "sha256": "2ad9ea9ab67d16459fa8e2dae98b2b793e01578a3046d0c11c37f5cb286665cf",
+          "git_blob": "a1a581939a83ee0d5ad750789824fe964b16e2ba"
+        }
+      ]
+    },
+    {
+      "path": "tool/office_preview/corresponding_source/libredwg-web-0.7.9.tar.gz",
+      "size": 23621657,
+      "sha256": "af350d628535a2842262af5b49d50568b6dae62854667e13bb9f161b26c00431",
+      "parts": [
+        {
+          "path": "tool/office_preview/transport/libredwg-web-0.7.9.tar.gz.part000",
+          "size": 4194304,
+          "sha256": "bde8b3eca59f4b546c9fe9d37a545b73a58613fda63e35c5f2471c47cba99444",
+          "git_blob": "2c6ef30cfa7b72f34453e3f92f9bdd508e774869"
+        },
+        {
+          "path": "tool/office_preview/transport/libredwg-web-0.7.9.tar.gz.part001",
+          "size": 4194304,
+          "sha256": "6bc79f0e1ade4bcd67e0b6067a7206d5ec34ca5c9bce6a2dde50bf18f25d6102",
+          "git_blob": "250099d88f9b854cdb0eab8864e687585b691f5b"
+        },
+        {
+          "path": "tool/office_preview/transport/libredwg-web-0.7.9.tar.gz.part002",
+          "size": 4194304,
+          "sha256": "6490b8ad10ae9c5bdf49de1e3a0159e30d1915b90177279b38d0cf18e9c8d010",
+          "git_blob": "cf39ef1d6e393f75d97f55b3835d9ac6834eba2d"
+        },
+        {
+          "path": "tool/office_preview/transport/libredwg-web-0.7.9.tar.gz.part003",
+          "size": 4194304,
+          "sha256": "31353e456a86420fc4419c0f5f468d61cba58f9864703eb20c356e3088988405",
+          "git_blob": "a1bf107b7f440865670eb34344cd7170b1382893"
+        },
+        {
+          "path": "tool/office_preview/transport/libredwg-web-0.7.9.tar.gz.part004",
+          "size": 4194304,
+          "sha256": "8c72be412d50710a0d309b16a9a4915da5fda0f0492fdcb6934353c6e1571ab3",
+          "git_blob": "adfa924cb2b96f4802b123138613c227c9e38c44"
+        },
+        {
+          "path": "tool/office_preview/transport/libredwg-web-0.7.9.tar.gz.part005",
+          "size": 2650137,
+          "sha256": "3d2929c9fbc6eee3b1e481726ec8e89eb4507da1a6006a10798a0cfafb858d35",
+          "git_blob": "abec83c7eacfe8ea50e3b651d129bcdc90fbc583"
+        }
+      ]
+    }
+  ]
+}

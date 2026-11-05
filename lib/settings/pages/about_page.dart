@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 
 import '../../ide/ide_button.dart';
+import '../../ide/document/document_preview_notices.dart';
 import '../../l10n/l10n.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/codicons.dart';
@@ -127,6 +128,40 @@ class AboutSettingsPage extends StatelessWidget {
                 label: l10n.aboutOpen,
                 secondary: true,
                 onPressed: () => _open(changelog),
+              ),
+            ),
+            SettingsRow(
+              label: zh ? 'NoteBoard 内置预览器' : 'Embedded NoteBoard viewers',
+              description: zh
+                  ? 'NoteBoard 原始预览组件，AGPL-3.0。修改：BaoCode 离线宿主、主题桥接与安全资源边界；保留原组件版式及操作。'
+                  : 'Original NoteBoard viewer components, AGPL-3.0. Adaptations: offline host, theme bridge and resource isolation. Original viewer layout and controls are retained.',
+              trailing: Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  IdeButton(
+                    label: zh ? '许可' : 'Licenses',
+                    secondary: true,
+                    onPressed: () =>
+                        unawaited(DocumentPreviewNotices.show(context)),
+                  ),
+                  IdeButton(
+                    label: zh ? '原始源码' : 'Upstream source',
+                    secondary: true,
+                    onPressed: () => _open(DocumentPreviewNotices.upstream),
+                  ),
+                ],
+              ),
+            ),
+            SettingsRow(
+              label: zh ? '预览器对应源码' : 'Viewer corresponding source',
+              description: zh
+                  ? '包含原始组件、BaoCode 适配、构建脚本、依赖锁文件与全部许可声明。GPLv3 §13 允许与 AGPLv3 组件组合；各部分保留其许可证。'
+                  : 'Original components, BaoCode adaptations, build scripts, dependency lockfile and notices. GPLv3 section 13 permits combination with AGPLv3 components; each part retains its license.',
+              trailing: IdeButton(
+                label: zh ? '查看源码' : 'View source',
+                secondary: true,
+                onPressed: () => _open(DocumentPreviewNotices.source),
               ),
             ),
             SettingsRow(

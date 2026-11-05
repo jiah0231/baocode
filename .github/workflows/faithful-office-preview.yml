@@ -1,0 +1,48 @@
+# Input/source evidence only. This job deliberately does not launch a browser,
+# install a browser, update visual baselines, publish, or replace Windows tests.
+name: Office preview fixture and source checks
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'test/fixtures/office_preview/**'
+      - 'tool/office_preview/**'
+      - '.github/workflows/faithful-office-preview.yml'
+  push:
+    branches: ['validation/faithful-*', 'validation/non-chrome-*']
+    paths:
+      - 'test/fixtures/office_preview/**'
+      - 'tool/office_preview/**'
+      - '.github/workflows/faithful-office-preview.yml'
+permissions:
+  contents: read
+jobs:
+  verify-inputs:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify fixture provenance, ZIP integrity and authored geometry
+        run: python tool/office_preview/test/verify_fixtures.py --report build/office-fixture-evidence/inputs.json
+      - name: Check visual tools syntax without executing them
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node --check tool/office_preview/test/visual.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Visual scenario syntax failed' }
+          node --check tool/office_preview/test/compare_pngs.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Image comparison tool syntax failed' }
+          python -m py_compile tool/office_preview/test/generate_fixtures.py tool/office_preview/test/verify_fixtures.py
+          if ($LASTEXITCODE -ne 0) { throw 'Fixture tool syntax failed' }
+          'Static checks only; browser screenshots and reviewed references are not established by this job.' | Set-Content build/office-fixture-evidence/VALIDATION-SCOPE.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: office-fixture-input-evidence
+          path: build/office-fixture-evidence/
+          if-no-files-found: warn

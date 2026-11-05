@@ -194,10 +194,22 @@ Future<void> main(List<String> arguments) async {
     );
     final symbols = Directory('${root.path}\\$_symbolsRelative')
       ..createSync(recursive: true);
+    final revisionResult = await Process.run('git', [
+      'rev-parse',
+      'HEAD',
+    ], workingDirectory: root.path);
+    final sourceRevision = '${revisionResult.stdout}'.trim();
+    if (revisionResult.exitCode != 0 ||
+        !RegExp(r'^[0-9a-f]{40}$').hasMatch(sourceRevision)) {
+      _fail(
+        'Cannot identify the corresponding source revision for this build.',
+      );
+    }
     await _run('flutter', [
       'build',
       'windows',
       '--release',
+      '--dart-define=BAOCODE_SOURCE_REVISION=$sourceRevision',
       if (channel) '--dart-define=BAOCODE_CHANNEL=true',
       if (noUpdates) '--dart-define=BAOCODE_UPDATES_ENABLED=false',
       if (customUpdates) '--dart-define=BAOCODE_CUSTOM_UPDATES=true',

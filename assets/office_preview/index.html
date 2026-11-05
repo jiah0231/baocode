@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' blob: 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src data: blob:; font-src 'self' data: blob:; connect-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; frame-src 'none'; media-src 'none'; base-uri 'none'; form-action 'none'">
+<title>BaoCode · NoteBoard 文档查看器</title>
+<link rel="stylesheet" href="viewer.css">
+<script src="viewer.js" defer></script>
+</head>
+<body>
+<main id="document-container" aria-label="文档内容"></main>
+<div id="status" role="status">正在准备本地预览…</div>
+<div id="toast" role="status" hidden></div>
+<footer><span>NoteBoard 原版查看器 · 本地只读</span><button id="show-licenses" type="button">源码与许可</button></footer>
+<section id="licenses" hidden role="dialog" aria-label="源代码与第三方许可"><header><strong>源代码与许可</strong><button id="copy-source" type="button">复制完整源代码地址</button><button id="close-licenses" type="button">关闭</button></header><p>此查看器包含 NoteBoard AGPL-3.0-only 原版插件，以及遵循各自许可的第三方组件。完整对应源码、原始源码、宿主适配和可复现构建脚本随本应用对应版本源码的 tool/office_preview 目录提供。准确源码版本见应用“关于”。</p><p id="source-url">https://github.com/jiah0231/baocode</p><pre></pre></section>
+</body>
+</html>

@@ -1,0 +1,81 @@
+{
+  "schema": 1,
+  "upstream": {
+    "repository": "https://github.com/CrazyFigure/NoteBoard",
+    "commit": "43be834d892541d3fda51cab6e5496371331e341"
+  },
+  "dependencies": {
+    "@flyfish-dev/cad-viewer": "0.8.3",
+    "@web-ppt/core": "0.4.5",
+    "@web-ppt/viewer-core": "0.4.5",
+    "docx-preview": "0.3.7",
+    "dompurify": "3.4.13",
+    "jszip": "3.10.1",
+    "marked": "17.0.6",
+    "msdoc-viewer": "0.2.12",
+    "pdfjs-dist": "5.4.624",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "artifacts": [
+    {
+      "name": "cad.js",
+      "size": 14035150,
+      "sha256": "19bdd7fca435145b7b4fe70561713a19c93fddea96d9ffda553ab795a35e4956"
+    },
+    {
+      "name": "epub.js",
+      "size": 159897,
+      "sha256": "7a0e0e79b6ef56ced5c6285e47d6ccb8457e9a92bcb45e8dd7c3f11d9b684d5e"
+    },
+    {
+      "name": "excel.js",
+      "size": 498190,
+      "sha256": "e603b0b9723d86d4b21be372434d3eaebc488a8f2e320e7708557d109b1d700e"
+    },
+    {
+      "name": "goodnotes.js",
+      "size": 4565840,
+      "sha256": "1e7d267d1dd49b181e72927f9ff0b5a28010da43482c344bdae82748eb555ad8"
+    },
+    {
+      "name": "index.html",
+      "size": 1596,
+      "sha256": "c5ad9d9ca0e5c69446c30c4ddee3feb42a1f416e82c5b0640459fe0c6dde16b7"
+    },
+    {
+      "name": "notability.js",
+      "size": 4563930,
+      "sha256": "867beae37e7b6d0242bb4b89c3bdad6fdd5effe3e029f509daac0bc04b25cd2c"
+    },
+    {
+      "name": "pdf.js",
+      "size": 4449241,
+      "sha256": "8cadd72b03c3de83cc36e0bbb21c927c24efe24a558d774f80dc5a7cfb3827e5"
+    },
+    {
+      "name": "powerpoint.js",
+      "size": 436918,
+      "sha256": "9d45e0bf718c59431a8cc7af1d9a370368ce3afb04cd9d6e083721b744fb81ac"
+    },
+    {
+      "name": "THIRD_PARTY_NOTICES.txt",
+      "size": 334458,
+      "sha256": "6efc08299bd7c3804affd6be7c75b0a0c4c5f525b75c09a48dc90b2fd1b2d7e8"
+    },
+    {
+      "name": "viewer.css",
+      "size": 2176,
+      "sha256": "dfef565b789d279d49744ca460325730ae84fda1e169d47510737b0bbbfd661f"
+    },
+    {
+      "name": "viewer.js",
+      "size": 6911,
+      "sha256": "929890090b5bdbe4a00bb413858baa655e17455ea0a61dd0b962a2cd3c0a7d8e"
+    },
+    {
+      "name": "word.js",
+      "size": 374743,
+      "sha256": "c1991be05d7bf194d57d64de6b47c0a1096a808351845b272334efd1b16d8486"
+    }
+  ]
+}

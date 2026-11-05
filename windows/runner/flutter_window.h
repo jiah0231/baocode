@@ -11,6 +11,7 @@
 
 #include "app_windows.h"
 #include "attention.h"
+#include "document_preview_host.h"
 #include "log_folder.h"
 #include "login_window.h"
 #include "open_requests.h"
@@ -67,6 +68,9 @@ class FlutterWindow : public ViewWindow {
 
   // The channel build's login window (see login_window.h).
   std::unique_ptr<LoginWindow> login_window_;
+
+  // Read-only offline Office previews, isolated from account login.
+  std::unique_ptr<DocumentPreviewHost> document_previews_;
 
   // Where Flutter says the logs go (see log_folder.h).
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> logs_;

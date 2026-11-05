@@ -79,6 +79,10 @@ bool FlutterWindow::OnCreate() {
 
   // The channel build's login window (see lib/channel/account/).
   login_window_ = std::make_unique<LoginWindow>(messenger, GetHandle());
+  document_previews_ = std::make_unique<DocumentPreviewHost>(
+      messenger, [this](int64_t view_id) {
+        return app_windows_ ? app_windows_->HandleOf(view_id) : nullptr;
+      });
 
   // Shown with its first frame — unless the app starts in the IDE's windows
   // alone (see AppWindows::MainShownAtLaunch), which show themselves.
@@ -113,6 +117,7 @@ void FlutterWindow::OnDestroy() {
   }
   stash_ = nullptr;
   login_window_ = nullptr;
+  document_previews_ = nullptr;
   app_windows_ = nullptr;
   ReleaseView();
 

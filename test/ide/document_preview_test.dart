@@ -342,7 +342,7 @@ void main() {
     timeout: const Timeout(Duration(minutes: 2)),
   );
 
-  testWidgets('document colors follow light, dark and high-contrast themes', (
+  testWidgets('chrome follows themes while document colors remain original', (
     tester,
   ) async {
     final original = WorkbenchThemeService.instance;
@@ -370,18 +370,18 @@ void main() {
         tester
             .widgetList<SelectableText>(find.byType(SelectableText))
             .map((text) => text.style?.color),
-        everyElement(AppColors.text),
+        everyElement(const Color(0xff202020)),
       );
       backgrounds.add(AppColors.code);
       expect(tester.takeException(), isNull);
     }
     expect(backgrounds[0], isNot(backgrounds[1]));
-    await tester.tap(find.text('Original colors'));
-    await tester.pump();
-    expect(find.text('Theme colors'), findsOneWidget);
     await tester.tap(find.text('Theme colors'));
     await tester.pump();
     expect(find.text('Original colors'), findsOneWidget);
+    await tester.tap(find.text('Original colors'));
+    await tester.pump();
+    expect(find.text('Theme colors'), findsOneWidget);
   }, timeout: const Timeout(Duration(minutes: 2)));
 
   testWidgets('toolbar and content fit a narrow pane at larger text size', (

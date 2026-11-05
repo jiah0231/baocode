@@ -1,0 +1,233 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "poi-SampleDoc",
+      "path": "apache-poi/SampleDoc.docx",
+      "kind": "docx",
+      "origin": "upstream-regression-fixture",
+      "upstreamCommit": "7f4d36854109efa17152b27a5fb1b2c7d842c314",
+      "source": "https://github.com/apache/poi/blob/7f4d36854109efa17152b27a5fb1b2c7d842c314/test-data/document/SampleDoc.docx",
+      "download": "https://raw.githubusercontent.com/apache/poi/7f4d36854109efa17152b27a5fb1b2c7d842c314/test-data/document/SampleDoc.docx",
+      "sha256": "ea2c517bd7be4628887eb97f630334b93b894f4522d2c0adae263e602d76df92",
+      "bytes": 11611,
+      "license": "Apache-2.0; retained upstream LICENSE and NOTICE",
+      "features": [
+        "explicit page break",
+        "font family, size and color"
+      ],
+      "referenceStatus": "not-yet-reviewed"
+    },
+    {
+      "id": "poi-VariousPictures",
+      "path": "apache-poi/VariousPictures.docx",
+      "kind": "docx",
+      "origin": "upstream-regression-fixture",
+      "upstreamCommit": "7f4d36854109efa17152b27a5fb1b2c7d842c314",
+      "source": "https://github.com/apache/poi/blob/7f4d36854109efa17152b27a5fb1b2c7d842c314/test-data/document/VariousPictures.docx",
+      "download": "https://raw.githubusercontent.com/apache/poi/7f4d36854109efa17152b27a5fb1b2c7d842c314/test-data/document/VariousPictures.docx",
+      "sha256": "c1eecbca7de9f99e21c677e1d5b045eaa1d5a442eff4c82f0cbe9af93726a070",
+      "bytes": 103677,
+      "license": "Apache-2.0; retained upstream LICENSE and NOTICE",
+      "features": [
+        "five embedded image encodings",
+        "intrinsic image sizing"
+      ],
+      "referenceStatus": "not-yet-reviewed"
+    },
+    {
+      "id": "poi-ComplexNumberedLists",
+      "path": "apache-poi/ComplexNumberedLists.docx",
+      "kind": "docx",
+      "origin": "upstream-regression-fixture",
+      "upstreamCommit": "7f4d36854109efa17152b27a5fb1b2c7d842c314",
+      "source": "https://github.com/apache/poi/blob/7f4d36854109efa17152b27a5fb1b2c7d842c314/test-data/document/ComplexNumberedLists.docx",
+      "download": "https://raw.githubusercontent.com/apache/poi/7f4d36854109efa17152b27a5fb1b2c7d842c314/test-data/document/ComplexNumberedLists.docx",
+      "sha256": "297a085a7d433af2eeee7661e8db21539452cb585096484774a1e9f5f258b0b6",
+      "bytes": 14458,
+      "license": "Apache-2.0; retained upstream LICENSE and NOTICE",
+      "features": [
+        "nested lists",
+        "restart and continuation numbering"
+      ],
+      "referenceStatus": "not-yet-reviewed"
+    },
+    {
+      "id": "poi-shapes-with-text",
+      "path": "apache-poi/shapes-with-text.docx",
+      "kind": "docx",
+      "origin": "upstream-regression-fixture",
+      "upstreamCommit": "7f4d36854109efa17152b27a5fb1b2c7d842c314",
+      "source": "https://github.com/apache/poi/blob/7f4d36854109efa17152b27a5fb1b2c7d842c314/test-data/document/shapes-with-text.docx",
+      "download": "https://raw.githubusercontent.com/apache/poi/7f4d36854109efa17152b27a5fb1b2c7d842c314/test-data/document/shapes-with-text.docx",
+      "sha256": "1ef4d8cbfd5e2333897ab3193b58ce445cee7e45476d39e5626a4c7097f72d95",
+      "bytes": 27520,
+      "license": "Apache-2.0; retained upstream LICENSE and NOTICE",
+      "features": [
+        "floating text boxes",
+        "anchored drawings",
+        "grouped text"
+      ],
+      "referenceStatus": "not-yet-reviewed"
+    },
+    {
+      "id": "poi-themes",
+      "path": "apache-poi/themes.pptx",
+      "kind": "pptx",
+      "origin": "upstream-regression-fixture",
+      "upstreamCommit": "7f4d36854109efa17152b27a5fb1b2c7d842c314",
+      "source": "https://github.com/apache/poi/blob/7f4d36854109efa17152b27a5fb1b2c7d842c314/test-data/slideshow/themes.pptx",
+      "download": "https://raw.githubusercontent.com/apache/poi/7f4d36854109efa17152b27a5fb1b2c7d842c314/test-data/slideshow/themes.pptx",
+      "sha256": "3ea86e4ee84a8bca6b99fe3a9f2a9a9186c0655df28ff92a2d02da24926c64ba",
+      "bytes": 322325,
+      "license": "Apache-2.0; retained upstream LICENSE and NOTICE",
+      "features": [
+        "10 slides",
+        "7 masters",
+        "77 layouts",
+        "inherited colors and backgrounds"
+      ],
+      "referenceStatus": "not-yet-reviewed"
+    },
+    {
+      "id": "poi-sample_pptx_grouping_issues",
+      "path": "apache-poi/sample_pptx_grouping_issues.pptx",
+      "kind": "pptx",
+      "origin": "upstream-regression-fixture",
+      "upstreamCommit": "7f4d36854109efa17152b27a5fb1b2c7d842c314",
+      "source": "https://github.com/apache/poi/blob/7f4d36854109efa17152b27a5fb1b2c7d842c314/test-data/slideshow/sample_pptx_grouping_issues.pptx",
+      "download": "https://raw.githubusercontent.com/apache/poi/7f4d36854109efa17152b27a5fb1b2c7d842c314/test-data/slideshow/sample_pptx_grouping_issues.pptx",
+      "sha256": "a8639e12e763a01d889a6178e154c21db2dd4275f8f35ac81a458f81e26b2c18",
+      "bytes": 39436,
+      "license": "Apache-2.0; retained upstream LICENSE and NOTICE",
+      "features": [
+        "nested group transforms",
+        "11 groups"
+      ],
+      "referenceStatus": "not-yet-reviewed"
+    },
+    {
+      "id": "poi-chart-picture-bg",
+      "path": "apache-poi/chart-picture-bg.pptx",
+      "kind": "pptx",
+      "origin": "upstream-regression-fixture",
+      "upstreamCommit": "7f4d36854109efa17152b27a5fb1b2c7d842c314",
+      "source": "https://github.com/apache/poi/blob/7f4d36854109efa17152b27a5fb1b2c7d842c314/test-data/slideshow/chart-picture-bg.pptx",
+      "download": "https://raw.githubusercontent.com/apache/poi/7f4d36854109efa17152b27a5fb1b2c7d842c314/test-data/slideshow/chart-picture-bg.pptx",
+      "sha256": "97bad7041fa5f23408eea513cd85bf7fed47a8ba218d8791a59be14cb53fdaa5",
+      "bytes": 651648,
+      "license": "Apache-2.0; retained upstream LICENSE and NOTICE",
+      "features": [
+        "chart",
+        "picture background"
+      ],
+      "referenceStatus": "not-yet-reviewed"
+    },
+    {
+      "id": "poi-ConditionalFormattingSamples",
+      "path": "apache-poi/ConditionalFormattingSamples.xlsx",
+      "kind": "xlsx",
+      "origin": "upstream-regression-fixture",
+      "upstreamCommit": "7f4d36854109efa17152b27a5fb1b2c7d842c314",
+      "source": "https://github.com/apache/poi/blob/7f4d36854109efa17152b27a5fb1b2c7d842c314/test-data/spreadsheet/ConditionalFormattingSamples.xlsx",
+      "download": "https://raw.githubusercontent.com/apache/poi/7f4d36854109efa17152b27a5fb1b2c7d842c314/test-data/spreadsheet/ConditionalFormattingSamples.xlsx",
+      "sha256": "8dfa997a642c00a1da8c0750c371f204553a98c537ca046028b052f9b424a074",
+      "bytes": 654688,
+      "license": "Apache-2.0; retained upstream LICENSE and NOTICE",
+      "features": [
+        "18 sheets",
+        "7 merges",
+        "38 conditional-format regions",
+        "drawings"
+      ],
+      "referenceStatus": "not-yet-reviewed"
+    },
+    {
+      "id": "poi-WithThreeCharts",
+      "path": "apache-poi/WithThreeCharts.xlsx",
+      "kind": "xlsx",
+      "origin": "upstream-regression-fixture",
+      "upstreamCommit": "7f4d36854109efa17152b27a5fb1b2c7d842c314",
+      "source": "https://github.com/apache/poi/blob/7f4d36854109efa17152b27a5fb1b2c7d842c314/test-data/spreadsheet/WithThreeCharts.xlsx",
+      "download": "https://raw.githubusercontent.com/apache/poi/7f4d36854109efa17152b27a5fb1b2c7d842c314/test-data/spreadsheet/WithThreeCharts.xlsx",
+      "sha256": "629b69bd250d9b4e173eb2088eb80b656b7748b0287cd7b0df0c2dc22c6af7b0",
+      "bytes": 13841,
+      "license": "Apache-2.0; retained upstream LICENSE and NOTICE",
+      "features": [
+        "3 charts",
+        "3 sheets",
+        "drawing anchors"
+      ],
+      "referenceStatus": "not-yet-reviewed"
+    },
+    {
+      "id": "poi-tableStyle",
+      "path": "apache-poi/tableStyle.xlsx",
+      "kind": "xlsx",
+      "origin": "upstream-regression-fixture",
+      "upstreamCommit": "7f4d36854109efa17152b27a5fb1b2c7d842c314",
+      "source": "https://github.com/apache/poi/blob/7f4d36854109efa17152b27a5fb1b2c7d842c314/test-data/spreadsheet/tableStyle.xlsx",
+      "download": "https://raw.githubusercontent.com/apache/poi/7f4d36854109efa17152b27a5fb1b2c7d842c314/test-data/spreadsheet/tableStyle.xlsx",
+      "sha256": "494f76f9c9fa63f1980b7a250bbfcf6f8df7fb0b1cd5528307deef1b0b5b6cb8",
+      "bytes": 10899,
+      "license": "Apache-2.0; retained upstream LICENSE and NOTICE",
+      "features": [
+        "table styles",
+        "custom column width",
+        "total row"
+      ],
+      "referenceStatus": "not-yet-reviewed"
+    },
+    {
+      "id": "authored-docx",
+      "path": "authored-layout.docx",
+      "kind": "docx",
+      "origin": "project-authored",
+      "source": "tool/office_preview/test/generate_fixtures.py",
+      "sha256": "8dfdc6b3ad880498b66a88247157d332712f5ab70c264476a8bd043d68f009f4",
+      "bytes": 39152,
+      "license": "GPL-3.0-only",
+      "features": [
+        "authored geometry",
+        "original colors",
+        "images",
+        "tables"
+      ],
+      "referenceStatus": "not-yet-reviewed"
+    },
+    {
+      "id": "authored-pptx",
+      "path": "authored-layout.pptx",
+      "kind": "pptx",
+      "origin": "project-authored",
+      "source": "tool/office_preview/test/generate_fixtures.py",
+      "sha256": "5dac97f75e27d278b37896962d521a40eec150382458c888caf1b6ad455cd434",
+      "bytes": 36605,
+      "license": "GPL-3.0-only",
+      "features": [
+        "authored geometry",
+        "original colors",
+        "images",
+        "tables"
+      ],
+      "referenceStatus": "not-yet-reviewed"
+    },
+    {
+      "id": "authored-xlsx",
+      "path": "authored-layout.xlsx",
+      "kind": "xlsx",
+      "origin": "project-authored",
+      "source": "tool/office_preview/test/generate_fixtures.py",
+      "sha256": "b1fe03954a35ab63c9f5a52ef8494f52a0f77c14b7dfbaf72407a575ebf1fb18",
+      "bytes": 8565,
+      "license": "GPL-3.0-only",
+      "features": [
+        "authored geometry",
+        "original colors",
+        "images",
+        "tables"
+      ],
+      "referenceStatus": "not-yet-reviewed"
+    }
+  ]
+}

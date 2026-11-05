@@ -27,6 +27,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../base/tooltip_scroll.dart';
+import '../platform/native_overlay_occlusion.dart';
 import '../theme/workbench_theme.dart' show themeColors;
 
 /// The workbench hover's colors, in the color theme.
@@ -201,11 +202,13 @@ class _IdeHoverState extends State<IdeHover> {
         reverseDuration: Duration.zero,
       ),
       positionDelegate: widget.followMouse ? _placeAtMouse : _place,
-      tooltipBuilder: (context, animation) => FadeTransition(
-        opacity: animation,
-        child: widget.interactive
-            ? TooltipScroll(anchorContext: context, child: _box())
-            : _box(),
+      tooltipBuilder: (context, animation) => NativeOverlayOcclusion(
+        child: FadeTransition(
+          opacity: animation,
+          child: widget.interactive
+              ? TooltipScroll(anchorContext: context, child: _box())
+              : _box(),
+        ),
       ),
       child: widget.followMouse
           ? MouseRegion(
