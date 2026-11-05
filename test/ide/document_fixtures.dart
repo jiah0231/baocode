@@ -4,10 +4,10 @@ import 'dart:typed_data';
 import '../extensions/vsix/zip_writer.dart';
 
 /// Small, deterministic OOXML packages. No Office installation or user files.
-Uint8List documentZip(Map<String, String> files, {bool deflate = true}) =>
+Uint8List documentZip(Map<String, Object> files, {bool deflate = true}) =>
     buildZip({
       for (final MapEntry(:key, :value) in files.entries)
-        key: utf8.encode(value),
+        key: value is String ? utf8.encode(value) : value as List<int>,
     }, deflate: deflate);
 
 const _types = 'http://schemas.openxmlformats.org/package/2006/content-types';
@@ -27,6 +27,7 @@ String _contentTypes(String overrides) =>
     '<Default Extension="rels" '
     'ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
     '<Default Extension="xml" ContentType="application/xml"/>'
+    '<Default Extension="png" ContentType="image/png"/>'
     '$overrides</Types>';
 
 String _rootRelationships(String target) =>
@@ -38,7 +39,7 @@ Uint8List wordDocument({
   String title = 'BaoCode 文档',
   String text = 'Hello 世界 & friends',
   String? body,
-  Map<String, String> extraEntries = const {},
+  Map<String, Object> extraEntries = const {},
   bool deflate = true,
 }) => documentZip({
   '[Content_Types].xml': _contentTypes(
@@ -67,6 +68,7 @@ Uint8List wordDocument({
 Uint8List slideDocument({
   String first = 'First slide 第一页',
   String second = 'Second slide 第二页',
+  Map<String, Object> extraEntries = const {},
   bool deflate = true,
 }) => documentZip({
   '[Content_Types].xml': _contentTypes(
@@ -94,6 +96,7 @@ Uint8List slideDocument({
       'Target="slides/slide7.xml"/></Relationships>',
   'ppt/slides/slide2.xml': _slideXml(second),
   'ppt/slides/slide7.xml': _slideXml(first),
+  ...extraEntries,
 }, deflate: deflate);
 
 String _slideXml(String text) =>
@@ -155,3 +158,75 @@ Uint8List spreadsheetDocument({String? firstSheet, bool deflate = true}) =>
     }, deflate: deflate);
 
 Uint8List csvDocument(String text) => Uint8List.fromList(utf8.encode(text));
+
+/// A valid 1×1 blue RGBA PNG, including checksummed IHDR, IDAT and IEND chunks.
+Uint8List documentPng() => base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ'
+  'AAAADUlEQVR4nGOwbvr2HwAFYgKzn+LXXwAAAABJRU5ErkJggg==',
+);
+
+Uint8List wordImageDocument() => wordDocument(
+  body:
+      '<w:p><w:r><w:t>Image caption</w:t></w:r></w:p>'
+      '<w:p><w:r><w:drawing '
+      'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+      'xmlns:a="$_drawing" '
+      'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+      '<wp:inline><wp:extent cx="1905000" cy="952500"/>'
+      '<wp:docPr id="1" name="Pixel"/><a:graphic><a:graphicData '
+      'uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+      '<pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="Pixel"/>'
+      '<pic:cNvPicPr/></pic:nvPicPr><pic:blipFill>'
+      '<a:blip r:embed="rImage"/><a:stretch><a:fillRect/></a:stretch>'
+      '</pic:blipFill><pic:spPr><a:prstGeom prst="rect"><a:avLst/>'
+      '</a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic>'
+      '</wp:inline></w:drawing></w:r></w:p>',
+  extraEntries: {
+    'word/_rels/document.xml.rels':
+        '<Relationships xmlns="$_rels">'
+        '<Relationship Id="rImage" Type="$_office/image" '
+        'Target="media/pixel.png"/></Relationships>',
+    'word/media/pixel.png': documentPng(),
+  },
+);
+
+/// First slide has a picture and authored text, optionally under a nonuniform
+/// group transform. Their package order is also their paint order.
+Uint8List positionedSlideDocument({bool grouped = false}) => slideDocument(
+  extraEntries: {
+    'ppt/slides/slide7.xml':
+        '<p:sld xmlns:p="$_presentation" xmlns:a="$_drawing" xmlns:r="$_office">'
+        '<p:cSld><p:bg><p:bgPr><a:solidFill><a:srgbClr val="102030"/>'
+        '</a:solidFill></p:bgPr></p:bg><p:spTree>'
+        '${grouped ? '<p:grpSp><p:nvGrpSpPr><p:cNvPr id="10" name="Group"/>'
+                  '<p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm>'
+                  '<a:off x="952500" y="1905000"/>'
+                  '<a:ext cx="3810000" cy="2857500"/>'
+                  '<a:chOff x="95250" y="190500"/>'
+                  '<a:chExt cx="1905000" cy="952500"/>'
+                  '</a:xfrm></p:grpSpPr>' : ''}'
+        '<p:pic><p:nvPicPr><p:cNvPr id="2" name="Pixel"/>'
+        '<p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill>'
+        '<a:blip r:embed="rImage"/><a:stretch><a:fillRect/></a:stretch>'
+        '</p:blipFill><p:spPr><a:xfrm><a:off x="95250" y="190500"/>'
+        '<a:ext cx="952500" cy="476250"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>'
+        '<p:sp><p:nvSpPr><p:cNvPr id="3" name="Authored text"/>'
+        '<p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr>'
+        '<a:xfrm><a:off x="285750" y="381000"/>'
+        '<a:ext cx="1905000" cy="571500"/></a:xfrm>'
+        '<a:solidFill><a:srgbClr val="AABBCC"/></a:solidFill>'
+        '<a:ln><a:solidFill><a:srgbClr val="112233"/></a:solidFill></a:ln>'
+        '</p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p>'
+        '<a:pPr algn="ctr"/><a:r><a:rPr b="1" sz="1800">'
+        '<a:solidFill><a:srgbClr val="445566"/></a:solidFill></a:rPr>'
+        '<a:t>Positioned text</a:t></a:r></a:p></p:txBody></p:sp>'
+        '${grouped ? '</p:grpSp>' : ''}'
+        '</p:spTree></p:cSld></p:sld>',
+    'ppt/slides/_rels/slide7.xml.rels':
+        '<Relationships xmlns="$_rels">'
+        '<Relationship Id="rImage" Type="$_office/image" '
+        'Target="../media/pixel.png"/></Relationships>',
+    'ppt/media/pixel.png': documentPng(),
+  },
+);

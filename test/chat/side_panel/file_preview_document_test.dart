@@ -24,6 +24,8 @@ class _Files with ReadWriteOnlyFiles implements IdeFileService {
   Future<String> read(String path, {bool force = false}) async {
     reads.add(path);
     if (path.endsWith('.txt')) return 'A normal editable file';
+    if (path.endsWith('.csv')) return 'Name,Value\nAlice,42\n';
+    if (path.endsWith('.tsv')) return 'Name\tValue\nAlice\t42\n';
     throw IdeBinaryFileException(path);
   }
 
@@ -44,7 +46,7 @@ void main() {
       return pending.future;
     }
 
-    for (final extension in ['docx', 'pptx', 'xlsx', 'csv', 'tsv']) {
+    for (final extension in ['docx', 'pptx', 'xlsx']) {
       final path = '/remote/project/report.$extension';
       await tester.pumpWidget(
         MaterialApp(
@@ -67,7 +69,7 @@ void main() {
       expect(files.reads, isEmpty);
       expect(files.writes, isEmpty);
     }
-    expect(bytesRead, hasLength(5));
+    expect(bytesRead, hasLength(3));
     await tester.pumpWidget(const SizedBox());
     pending.complete(Uint8List(0));
     await tester.pump();
@@ -154,16 +156,7 @@ void main() {
       final root = p.absolute(p.join(p.separator, 'document-project'));
       final workspace = IdeWorkspace(root, files: files);
       addTearDown(workspace.dispose);
-      for (final extension in [
-        'docx',
-        'pptx',
-        'xlsx',
-        'csv',
-        'tsv',
-        'doc',
-        'ppt',
-        'xls',
-      ]) {
+      for (final extension in ['docx', 'pptx', 'xlsx', 'doc', 'ppt', 'xls']) {
         final path = p.join(root, 'report.$extension');
         await workspace.open(path);
         final document = workspace.active!;
@@ -200,4 +193,53 @@ void main() {
       expect(files.writes, isEmpty);
     },
   );
+
+  testWidgets('CSV and TSV links keep their existing text editor', (
+    tester,
+  ) async {
+    final files = _Files();
+    var byteReads = 0;
+    for (final extension in ['csv', 'tsv']) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: FilePreview(
+              request: FileOpenRequest('/project/data.$extension'),
+              files: files,
+              readBytes: (_) async {
+                byteReads++;
+                return Uint8List(0);
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.byType(IdeCodeEditor), findsOneWidget);
+      expect(find.byType(IdeDocumentPreview), findsNothing);
+    }
+    expect(files.reads, ['/project/data.csv', '/project/data.tsv']);
+    expect(byteReads, 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  test('CSV and TSV IDE documents remain editable and save as text', () async {
+    final files = _Files();
+    final root = p.absolute(p.join(p.separator, 'delimited-project'));
+    final workspace = IdeWorkspace(root, files: files);
+    addTearDown(workspace.dispose);
+    for (final extension in ['csv', 'tsv']) {
+      final path = p.join(root, 'data.$extension');
+      await workspace.open(path);
+      final document = workspace.active!;
+      expect(document.isFile, isTrue);
+      expect(document.isMedia, isFalse);
+      expect(document.readOnly, isFalse);
+      workspace.edit(path, 'Updated data');
+      expect(document.dirty, isTrue);
+      await workspace.save(document);
+      expect(document.dirty, isFalse);
+      expect(files.writes, contains(path));
+    }
+  });
 }

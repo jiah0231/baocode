@@ -7,7 +7,7 @@ BaoCode can open these documents from the IDE explorer and chat file links:
 | Word `.docx` | Paragraphs, text emphasis, headings, tables and embedded PNG/JPEG/BMP images |
 | PowerPoint `.pptx` | Slides in presentation order, positioned text and images, basic fills/borders, page navigation and reading view |
 | Excel `.xlsx` | Sheet tabs, sparse cells, shared strings and saved formula results |
-| `.csv`, `.tsv` | A virtualized spreadsheet view, including quoted fields and Unicode text |
+| `.csv`, `.tsv` | Retain the existing text editor and editing/saving behavior |
 | Legacy `.doc`, `.ppt`, `.xls` | An explicit explanation and the existing system-app action; save a modern-format copy to preview |
 
 The preview is **not an Office renderer or editor**. Complex page layout,

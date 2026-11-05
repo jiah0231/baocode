@@ -379,11 +379,13 @@ class _DocumentSheetViewState extends State<DocumentSheetView> {
                             : 0.0;
                         final first = ((offset - indexWidth) / cellWidth)
                             .floor()
-                            .clamp(0, sheet.columnCount - 1);
+                            .clamp(0, sheet.columnCount - 1)
+                            .toInt();
                         final last =
                             ((offset + constraints.maxWidth) / cellWidth)
                                 .ceil()
-                                .clamp(first + 1, sheet.columnCount);
+                                .clamp(first + 1, sheet.columnCount)
+                                .toInt();
                         Widget row(int index) => SizedBox(
                           height: rowHeight,
                           child: Stack(

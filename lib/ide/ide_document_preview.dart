@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
@@ -79,10 +78,7 @@ Future<DocumentPreviewData> _readAndParseInOrder({
     check();
     return compute(_parse, (path: path, bytes: bytes));
   });
-  _parseQueue = result.then<void>(
-    (_) {},
-    onError: (Object _, StackTrace __) {},
-  );
+  _parseQueue = result.then<void>((_) {}, onError: (Object _, StackTrace _) {});
   return result;
 }
 
@@ -149,11 +145,12 @@ class _IdeDocumentPreviewState extends State<IdeDocumentPreview> {
       if (!mounted || generation != _generation) return;
       setState(() {
         _data = data;
-        _section = _section.clamp(
-          0,
-          (data.sections.length - 1).clamp(0, 100000),
-        );
-        _sheet = _sheet.clamp(0, (data.sheets.length - 1).clamp(0, 100000));
+        _section = _section
+            .clamp(0, (data.sections.length - 1).clamp(0, 100000))
+            .toInt();
+        _sheet = _sheet
+            .clamp(0, (data.sheets.length - 1).clamp(0, 100000))
+            .toInt();
       });
     } catch (error) {
       if (!mounted || generation != _generation) return;
@@ -164,7 +161,7 @@ class _IdeDocumentPreviewState extends State<IdeDocumentPreview> {
   void _go(int delta) {
     final count = _data?.sections.length ?? 0;
     if (count == 0) return;
-    setState(() => _section = (_section + delta).clamp(0, count - 1));
+    setState(() => _section = (_section + delta).clamp(0, count - 1).toInt());
   }
 
   @override

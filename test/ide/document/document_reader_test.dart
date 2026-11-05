@@ -57,37 +57,30 @@ void main() {
   });
 
   group('document paths', () {
-    test(
-      'Office, delimited, and legacy paths match without case sensitivity',
-      () {
-        for (final extension in [
-          'docx',
-          'pptx',
-          'xlsx',
-          'csv',
-          'tsv',
-          'doc',
-          'ppt',
-          'xls',
-        ]) {
-          expect(ideIsDocumentPath('/project/report.$extension'), isTrue);
-          expect(
-            ideIsDocumentPath('C:\\work\\REPORT.${extension.toUpperCase()}'),
-            isTrue,
-          );
-        }
-        for (final path in [
-          '/project/docx',
-          '/project/report.docx.txt',
-          '/project/report.pdf',
-          '/project/report.png',
-          '/project/report.md',
-          '/project/report.zip',
-        ]) {
-          expect(ideIsDocumentPath(path), isFalse, reason: path);
-        }
-      },
-    );
+    test('Office and legacy paths match without case sensitivity', () {
+      for (final extension in ['docx', 'pptx', 'xlsx', 'doc', 'ppt', 'xls']) {
+        expect(ideIsDocumentPath('/project/report.$extension'), isTrue);
+        expect(
+          ideIsDocumentPath('C:\\work\\REPORT.${extension.toUpperCase()}'),
+          isTrue,
+        );
+      }
+      for (final extension in ['csv', 'tsv', 'CSV', 'TSV']) {
+        final path = '/project/report.$extension';
+        expect(ideIsDocumentPath(path), isFalse);
+        expect(documentKindForPath(path), DocumentKind.delimited);
+      }
+      for (final path in [
+        '/project/docx',
+        '/project/report.docx.txt',
+        '/project/report.pdf',
+        '/project/report.png',
+        '/project/report.md',
+        '/project/report.zip',
+      ]) {
+        expect(ideIsDocumentPath(path), isFalse, reason: path);
+      }
+    });
 
     test('old binary formats produce a clear unsupported result', () {
       final compoundFile = Uint8List.fromList([
@@ -165,6 +158,124 @@ void main() {
         ),
       );
       expect(_paragraphs(preview), contains('Visible link'));
+    });
+  });
+
+  group('embedded images and slide geometry', () {
+    test(
+      'Word resolves image relationships and preserves display and pixel sizes',
+      () {
+        final preview = _read('image.docx', wordImageDocument());
+        final image = preview.sections.single.blocks
+            .whereType<DocumentImage>()
+            .single;
+        expect(image.name, 'pixel.png');
+        expect(image.bytes, documentPng());
+        expect(image.width, 200);
+        expect(image.height, 100);
+        expect(image.pixelWidth, 1);
+        expect(image.pixelHeight, 1);
+        expect(_paragraphs(preview), contains('Image caption'));
+      },
+    );
+
+    test('PowerPoint preserves picture and text ordering, geometry and authored colors', () {
+      final preview = _read('positioned.pptx', positionedSlideDocument());
+      final slide = preview.sections.first;
+      expect(slide.slideWidth, 1280);
+      expect(slide.slideHeight, 720);
+      expect(slide.backgroundColor, 0xff102030);
+      expect(slide.elements, hasLength(2));
+      final image = slide.elements.first;
+      expect(image.block, isA<DocumentImage>());
+      expect([image.x, image.y, image.width, image.height], [10, 20, 100, 50]);
+      final picture = image.block as DocumentImage;
+      expect(picture.bytes, documentPng());
+      expect([picture.pixelWidth, picture.pixelHeight], [1, 1]);
+      expect([picture.width, picture.height], [100, 50]);
+      final text = slide.elements.last;
+      expect([text.x, text.y, text.width, text.height], [30, 40, 200, 60]);
+      expect(text.fillColor, 0xffaabbcc);
+      expect(text.borderColor, 0xff112233);
+      final paragraph = text.block as DocumentParagraph;
+      expect(paragraph.text, 'Positioned text');
+      expect(paragraph.alignment, 'center');
+      expect(paragraph.runs.single.bold, isTrue);
+      expect(paragraph.runs.single.fontSize, 24);
+      expect(paragraph.runs.single.color, 0xff445566);
+      expect(slide.blocks.first, same(image.block));
+      expect(slide.blocks.last, same(text.block));
+    });
+
+    test(
+      'grouped slide objects use child coordinates and nonuniform scaling',
+      () {
+        final preview = _read(
+          'grouped.pptx',
+          positionedSlideDocument(grouped: true),
+        );
+        final elements = preview.sections.first.elements;
+        expect(elements, hasLength(2));
+        expect(
+          [
+            elements.first.x,
+            elements.first.y,
+            elements.first.width,
+            elements.first.height,
+          ],
+          [100, 200, 200, 150],
+        );
+        expect(
+          [
+            elements.last.x,
+            elements.last.y,
+            elements.last.width,
+            elements.last.height,
+          ],
+          [140, 260, 400, 180],
+        );
+      },
+    );
+
+    test('slide element budget applies inside and outside groups', () {
+      for (final grouped in [false, true]) {
+        expect(
+          () => _read(
+            'crowded.pptx',
+            positionedSlideDocument(grouped: grouped),
+            limits: const DocumentPreviewLimits(maxSlideElements: 1),
+          ),
+          throwsA(
+            isA<DocumentParseException>().having(
+              (e) => e.code,
+              'code',
+              'tooLarge',
+            ),
+          ),
+        );
+      }
+    });
+
+    test('small fixtures exercise image byte, pixel and count limits', () {
+      final bytes = wordImageDocument();
+      for (final limits in [
+        DocumentPreviewLimits(maxImageBytes: documentPng().length - 1),
+        DocumentPreviewLimits(maxTotalImageBytes: documentPng().length - 1),
+        const DocumentPreviewLimits(maxImagePixels: 0),
+        const DocumentPreviewLimits(maxTotalImagePixels: 0),
+        const DocumentPreviewLimits(maxImages: 0),
+      ]) {
+        expect(
+          () => _read('image.docx', bytes, limits: limits),
+          throwsA(
+            isA<DocumentParseException>().having(
+              (e) => e.code,
+              'code',
+              'tooLarge',
+            ),
+          ),
+        );
+      }
     });
   });
 

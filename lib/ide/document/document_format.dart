@@ -14,4 +14,10 @@ DocumentKind? documentKindForPath(String path) =>
       _ => null,
     };
 
-bool ideIsDocumentPath(String path) => documentKindForPath(path) != null;
+/// Editable delimited text keeps the existing source editor. The parser also
+/// accepts CSV/TSV for callers explicitly requesting a data view, but opening
+/// those files must not silently remove the user's ability to edit them.
+bool ideIsDocumentPath(String path) => switch (documentKindForPath(path)) {
+  null || DocumentKind.delimited => false,
+  _ => true,
+};

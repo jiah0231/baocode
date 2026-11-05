@@ -54,6 +54,28 @@ Future<void> _pump(
 );
 
 void main() {
+  testWidgets('an embedded Word PNG decodes and renders in the preview', (
+    tester,
+  ) async {
+    await _pump(tester, read: (_) async => wordImageDocument());
+    final imageFinder = find.descendant(
+      of: find.byType(IdeDocumentPreview),
+      matching: find.byType(Image),
+    );
+    await _waitFor(tester, imageFinder);
+    final image = tester.widget<Image>(imageFinder);
+    final context = tester.element(imageFinder);
+    await tester.runAsync(() => precacheImage(image.image, context));
+    await tester.pump();
+    final raw = tester.widget<RawImage>(
+      find.descendant(of: imageFinder, matching: find.byType(RawImage)),
+    );
+    expect(raw.image, isNotNull);
+    expect(_text('This image cannot be previewed'), findsNothing);
+    expect(_text('Image caption'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('Word shows Unicode text and its table as read-only content', (
     tester,
   ) async {

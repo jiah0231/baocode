@@ -209,9 +209,11 @@ String _alignment(String? value) => switch (value) {
 };
 double? _fontSize(String? value, double divisor) {
   final parsed = double.tryParse(value ?? '');
+  // Office stores points (half-points in Word, hundredths in DrawingML).
+  // The preview's EMU geometry uses 96 logical pixels per inch, not 72 points.
   return parsed == null || !parsed.isFinite
       ? null
-      : (parsed / divisor).clamp(6.0, 144.0);
+      : (parsed / divisor * 96 / 72).clamp(6.0, 144.0).toDouble();
 }
 
 int? _color(String? value) {
@@ -382,11 +384,13 @@ void _slideChildren(
     final width =
         (_coordinate(attr(ext, 'cx'), fallback: slideWidth) * transform.sx)
             .abs()
-            .clamp(1.0, 20000.0);
+            .clamp(1.0, 20000.0)
+            .toDouble();
     final height =
         (_coordinate(attr(ext, 'cy'), fallback: slideHeight / 4) * transform.sy)
             .abs()
-            .clamp(1.0, 20000.0);
+            .clamp(1.0, 20000.0)
+            .toDouble();
     if (attr(xfrm, 'rot') != null ||
         attr(xfrm, 'flipH') == '1' ||
         attr(xfrm, 'flipV') == '1') {
@@ -418,8 +422,8 @@ void _slideChildren(
       positioned.add(
         DocumentSlideElement(
           block: block,
-          x: x.clamp(-20000.0, 20000.0),
-          y: y.clamp(-20000.0, 20000.0),
+          x: x.clamp(-20000.0, 20000.0).toDouble(),
+          y: y.clamp(-20000.0, 20000.0).toDouble(),
           width: width,
           height: height,
           fillColor: fill,

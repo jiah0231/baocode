@@ -25,7 +25,7 @@ Future<Uint8List> readDocumentBytes(
   var cancelled = false;
   final cancellation = cancel?.then<void>(
     (_) => cancelled = true,
-    onError: (Object _, StackTrace __) => cancelled = true,
+    onError: (Object _, StackTrace _) => cancelled = true,
   );
   void check() {
     if (cancelled) {
