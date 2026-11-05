@@ -26,7 +26,9 @@ class ApplicationFontPicker extends StatelessWidget {
           Semantics(
             selected: maple == value,
             child: IdeButton(
-              key: ValueKey(value ? 'application-font-maple' : 'application-font-existing'),
+              key: ValueKey(
+                value ? 'application-font-maple' : 'application-font-existing',
+              ),
               label: value
                   ? (chinese ? 'Maple Mono（内置）' : 'Maple Mono (bundled)')
                   : (chinese ? '沿用现有字体' : 'Use existing fonts'),

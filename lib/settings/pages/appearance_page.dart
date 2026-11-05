@@ -666,7 +666,9 @@ class AppearanceSettingsPage extends StatelessWidget {
             SettingsCard(
               children: [
                 SettingsRow(
-                  label: l10n.localeName.startsWith('zh') ? '应用字体' : 'Application font',
+                  label: l10n.localeName.startsWith('zh')
+                      ? '应用字体'
+                      : 'Application font',
                   description: l10n.localeName.startsWith('zh')
                       ? '适用于所有主题。Maple Mono Normal NF CN 随应用内置，无需系统安装；字号和缩放沿用下方设置。选择“沿用现有字体”恢复原字体。'
                       : 'For every theme. Maple Mono Normal NF CN is bundled with the app; no system installation is needed. Sizes and zoom keep their settings below. Use existing fonts restores your original font choices.',

@@ -187,7 +187,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('global Maple preview uses existing sizes on ordinary themes', (tester) async {
+  testWidgets('global Maple preview uses existing sizes on ordinary themes', (
+    tester,
+  ) async {
     final original = WorkbenchThemeService.instance;
     final service = WorkbenchThemeService();
     WorkbenchThemeService.instance = service;
@@ -209,12 +211,17 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('application-font-maple')));
     await tester.pumpAndSettle();
     final title = tester.element(find.text('Make it your space'));
-    expect(DefaultTextStyle.of(title).style.fontFamily, 'Maple Mono Normal NF CN');
+    expect(
+      DefaultTextStyle.of(title).style.fontFamily,
+      'Maple Mono Normal NF CN',
+    );
     expect(AppFonts.codeStyle(13).fontSize, 20);
     expect(CodeFont.terminalSize.value, 18);
     expect(CodeFont.uiScale.value, 125);
     expect(find.textContaining('all themes'), findsWidgets);
-    await tester.runAsync(() => service.setColorTheme('Bao Light', preview: true));
+    await tester.runAsync(
+      () => service.setColorTheme('Bao Light', preview: true),
+    );
     await tester.pumpAndSettle();
     expect(CodeFont.effectiveFamilies.first, 'Maple Mono Normal NF CN');
     expect(AppFonts.codeStyle(13).fontSize, 20);
@@ -222,7 +229,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(CodeFont.mapleFont.value, isFalse);
   });
-  testWidgets('Apply existing fonts writes explicit false over legacy choice', (tester) async {
+  testWidgets('Apply existing fonts writes explicit false over legacy choice', (
+    tester,
+  ) async {
     CodeFont.pebrelPreset.value = true;
     final settings = _RecordingSettings();
     addTearDown(settings.dispose);
@@ -235,9 +244,7 @@ void main() {
     expect(settings.written, {CodeFont.mapleFontSettingKey: false});
     expect(CodeFont.mapleFont.value, isFalse);
   });
-
 }
-
 
 class _RecordingSettings extends UserSettings {
   _RecordingSettings() : super('/unused/settings.json');

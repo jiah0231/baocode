@@ -26,10 +26,7 @@ Future<void> showIdeColorThemeGallery(
     typographyPreset: CodeFont.mapleFont,
     persistTypographyPreset: settings == null
         ? null
-        : (enabled) => settings.update(
-            CodeFont.mapleFontSettingKey,
-            enabled,
-          ),
+        : (enabled) => settings.update(CodeFont.mapleFontSettingKey, enabled),
   );
   try {
     await showGeneralDialog<void>(
@@ -596,7 +593,10 @@ class _ThemePreview extends StatelessWidget {
                     const SizedBox(height: 10),
                     Text(
                       typographyEnabled
-                          ? text('Maple Mono · all themes', 'Maple Mono · 所有主题通用')
+                          ? text(
+                              'Maple Mono · all themes',
+                              'Maple Mono · 所有主题通用',
+                            )
                           : text('Using your existing fonts', '沿用现有字体设置'),
                       key: const ValueKey('application-font-status'),
                       style: TextStyle(
