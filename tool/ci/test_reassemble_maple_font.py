@@ -28,9 +28,9 @@ class FontReassemblyTests(unittest.TestCase):
     def write_manifest(self):
         self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
 
-    def assert_rejected(self):
+    def assert_rejected(self, root=None):
         with self.assertRaises(font.FontIntegrityError):
-            font.reassemble(self.root)
+            font.reassemble(self.root if root is None else root)
         self.assertFalse(self.target.exists())
         self.assertEqual(list(self.target.parent.glob(".maple-reassembly-*")), [])
 
@@ -172,15 +172,25 @@ class FontReassemblyTests(unittest.TestCase):
 
     def test_windows_reparse_attribute_is_rejected_without_creating_links(self):
         original = Path.lstat
+        # The implementation resolves its root. Windows temp paths can use an
+        # 8.3 alias, so comparing against the unresolved fixture misses injection.
+        canonical_directory = self.directory.resolve()
+        for root in (self.root, self.root / ".." / self.root.name):
+            with self.subTest(noncanonical=root != root.resolve()):
+                injected = []
 
-        def fake_lstat(path):
-            result = original(path)
-            if path == self.directory:
-                return SimpleNamespace(st_mode=result.st_mode, st_file_attributes=0x400)
-            return result
+                def fake_lstat(path):
+                    result = original(path)
+                    if path == canonical_directory:
+                        injected.append(path)
+                        return SimpleNamespace(st_mode=result.st_mode, st_file_attributes=0x400)
+                    return result
 
-        with mock.patch.object(Path, "lstat", fake_lstat):
-            self.assert_rejected()
+                with mock.patch.object(Path, "lstat", fake_lstat):
+                    try:
+                        self.assert_rejected(root)
+                    finally:
+                        self.assertTrue(injected, "Mock did not reach the canonical chunks directory")
 
 
 if __name__ == "__main__":
