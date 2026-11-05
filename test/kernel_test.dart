@@ -6505,13 +6505,17 @@ exec /usr/bin/env "\$@"
             ],
           },
         });
-        for (final id in ['read-path', 'image-path']) {
-          final item =
-              events
-                      .whereType<ItemUpserted>()
-                      .lastWhere((event) => event.id == id)
-                      .item
-                  as ToolCallItem;
+        // Commands replace their row when done; image views complete theirs.
+        // Check both event shapes rather than requiring an upsert for each.
+        final read = events
+            .whereType<ItemUpserted>()
+            .lastWhere((event) => event.id == 'read-path')
+            .item;
+        final image = events
+            .whereType<ItemCompleted>()
+            .lastWhere((event) => event.id == 'image-path')
+            .item;
+        for (final item in [read, image].cast<ToolCallItem>()) {
           expect(item.target, fileName);
           expect(item.path, path);
           expect(item.status, ToolStatus.succeeded);
