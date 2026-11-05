@@ -49,7 +49,9 @@ DocumentPreviewData _parse(({String path, Uint8List bytes}) input) =>
 // A bounded document can still produce a sizeable XML tree. Serialize the
 // bounded read AND parse across panes, so cancelled queued work holds no bytes
 // and only one parser isolate is active even during rapid tab switches.
-Future<void> _parseQueue = Future<void>.value();
+// Do not retain a completed Future: late listeners run in that Future's zone,
+// which may no longer be active when the next preview is opened.
+Future<void>? _parseQueue;
 
 Future<DocumentPreviewData> _readAndParseInOrder({
   required String path,
@@ -67,19 +69,32 @@ Future<DocumentPreviewData> _readAndParseInOrder({
     }
   }
 
-  final result = _parseQueue.then((_) async {
-    check();
-    final bytes = await readDocumentBytes(
-      path,
-      files: files,
-      read: read,
-      cancel: cancel,
-    );
-    check();
-    return compute(_parse, (path: path, bytes: bytes));
-  });
-  _parseQueue = result.then<void>((_) {}, onError: (Object _, StackTrace _) {});
-  return result;
+  final previous = _parseQueue;
+  final released = Completer<void>();
+  final gate = released.future;
+  _parseQueue = gate;
+
+  Future<DocumentPreviewData> run() async {
+    try {
+      if (previous != null) await previous;
+      check();
+      final bytes = await readDocumentBytes(
+        path,
+        files: files,
+        read: read,
+        cancel: cancel,
+      );
+      check();
+      return await compute(_parse, (path: path, bytes: bytes));
+    } finally {
+      // Release the idle queue before returning a result to the UI. Queued
+      // work still waits for this gate, even when this load fails or is stale.
+      if (identical(_parseQueue, gate)) _parseQueue = null;
+      released.complete();
+    }
+  }
+
+  return run();
 }
 
 class _IdeDocumentPreviewState extends State<IdeDocumentPreview> {

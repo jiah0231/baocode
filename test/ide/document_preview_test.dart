@@ -87,8 +87,18 @@ void main() {
   testWidgets('Word shows Unicode text and its table as read-only content', (
     tester,
   ) async {
-    await _pump(tester, read: (_) async => wordDocument());
+    // The preceding preview completed in a different test zone. An idle
+    // global parse queue must not retain that zone's completed Future.
+    var reads = 0;
+    await _pump(
+      tester,
+      read: (_) async {
+        reads++;
+        return wordDocument();
+      },
+    );
     await _waitFor(tester, _text('Hello 世界 & friends'));
+    expect(reads, 1);
     expect(_text('Apples'), findsWidgets);
     expect(find.text('Read only · Offline'), findsOneWidget);
     expect(
