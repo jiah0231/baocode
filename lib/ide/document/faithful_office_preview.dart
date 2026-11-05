@@ -391,10 +391,6 @@ class _FaithfulOfficePreviewState extends State<FaithfulOfficePreview> {
                 runSpacing: 6,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  Text(
-                    strings.originalLayout,
-                    style: TextStyle(color: AppColors.textMuted, fontSize: 11),
-                  ),
                   IdeButton(
                     label: strings.reload,
                     icon: Codicons.refresh,
@@ -412,16 +408,6 @@ class _FaithfulOfficePreviewState extends State<FaithfulOfficePreview> {
               ),
             ),
             Expanded(child: _body(strings)),
-            Container(
-              color: AppColors.surface,
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              child: Text(
-                strings.layoutFidelity,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: AppColors.textMuted, fontSize: 11),
-              ),
-            ),
           ],
         ),
       ),

@@ -82,6 +82,7 @@ Future<void> _pump(
   int revision = 0,
   bool historical = false,
   Widget? overlay,
+  VoidCallback? onOpenInDefaultApp,
 }) => tester.pumpWidget(
   WorkbenchThemeScope(
     builder: (_) => MaterialApp(
@@ -94,6 +95,7 @@ Future<void> _pump(
               read: read,
               revision: revision,
               historical: historical,
+              onOpenInDefaultApp: onOpenInDefaultApp,
             ),
             if (overlay != null)
               Positioned(
@@ -111,6 +113,56 @@ Future<void> _pump(
 );
 
 void main() {
+  testWidgets(
+    'preview omits explanatory rows and preserves toolbar actions',
+    (tester) async {
+      final host = _Host(tester);
+      var reads = 0;
+      var externalOpens = 0;
+      await _pump(
+        tester,
+        path: '/workspace/layout.pdf',
+        read: (_) async {
+          reads++;
+          return Uint8List.fromList(ascii.encode('%PDF-1.7\n'));
+        },
+        onOpenInDefaultApp: () => externalOpens++,
+      );
+      void expectControlsOnly() {
+        expect(find.textContaining('Read only'), findsNothing);
+        expect(find.textContaining('NoteBoard'), findsNothing);
+        expect(find.text('Reload'), findsOneWidget);
+        expect(find.text('Open in default app'), findsOneWidget);
+      }
+
+      expectControlsOnly();
+      final first = await host.opened();
+      final bounds = host.of('open').single;
+      expect(bounds['format'], 'pdf');
+      expect(
+        (bounds['y'] as double) + (bounds['height'] as double),
+        closeTo(tester.view.physicalSize.height, .01),
+        reason: 'The removed footer must not leave unused preview space.',
+      );
+      await host.event(first, 'ready');
+      await host.event(first, 'loaded');
+      expectControlsOnly();
+      await tester.tap(find.text('Open in default app'));
+      expect(externalOpens, 1);
+      expect(reads, 1);
+      await tester.tap(find.text('Reload'));
+      await tester.pump();
+      final second = await host.opened(2);
+      expect(second, isNot(first));
+      expect(reads, 2);
+      expect(host.of('dispose').map((a) => a['id']), contains(first));
+      await host.event(second, 'ready');
+      await host.event(second, 'loaded');
+      expectControlsOnly();
+    },
+    timeout: _timeout,
+  );
+
   testWidgets(
     'IgnorePointer overlays hide and restore the existing native host',
     (tester) async {
