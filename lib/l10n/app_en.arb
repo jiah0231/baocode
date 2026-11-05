@@ -1315,8 +1315,21 @@
       }
     }
   },
+  "chatAgentMessageSent": "sent",
+  "chatAgentMessageSemantics": "Message from subagent {agent}",
+  "@chatAgentMessageSemantics": {
+    "placeholders": {
+      "agent": {
+        "type": "String"
+      }
+    }
+  },
   "chatOpensItsConversation": "Opens its conversation",
   "chatLoadEarlier": "Load earlier messages",
+  "chatReload": "Reload (continued elsewhere)",
+  "@chatReload": {
+    "description": "Over a kept conversation, once its session was talked in elsewhere (e.g. in a terminal) since it was read: reads it anew."
+  },
   "chatStop": "Stop",
   "chatKeepRunningHint": "Keep it running and let the agent go on",
   "chatBackground": "Background",
@@ -2675,7 +2688,9 @@
   "@themeHighContrastThemes": {
     "description": "Separator in the color theme picker."
   },
-  "themeSelectPlaceholder": "Select Color Theme (detect system color mode disabled)",
+  "themeAuto": "Auto",
+  "themeFollowSystem": "Follow system",
+  "themeSelectPlaceholder": "Select Color Theme",
   "dateNow": "now",
   "@dateNow": {
     "description": "A time within half a minute of now."
@@ -3727,6 +3742,17 @@
       }
     }
   },
+  "wbSelectedLines": "({lines} lines, {count} selected)",
+  "@wbSelectedLines": {
+    "placeholders": {
+      "lines": {
+        "type": "int"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "wbGoToLineColumn": "Go to Line/Column",
   "wbSpaces": "Spaces: {size}",
   "@wbSpaces": {
@@ -4698,6 +4724,34 @@
   },
   "modelsAddAccount": "Add Account",
   "modelsAddAccountDescription": "Opens ChatGPT's sign-in page in the browser.",
+  "modelsAccountsImport": "Import",
+  "modelsAccountsImportTitle": "Import Accounts",
+  "modelsAccountsImportFile": "Choose File…",
+  "modelsAccountsImportDescription": "Enter account credentials as JSON or choose a JSON file.",
+  "modelsAccountsPaste": "Enter JSON…",
+  "modelsAccountsPastePlaceholder": "Type or paste your JSON credentials here.",
+  "modelsAccountsImportConfirm": "Import these ChatGPT credentials?",
+  "modelsAccountsImportConfirmDetail": "BaoCode will keep the credentials securely without changing the original file or actively refreshing tokens during import. Renewing them later may rotate the refresh token and require the original tool to sign in again. Only import credentials you are authorized to use.",
+  "modelsAccountsImportFailed": "The credentials could not be read or imported.",
+  "modelsAccountsImportSummary": "Accounts imported: {count}",
+  "@modelsAccountsImportSummary": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "modelsAccountsImportKept": "Already here, kept as signed in: {count}",
+  "@modelsAccountsImportKept": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "modelsAccountsImportItemFailed": "Entry {index}: {error}",
+  "@modelsAccountsImportItemFailed": {
+    "placeholders": {
+      "index": {"type": "int"},
+      "error": {"type": "String"}
+    }
+  },
   "modelsAccountSigningIn": "Waiting for sign-in…",
   "modelsAccountSigningInDetail": "Finish signing in in the browser. If it did not open, copy the link into it.",
   "modelsAccountCopyLink": "Copy Link",
@@ -4709,7 +4763,13 @@
       }
     }
   },
-  "modelsRefreshQuota": "Refresh Quota",
+  "modelsRefreshQuota": "Refresh All Quotas",
+  "modelsAccountRefreshQuota": "Refresh quota for {name}",
+  "@modelsAccountRefreshQuota": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
   "modelsAccountRemove": "Remove account",
   "modelsAccountRemoveConfirm": "Remove “{name}”?",
   "@modelsAccountRemoveConfirm": {
@@ -7289,6 +7349,8 @@
   "@browserSettingsExtensionVersion": {"description": "The version of BaoCode's extension in a connected browser.", "placeholders": {"version": {"type": "String"}}},
   "browserSettingsExtensionOld": "The extension is out of date. From the store, it updates automatically, or click Update in chrome://extensions; installed manually, download the zip again, replace the folder's contents and click reload.",
   "browserSettingsAppOld": "The extension is newer than this BaoCode. Update BaoCode.",
+  "browserSettingsNoFileAccess": "File access is off",
+  "browserSettingsNoFileAccessDescription": "Local file access needs a compatible extension and your explicit permission in its browser settings. This app update does not change extension permissions or enable file access.",
   "browserSettingsInstall": "Get the Extension",
   "browserSettingsStore": "Chrome Web Store",
   "browserSettingsStoreDescription": "Recommended. Updates automatically; works in Chrome, Edge, Brave, Arc and other Chromium browsers.",
@@ -8692,7 +8754,9 @@
     }
   },
   "remoteLocalAccess": "Allow Remote Agents to Act on This Computer",
-  "remoteLocalAccessDetail": "Its agents may run commands on this computer (asking you each time), copy files here and there and forward ports.",
+  "remoteLocalAccessDetail": "Agents on these hosts may run commands on this computer (asking you each time), copy files both ways and forward ports.",
+  "remoteLocalAccessNoAsking": "Runs commands without asking",
+  "remoteLocalAccessAskAgain": "Ask Each Time",
   "sidePanelPorts": "Ports",
   "portsEmpty": "No ports are forwarded. A server on {host} that prints its http://localhost address is forwarded here on its own.",
   "@portsEmpty": {

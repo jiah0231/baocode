@@ -527,6 +527,18 @@ class BrowserConnection {
 
   bool can(String capability) => capabilities.contains(capability);
 
+  /// Whether the user let the extension reach file:// pages and local files
+  /// (its "Allow access to file URLs"): null for one from before it said.
+  bool? fileAccess;
+
+  /// Local files need a compatible extension and the user's browser permission.
+  /// Updating the app does not add extension permissions or enable file access.
+  static const fileAccessHelp =
+      'The browser has not granted BaoCode\'s extension local file access. '
+      'Local files require a compatible extension and the user\'s explicit '
+      'permission in its browser settings. Do not change those permissions '
+      'automatically; this app update does not enable file access.';
+
   int _lastId = 0;
   final Map<int, Completer<Object?>> _pending = {};
   final BytesBuilder _buffer = BytesBuilder(copy: false);
@@ -679,6 +691,7 @@ class BrowserConnection {
       case 'hello':
         browser = message['browser'] as String? ?? 'Browser';
         version = message['version'] as String?;
+        fileAccess = message['fileAccess'] as bool?;
         protocol = (message['protocol'] as num?)?.toInt() ?? 1;
         capabilities = {
           for (final capability in message['capabilities'] as List? ?? [])

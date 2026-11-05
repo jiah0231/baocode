@@ -2311,10 +2311,21 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get chatAgentMessageSent => 'sent';
+
+  @override
+  String chatAgentMessageSemantics(String agent) {
+    return 'Message from subagent $agent';
+  }
+
+  @override
   String get chatOpensItsConversation => 'Opens its conversation';
 
   @override
   String get chatLoadEarlier => 'Load earlier messages';
+
+  @override
+  String get chatReload => 'Reload (continued elsewhere)';
 
   @override
   String get chatStop => 'Stop';
@@ -3884,8 +3895,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get themeHighContrastThemes => 'high contrast themes';
 
   @override
-  String get themeSelectPlaceholder =>
-      'Select Color Theme (detect system color mode disabled)';
+  String get themeAuto => 'Auto';
+
+  @override
+  String get themeFollowSystem => 'Follow system';
+
+  @override
+  String get themeSelectPlaceholder => 'Select Color Theme';
 
   @override
   String get dateNow => 'now';
@@ -5233,6 +5249,11 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String wbSelectedCount(int count) {
     return '($count selected)';
+  }
+
+  @override
+  String wbSelectedLines(int lines, int count) {
+    return '($lines lines, $count selected)';
   }
 
   @override
@@ -6605,6 +6626,52 @@ class AppLocalizationsEn extends AppLocalizations {
       'Opens ChatGPT\'s sign-in page in the browser.';
 
   @override
+  String get modelsAccountsImport => 'Import';
+
+  @override
+  String get modelsAccountsImportTitle => 'Import Accounts';
+
+  @override
+  String get modelsAccountsImportFile => 'Choose File…';
+
+  @override
+  String get modelsAccountsImportDescription =>
+      'Enter account credentials as JSON or choose a JSON file.';
+
+  @override
+  String get modelsAccountsPaste => 'Enter JSON…';
+
+  @override
+  String get modelsAccountsPastePlaceholder =>
+      'Type or paste your JSON credentials here.';
+
+  @override
+  String get modelsAccountsImportConfirm => 'Import these ChatGPT credentials?';
+
+  @override
+  String get modelsAccountsImportConfirmDetail =>
+      'BaoCode will keep the credentials securely without changing the original file or actively refreshing tokens during import. Renewing them later may rotate the refresh token and require the original tool to sign in again. Only import credentials you are authorized to use.';
+
+  @override
+  String get modelsAccountsImportFailed =>
+      'The credentials could not be read or imported.';
+
+  @override
+  String modelsAccountsImportSummary(int count) {
+    return 'Accounts imported: $count';
+  }
+
+  @override
+  String modelsAccountsImportKept(int count) {
+    return 'Already here, kept as signed in: $count';
+  }
+
+  @override
+  String modelsAccountsImportItemFailed(int index, String error) {
+    return 'Entry $index: $error';
+  }
+
+  @override
   String get modelsAccountSigningIn => 'Waiting for sign-in…';
 
   @override
@@ -6620,7 +6687,12 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get modelsRefreshQuota => 'Refresh Quota';
+  String get modelsRefreshQuota => 'Refresh All Quotas';
+
+  @override
+  String modelsAccountRefreshQuota(String name) {
+    return 'Refresh quota for $name';
+  }
 
   @override
   String get modelsAccountRemove => 'Remove account';
@@ -10174,6 +10246,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'The extension is newer than this BaoCode. Update BaoCode.';
 
   @override
+  String get browserSettingsNoFileAccess => 'File access is off';
+
+  @override
+  String get browserSettingsNoFileAccessDescription =>
+      'Local file access needs a compatible extension and your explicit permission in its browser settings. This app update does not change extension permissions or enable file access.';
+
+  @override
   String get browserSettingsInstall => 'Get the Extension';
 
   @override
@@ -13686,7 +13765,13 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get remoteLocalAccessDetail =>
-      'Its agents may run commands on this computer (asking you each time), copy files here and there and forward ports.';
+      'Agents on these hosts may run commands on this computer (asking you each time), copy files both ways and forward ports.';
+
+  @override
+  String get remoteLocalAccessNoAsking => 'Runs commands without asking';
+
+  @override
+  String get remoteLocalAccessAskAgain => 'Ask Each Time';
 
   @override
   String get sidePanelPorts => 'Ports';

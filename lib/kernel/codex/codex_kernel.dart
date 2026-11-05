@@ -669,7 +669,9 @@ class CodexKernel
     final generation = _sessionMcpGeneration;
     final cwd = _context.cwd ?? _context.resume?.cwd ?? '.';
     final bridge = await CodexSessionMcp.start(
-      cwd: cwd, sessionId: () => _sessionId, turnId: () => _turn,
+      cwd: cwd,
+      sessionId: () => _sessionId,
+      turnId: () => _turn,
     );
     try {
       final endpoint = await remoteCodexProxy(bridge.endpoint, cwd);
@@ -714,12 +716,18 @@ class CodexKernel
         checkRuntime();
         _closeSessionMcp();
         _sessionMcpUnavailable = true;
-        emit(ItemUpserted(nextSeq, 'session-query-unavailable', const NoticeItem(
-          NoticeKind.warning,
-          'The @session compatibility bridge is unavailable. Ordinary chat '
-          'still works; older conversations may need a new chat to retrieve '
-          'selected sessions.',
-        )));
+        emit(
+          ItemUpserted(
+            nextSeq,
+            'session-query-unavailable',
+            const NoticeItem(
+              NoticeKind.warning,
+              'The @session compatibility bridge is unavailable. Ordinary chat '
+              'still works; older conversations may need a new chat to retrieve '
+              'selected sessions.',
+            ),
+          ),
+        );
         return proxy;
       }
     }
@@ -873,7 +881,8 @@ class CodexKernel
         if (_starting != null && !identical(_starting, starting)) {
           return _ensureStarted(resume: resume);
         }
-        if (_sessionId == null && _threadId == null &&
+        if (_sessionId == null &&
+            _threadId == null &&
             (_processProxy != null) != (_custom != null)) {
           return _ensureStarted(resume: resume);
         }
@@ -886,7 +895,8 @@ class CodexKernel
       // prepare() may precede the first model choice. Restart only the empty
       // runtime here; an existing conversation changes provider via an explicit
       // model-switch fork, never as recovery from a provider error.
-      if (_sessionId == null && _threadId == null &&
+      if (_sessionId == null &&
+          _threadId == null &&
           (_processProxy != null) != (_custom != null)) {
         _teardown();
         return _trackStarting(_open(resume: resume));
@@ -911,7 +921,8 @@ class CodexKernel
     const Duration(seconds: 10),
     onTimeout: () => throw CodexUnavailable(
       'Codex is still closing this conversation',
-      detail: 'The previous connection has not finished shutting down and '
+      detail:
+          'The previous connection has not finished shutting down and '
           'delivering its final output. Wait for it to finish, then retry. '
           'The conversation and its writer lock were not changed.'
           '${_shutdownDiagnostics == null ? '' : '\nShutdown state: ${jsonEncode(_shutdownDiagnostics!.shutdownDiagnostics)}'}',
@@ -964,7 +975,9 @@ class CodexKernel
           cwd: _context.cwd ?? _context.resume?.cwd ?? '',
           resume: _sessionId,
           model: _modelForServer,
-          modelProvider: proxy == null ? null : CodexProxyConfiguration.providerId,
+          modelProvider: proxy == null
+              ? null
+              : CodexProxyConfiguration.providerId,
           proxy: proxy,
           approvalPolicy: _approvalPolicy,
           sandbox: _sandboxMode,
@@ -1008,8 +1021,7 @@ class CodexKernel
       if (cancelled()) throw StateError('Codex startup cancelled');
       // A model choice can change while the process is initializing. An
       // empty chat has no history to migrate, so rebuild its scoped runtime.
-      if (_sessionId == null &&
-          (_processProxy != null) != (_custom != null)) {
+      if (_sessionId == null && (_processProxy != null) != (_custom != null)) {
         _teardown();
         return await _open(resume: resume);
       }
@@ -1182,7 +1194,8 @@ class CodexKernel
     if (remember) _keepModels(data);
     _syncModelOptions();
     final wanted = _modelId;
-    final chosen = _modelOptions.any((option) => option.id == wanted) ||
+    final chosen =
+        _modelOptions.any((option) => option.id == wanted) ||
             parseModelRef(wanted) != null
         ? wanted!
         : _modelOptions.first.id;
@@ -1285,7 +1298,8 @@ class CodexKernel
     if (_disposed) return;
     _syncModelOptions();
     final picked = _modelId;
-    if (picked != null && !_modelOptions.any((option) => option.id == picked) &&
+    if (picked != null &&
+        !_modelOptions.any((option) => option.id == picked) &&
         !(_conversationStarted && parseModelRef(picked) != null)) {
       final fallback = _modelOptions.firstOrNull?.id;
       if (fallback != null) {
@@ -1424,7 +1438,8 @@ class CodexKernel
       if (parseModelRef(_modelId) != null) {
         throw const CodexUnavailable(
           "This conversation's BaoCode model provider is unavailable",
-          detail: 'Restore its provider in Settings → Models before continuing. '
+          detail:
+              'Restore its provider in Settings → Models before continuing. '
               'The saved conversation was not changed.',
         );
       }
@@ -1434,7 +1449,10 @@ class CodexKernel
     if (endpoint == null) {
       throw CodexUnavailable('${custom.$1.name} needs BaoCode\'s model proxy');
     }
-    return CodexProxyConfiguration(baseUrl: endpoint.baseUrl, token: endpoint.token);
+    return CodexProxyConfiguration(
+      baseUrl: endpoint.baseUrl,
+      token: endpoint.token,
+    );
   }
 
   /// Reuse the process-local provider definition and credential environment.
@@ -1445,7 +1463,9 @@ class CodexKernel
     if (custom == null) return null;
     final proxy = _processProxy;
     if (proxy == null) {
-      throw const CodexUnavailable('The selected Codex provider needs a new runtime');
+      throw const CodexUnavailable(
+        'The selected Codex provider needs a new runtime',
+      );
     }
     return (
       modelProvider: _proxyProviderId,
@@ -1537,7 +1557,9 @@ class CodexKernel
     checkRuntime();
     final id = thread?['id'] as String?;
     if (!noRollout && (id == null || id.isEmpty || id == threadId)) {
-      throw const CodexUnavailable('Codex could not go on with another provider');
+      throw const CodexUnavailable(
+        'Codex could not go on with another provider',
+      );
     }
     _sessionId = noRollout ? null : id;
     _threadProvider = '';
@@ -1587,7 +1609,8 @@ class CodexKernel
     final Map<String, Object?> result;
     try {
       result = await _request('thread/read', {
-        'threadId': _sessionId, 'includeTurns': false,
+        'threadId': _sessionId,
+        'includeTurns': false,
       });
     } on CodexRpcError catch (error) {
       if (error.code == -32601) return false;
@@ -1601,7 +1624,8 @@ class CodexKernel
     final raw = thread['model'] as String?;
     final open = raw?.lastIndexOf('(') ?? -1;
     final plain = raw != null && open > 0 && raw.endsWith(')')
-        ? raw.substring(0, open) : raw;
+        ? raw.substring(0, open)
+        : raw;
     if (savedProxy && (plain == null || _providers.resolve(plain) == null)) {
       throw const CodexUnavailable(
         'The saved BaoCode model provider is unavailable',
@@ -1822,7 +1846,8 @@ class CodexKernel
   Future<void> _run(KernelTurn turn) async {
     try {
       await _ensureStarted();
-      if (_disposed || _stoppedTurns.contains(turn.id) || _turn != turn.id) return;
+      if (_disposed || _stoppedTurns.contains(turn.id) || _turn != turn.id)
+        return;
       // Picked on the other side of BaoCode since the thread began: the
       // server keeps it to the side it began on, so it goes on as a copy
       // of itself there (see [_forkToProvider]).
@@ -1830,7 +1855,8 @@ class CodexKernel
           when !_sameWay(_threadProvider, _modelId ?? '')) {
         await _forkToProvider(threadId);
       }
-      if (_disposed || _stoppedTurns.contains(turn.id) || _turn != turn.id) return;
+      if (_disposed || _stoppedTurns.contains(turn.id) || _turn != turn.id)
+        return;
       await _ensureThread();
       if (_stoppedTurns.contains(turn.id) || _turn != turn.id) return;
       // A native goal may start work while thread/resume is pending.
@@ -1917,17 +1943,21 @@ class CodexKernel
         'url': 'data:${image.mediaType};base64,${base64Encode(image.bytes)}',
       },
     ],
-    for (final note in turn.notes) {
-      'type': 'text',
-      'text': _sessionMcpUnavailable &&
-              note.startsWith('<system-reminder>Selected conversation access for this request:')
-          ? '<system-reminder>The user selected @session targets, but cross-conversation retrieval '
-              'is unavailable for this request because its compatibility bridge '
-              'could not start. Tell the user to retry; do not claim to have read '
-              'the targets, infer their contents from IDs, read raw session files, '
-              'or fork/restart another conversation as a fallback.</system-reminder>'
-          : note,
-    },
+    for (final note in turn.notes)
+      {
+        'type': 'text',
+        'text':
+            _sessionMcpUnavailable &&
+                note.startsWith(
+                  '<system-reminder>Selected conversation access for this request:',
+                )
+            ? '<system-reminder>The user selected @session targets, but cross-conversation retrieval '
+                  'is unavailable for this request because its compatibility bridge '
+                  'could not start. Tell the user to retry; do not claim to have read '
+                  'the targets, infer their contents from IDs, read raw session files, '
+                  'or fork/restart another conversation as a fallback.</system-reminder>'
+            : note,
+      },
     if (CodexSkill.invoked(turn.text, _skills) case final skill?) skill.input,
     if (turn.text.isNotEmpty)
       {
@@ -2203,16 +2233,21 @@ class CodexKernel
       // when Workspace opens the child on another server. Use an isolated
       // server and wait for its exit before publishing the child record.
       final metadata = await _request('thread/read', {
-        'threadId': threadId, 'includeTurns': false,
+        'threadId': threadId,
+        'includeTurns': false,
       });
       final source = (metadata['thread'] as Map?)?.cast<String, Object?>();
       final sourceModel = source?['model'] as String?;
       final effortStart = sourceModel?.lastIndexOf('(') ?? -1;
-      final plainModel = sourceModel != null && effortStart > 0 && sourceModel.endsWith(')')
-          ? sourceModel.substring(0, effortStart) : sourceModel;
+      final plainModel =
+          sourceModel != null && effortStart > 0 && sourceModel.endsWith(')')
+          ? sourceModel.substring(0, effortStart)
+          : sourceModel;
       if (source?['modelProvider'] == _proxyProviderId &&
           (plainModel == null || _providers.resolve(plainModel) == null)) {
-        throw const CodexUnavailable('Restore the saved BaoCode model provider before copying this conversation');
+        throw const CodexUnavailable(
+          'Restore the saved BaoCode model provider before copying this conversation',
+        );
       }
       final helper = _providerHelper(model: plainModel);
       _forkHelpers.add(helper);
@@ -3633,7 +3668,7 @@ class CodexKernel
       final path = actions.first['path'] as String? ?? '';
       return ToolCallItem(
         kind: ToolKind.read,
-        target: p.basename(path),
+        target: path.substring(_lastPathSeparator(path) + 1),
         path: path,
         status: completed ? ToolStatus.succeeded : ToolStatus.running,
       );
@@ -3707,7 +3742,7 @@ class CodexKernel
         final path = item['path'] as String? ?? '';
         return ToolCallItem(
           kind: ToolKind.read,
-          target: p.basename(path),
+          target: path.substring(_lastPathSeparator(path) + 1),
           path: path,
           status: ToolStatus.succeeded,
         );
@@ -3863,6 +3898,13 @@ class CodexKernel
     return lines.isEmpty ? '' : '${lines.join('\n')}\n';
   }
 
+  /// Display paths from either Windows or a POSIX SSH host without changing
+  /// the path used for access. Backslashes in absolute POSIX filenames are
+  /// literal characters rather than separators.
+  static int _lastPathSeparator(String path) => path.startsWith('/')
+      ? path.lastIndexOf('/')
+      : math.max(path.lastIndexOf('/'), path.lastIndexOf(r'\'));
+
   static ({CodeDiffItem item, int added, int removed}) _diff(
     String path,
     String diff,
@@ -3893,10 +3935,11 @@ class CodexKernel
           oldLine++;
       }
     }
+    final slash = _lastPathSeparator(path);
     return (
       item: CodeDiffItem(
-        fileName: p.basename(path),
-        directory: p.dirname(path) == '.' ? '' : p.dirname(path),
+        fileName: path.substring(slash + 1),
+        directory: slash < 0 ? '' : path.substring(0, slash == 0 ? 1 : slash),
         lines: lines,
       ),
       added: added,

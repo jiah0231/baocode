@@ -74,7 +74,8 @@ class PortForwardSpec {
 ///
 /// - whether its agents may act on this machine ([localAccess]): the
 ///   tools that run commands here and move files and ports (see
-///   local_tools.dart); off until the user turns it on;
+///   local_tools.dart); off until the user turns it on (Settings → SSH
+///   Servers). Missing settings never grant access, including on upgrade;
 /// - whether commands run here need no asking each time
 ///   ([runsWithoutAsking]), as the user answered on a card;
 /// - the ports forwarded ([forwards]), made again as it connects.

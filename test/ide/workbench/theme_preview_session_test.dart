@@ -8,6 +8,7 @@ import 'package:baocode/ide/ide_theme_preview_session.dart';
 class _Themes implements IdeColorThemeController {
   @override
   String colorThemeId = 'original';
+  String committedId = 'original';
   @override
   List<IdeColorThemeEntry> get colorThemes => const [];
   final calls = <(String, bool)>[];
@@ -23,8 +24,15 @@ class _Themes implements IdeColorThemeController {
     await wait?.future;
     if (id == fails) throw StateError('Unreadable theme');
     colorThemeId = id;
-    if (!preview) persisted.add(id);
+    if (!preview) {
+      committedId = id;
+      persisted.add(id);
+    }
   }
+
+  @override
+  Future<void> restoreColorThemePreview() =>
+      setColorTheme(committedId, preview: true);
 }
 
 void main() {

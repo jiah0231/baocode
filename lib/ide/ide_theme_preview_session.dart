@@ -2,6 +2,14 @@ import 'package:flutter/foundation.dart';
 
 import 'ide_color_theme_picker.dart';
 
+Future<void> Function() _captureSelection(IdeColorThemeController themes) {
+  if (themes is IdeColorThemeTransactionController) {
+    return themes.captureColorThemeSelection();
+  }
+  final id = themes.colorThemeId;
+  return () => themes.setColorTheme(id);
+}
+
 /// A transactional gallery visit. Only Apply writes preferences. Requests
 /// are serialized even for controllers that do not serialize their own loads.
 class IdeThemePreviewSession extends ChangeNotifier {
@@ -11,7 +19,10 @@ class IdeThemePreviewSession extends ChangeNotifier {
     this.persistTypographyPreset,
   }) : originalId = themes.colorThemeId,
        selectedId = themes.colorThemeId,
+       _restoreSelection = _captureSelection(themes),
        originalTypographyPreset = typographyPreset?.value ?? false;
+
+  final Future<void> Function() _restoreSelection;
 
   /// Optional runtime override. Preview never changes editor.* preferences.
   final ValueNotifier<bool>? typographyPreset;
@@ -63,7 +74,7 @@ class IdeThemePreviewSession extends ChangeNotifier {
         if (revision != _revision) return;
         error = caught;
         try {
-          await themes.setColorTheme(originalId, preview: true);
+          await themes.restoreColorThemePreview();
         } on Object catch (restoreError) {
           error = restoreError;
         }
@@ -92,7 +103,7 @@ class IdeThemePreviewSession extends ChangeNotifier {
           }
         } on Object {
           // A failed settings write must not leave half of Apply committed.
-          await themes.setColorTheme(originalId);
+          await _restoreSelection();
           _applied = false;
           rethrow;
         }
@@ -118,7 +129,11 @@ class IdeThemePreviewSession extends ChangeNotifier {
       await _enqueue(() async {
         // Usually no settings were written. If a route was removed during
         // Apply, restore the settings as well as the visible preview.
-        await themes.setColorTheme(originalId, preview: !_applied);
+        if (_applied) {
+          await _restoreSelection();
+        } else {
+          await themes.restoreColorThemePreview();
+        }
         if (_typographyApplied) {
           await persistTypographyPreset?.call(originalTypographyPreset);
         }
