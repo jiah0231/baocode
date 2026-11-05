@@ -88,7 +88,7 @@ Uint8List _zip(Map<String, List<int>> entries) {
   for (final entry in entries.entries) {
     archive.addFile(ArchiveFile(entry.key, entry.value.length, entry.value));
   }
-  return ZipEncoder().encode(archive);
+  return Uint8List.fromList(ZipEncoder().encode(archive));
 }
 
 void main() {

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/gestures.dart';
@@ -312,7 +311,7 @@ class _FaithfulOfficePreviewState extends State<FaithfulOfficePreview> {
         _loaded &&
         !rect.isEmpty &&
         rect == authoredRect &&
-        TickerMode.of(context) &&
+        TickerMode.valuesOf(context).enabled &&
         !NativeOverlayOcclusion.coversView(view.viewId);
     if (visible) {
       // A native child must not cover Flutter dialogs/menus or inactive tabs.

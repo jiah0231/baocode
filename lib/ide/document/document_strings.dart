@@ -14,8 +14,8 @@ class DocumentStrings {
   String get originalLayout =>
       zh ? '只读 · NoteBoard · 离线' : 'Read only · NoteBoard · Offline';
   String get layoutFidelity => zh
-      ? '保留文档自身的页面、颜色和字体。未安装的字体或引擎不支持的格式特性仍可能有差异；公式使用已保存的结果。'
-      : 'Preserves document pages, colors and fonts. Missing fonts or unsupported format features may differ; formulas use saved results.';
+      ? '采用 NoteBoard 原版预览；缺失字体和未支持的样式、图表等特性仍可能有差异。公式使用已保存的结果。'
+      : 'Uses the original NoteBoard viewers. Missing fonts and unsupported styles, charts or other features may differ; formulas use saved results.';
   String get rendererError => zh
       ? '本地文档渲染器无法启动。请确认 Microsoft Edge WebView2 Runtime 已安装，或用系统应用打开。'
       : 'The offline renderer could not start. Check that Microsoft Edge WebView2 Runtime is installed, or open this file in its default app.';
