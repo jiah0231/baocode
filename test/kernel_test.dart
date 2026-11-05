@@ -34,6 +34,7 @@ import 'package:baocode/kernel/kernel_types.dart';
 import 'package:baocode/kernel/mock/mock_kernels.dart';
 import 'package:baocode/kernel/queued_messages.dart';
 import 'package:baocode/kernel/transcript.dart';
+import 'package:baocode/link/chat_codec.dart' show ChatCodec;
 import 'package:baocode/settings/user_settings.dart';
 import 'package:baocode/usage/usage_ledger.dart';
 import 'package:baocode/usage/usage_prices.dart';
@@ -962,6 +963,141 @@ void main() {
       translator.replaying = true;
       call('w2', 'Write', {'file_path': '/p/d.txt', 'content': 'd'});
       expect(events.whereType<FileEdited>(), isEmpty);
+    });
+
+    test("a subagent's message shows as its, by what it was given to do", () {
+      final transcript = Transcript();
+      var seq = 0;
+      final translator = ClaudeTranslator(
+        emit: transcript.apply,
+        nextSeq: () => ++seq,
+      );
+      translator
+        ..translate({
+          'type': 'assistant',
+          'parent_tool_use_id': null,
+          'message': {
+            'id': 'msg-agent',
+            'role': 'assistant',
+            'content': [
+              {
+                'type': 'tool_use',
+                'id': 'agent-1',
+                'name': 'Agent',
+                'input': {
+                  'description': 'Count entries',
+                  'prompt': 'count them',
+                  'run_in_background': true,
+                },
+              },
+            ],
+          },
+        })
+        ..translate({
+          'type': 'user',
+          'parent_tool_use_id': null,
+          'message': {
+            'role': 'user',
+            'content': [
+              {
+                'type': 'tool_result',
+                'tool_use_id': 'agent-1',
+                'content': 'launched',
+              },
+            ],
+          },
+          'tool_use_result': {
+            'status': 'async_launched',
+            'agentId': 'amup9hacc',
+          },
+        });
+      void say(String uuid, String text) => translator.translate({
+        'type': 'user',
+        'parent_tool_use_id': null,
+        'uuid': uuid,
+        'message': {'role': 'user', 'content': text},
+      });
+      say(
+        'm1',
+        '<agent-message from="amup9hacc">\nB is done.\n</agent-message>',
+      );
+      say('m2', '<agent-message from="zz9">\nHi\n</agent-message>');
+      final messages = [
+        for (var i = 0; i < transcript.length; i++)
+          if (transcript.itemAt(i) case final UserMessageItem message) message,
+      ];
+      expect(
+        [for (final m in messages) (m.fromAgent, m.text)],
+        [('Count entries', 'B is done.'), ('zz9', 'Hi')],
+      );
+      // As the phone gets it.
+      final decoded =
+          ChatCodec.decode(ChatCodec.encode(messages.first)) as UserMessageItem;
+      expect(decoded.fromAgent, 'Count entries');
+    });
+
+    test("a Windows path's file shows by its name", () {
+      final transcript = Transcript();
+      var seq = 0;
+      final translator = ClaudeTranslator(
+        emit: transcript.apply,
+        nextSeq: () => ++seq,
+      );
+      void call(
+        String id,
+        String name,
+        Map<String, Object?> input, {
+        Object? result,
+      }) => translator
+        ..translate({
+          'type': 'assistant',
+          'parent_tool_use_id': null,
+          'message': {
+            'id': 'msg-$id',
+            'role': 'assistant',
+            'content': [
+              {'type': 'tool_use', 'id': id, 'name': name, 'input': input},
+            ],
+          },
+        })
+        ..translate({
+          'type': 'user',
+          'parent_tool_use_id': null,
+          'message': {
+            'role': 'user',
+            'content': [
+              {'type': 'tool_result', 'tool_use_id': id, 'content': 'ok'},
+            ],
+          },
+          'tool_use_result': ?result,
+        });
+
+      call('r1', 'Read', {'file_path': r'C:\p\lib\a.dart'});
+      call('l1', 'LS', {'path': r'C:\p\lib'});
+      call(
+        'e1',
+        'Edit',
+        {'file_path': r'C:\p\lib\b.dart', 'old_string': 'x', 'new_string': 'y'},
+        result: {
+          'filePath': r'C:\p\lib\b.dart',
+          'structuredPatch': [
+            {
+              'oldStart': 1,
+              'oldLines': 1,
+              'newStart': 1,
+              'newLines': 1,
+              'lines': ['-x', '+y'],
+            },
+          ],
+        },
+      );
+      expect(shown(transcript), [
+        'tool: read a.dart',
+        'tool: listDir lib',
+        'diff: b.dart +2',
+      ]);
+      final diff = transcript.itemAt(2) as CodeDiffItem;
+      expect(diff.directory, r'C:\p\lib');
     });
 
     test('each round of planning is one card; a plan sent back gives way '
@@ -6327,6 +6463,70 @@ exec /usr/bin/env "\$@"
 
     void notify(String method, Map<String, Object?> params) =>
         server.push({'method': method, 'params': params});
+
+    for (final (label, path, fileName, directory) in [
+      ('Windows', r'C:\p\lib\a.dart', 'a.dart', r'C:\p\lib'),
+      ('Windows UNC', r'\\server\share\a.dart', 'a.dart', r'\\server\share'),
+      ('Windows slash', 'C:/p/lib/a.dart', 'a.dart', 'C:/p/lib'),
+      ('POSIX', '/srv/p/lib/a.dart', 'a.dart', '/srv/p/lib'),
+      ('POSIX root', '/a.dart', 'a.dart', '/'),
+      (
+        'POSIX with a literal backslash',
+        r'/srv/p/lib/a\b.dart',
+        r'a\b.dart',
+        '/srv/p/lib',
+      ),
+      ('bare filename', 'a.dart', 'a.dart', ''),
+    ]) {
+      test('displays $label paths without changing access paths', () async {
+        kernel.send(const KernelTurn(id: 'paths', text: 'hi'));
+        await pumpEventQueue();
+        notify('item/completed', {
+          'item': {
+            'type': 'commandExecution',
+            'id': 'read-path',
+            'command': 'read',
+            'status': 'completed',
+            'exitCode': 0,
+            'commandActions': [
+              {'type': 'read', 'path': path},
+            ],
+          },
+        });
+        notify('item/completed', {
+          'item': {'type': 'imageView', 'id': 'image-path', 'path': path},
+        });
+        notify('item/completed', {
+          'item': {
+            'type': 'fileChange',
+            'id': 'edit-path',
+            'changes': [
+              {'path': path, 'diff': '@@ -1 +1 @@\n-old\n+new'},
+            ],
+          },
+        });
+        for (final id in ['read-path', 'image-path']) {
+          final item =
+              events
+                      .whereType<ItemUpserted>()
+                      .lastWhere((event) => event.id == id)
+                      .item
+                  as ToolCallItem;
+          expect(item.target, fileName);
+          expect(item.path, path);
+          expect(item.status, ToolStatus.succeeded);
+        }
+        final diff =
+            events
+                    .whereType<ItemUpserted>()
+                    .lastWhere((event) => event.id == 'edit-path:0')
+                    .item
+                as CodeDiffItem;
+        expect(diff.fileName, fileName);
+        expect(diff.directory, directory);
+        expect(events.whereType<FileEdited>().single.change.path, path);
+      });
+    }
 
     test(
       'coalesces command bursts and completes with every buffered byte',

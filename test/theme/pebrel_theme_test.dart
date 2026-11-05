@@ -30,12 +30,22 @@ class _Storage implements ColorThemeStorage {
   String? colorThemeSetting;
   @override
   String? colorThemeData;
+  @override
+  bool autoDetectColorScheme = false;
   final writes = <String>[];
   @override
-  void storeColorTheme({required String setting, String? data}) {
-    colorThemeSetting = setting;
+  Future<void> storeColorTheme({
+    required String setting,
+    String? data,
+    bool autoDetectColorScheme = false,
+    bool cacheOnly = false,
+  }) async {
     colorThemeData = data;
-    writes.add(setting);
+    if (!cacheOnly) {
+      colorThemeSetting = setting;
+      this.autoDetectColorScheme = autoDetectColorScheme;
+      writes.add(setting);
+    }
   }
 }
 

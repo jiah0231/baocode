@@ -12,6 +12,7 @@ import 'package:baocode/theme/app_theme.dart' show AppFonts;
 class _Themes implements IdeColorThemeController {
   @override
   String colorThemeId = 'dark';
+  String committedId = 'dark';
   @override
   final colorThemes = <IdeColorThemeEntry>[
     const IdeColorThemeEntry(
@@ -34,7 +35,15 @@ class _Themes implements IdeColorThemeController {
   @override
   Future<void> setColorTheme(String id, {bool preview = false}) async {
     colorThemeId = id;
-    if (!preview) saved.add(id);
+    if (!preview) {
+      committedId = id;
+      saved.add(id);
+    }
+  }
+
+  @override
+  Future<void> restoreColorThemePreview() async {
+    colorThemeId = committedId;
   }
 }
 

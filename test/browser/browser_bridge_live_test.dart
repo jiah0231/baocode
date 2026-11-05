@@ -170,6 +170,14 @@ void main() {
         return content;
       }
 
+      // This fork does not add activeTab or grant unpacked file access.
+      // A new profile must keep local files unavailable without user consent.
+      expect(bridge.browsers.single.fileAccess, isFalse);
+      final local = File(p.join(profile.path, 'local.html'))
+        ..writeAsStringSync('<title>Local</title><p>From a file.</p>');
+      final file = await call('browser_open', {'url': local.path}, error: true);
+      expect(file.first['text'], contains(BrowserConnection.fileAccessHelp));
+
       final opened = await call('browser_open', {'url': page});
       final tabId = int.parse(
         RegExp(r'\[(\d+)\]').firstMatch(opened.first['text'] as String)![1]!,

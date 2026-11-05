@@ -66,15 +66,25 @@ function setConnected(value) {
     subscribed.clear();
   }
   showState();
-  if (value) {
-    send({
-      type: 'hello',
-      protocol: BRIDGE,
-      capabilities: CAPABILITIES,
-      browser: browserName(),
-      version: chrome.runtime.getManifest().version,
-    });
-  }
+  if (value) hello();
+}
+
+async function hello() {
+  // Whether the user let it reach file:// pages and local files (to open an
+  // HTML file, to choose files for a page's input): "Allow access to file
+  // URLs". Query permission only: this fork preserves the existing manifest
+  // permissions rather than adding activeTab, which can enable file access
+  // by default for unpacked extensions. Compatible extensions need user consent.
+  const fileAccess = await chrome.extension.isAllowedFileSchemeAccess().catch(() => null);
+  if (!connected) return;
+  send({
+    type: 'hello',
+    protocol: BRIDGE,
+    capabilities: CAPABILITIES,
+    browser: browserName(),
+    version: chrome.runtime.getManifest().version,
+    fileAccess,
+  });
 }
 
 // The toolbar button's badge and title: recording, connected, or not.

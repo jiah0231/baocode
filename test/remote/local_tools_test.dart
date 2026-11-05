@@ -17,7 +17,7 @@ import 'package:path/path.dart' as p;
 import 'remote_harness.dart';
 
 /// The tools an agent on an SSH host has for the user's computer: offered
-/// only while the host may act on it; a command run here asked of the
+/// only after the host is explicitly allowed; a command run here asked of the
 /// user each time (unless always allowed for the host); files copied both
 /// ways; ports forwarded. Over a server in memory, whose "host" is this
 /// machine too.
@@ -108,17 +108,29 @@ void main() {
     );
   }
 
-  test('offered only to an SSH project whose host may act here, and told '
-      'of then', () async {
+  test('not offered until the SSH host is explicitly allowed; without '
+      'access, told where to turn it on', () async {
     final local = [
       LocalTools.run,
       LocalTools.push,
       LocalTools.pull,
       LocalTools.forward,
     ];
-    expect(await listed(), isNot(containsAll(local)));
-    expect((await call(LocalTools.run, {'command': 'echo hi'})).error, isTrue);
+    expect(settings.localAccess('dev'), isFalse);
+    for (final tool in local) {
+      expect(await listed(), isNot(contains(tool)));
+      expect((await call(tool, {})).error, isTrue);
+    }
+    final off = await request('initialize');
+    expect(off['instructions'], contains('Settings → SSH Servers'));
+    expect(off['instructions'], isNot(contains('local_run')));
+    expect(File(p.join(dir.path, 'remote-hosts.json')).existsSync(), isFalse);
     settings.setLocalAccess('dev', true);
+    // Permission is explicit and remains explicit across restarts.
+    expect(
+      File(p.join(dir.path, 'remote-hosts.json')).readAsStringSync(),
+      contains('"localAccess": true'),
+    );
     expect(await listed(), containsAll(local));
     expect(await listed(at: project), isNot(contains(LocalTools.run)));
     expect(

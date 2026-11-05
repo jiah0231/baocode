@@ -270,6 +270,62 @@ jobs:
           test/ide/textmate_tokenizer_lifecycle_test.dart
           test/workspace/chat_branch_bar_test.dart
           test/workspace_test.dart
+      - name: Test newly merged workbench and host regressions
+        run: >-
+          flutter test --no-pub --reporter expanded
+          packages/bao_editor/test/monaco/flutter/editor_document_model_test.dart
+          packages/bao_markdown/test/md_editor_test.dart
+          test/chat/chat_width_test.dart
+          test/chat/resume_after_reset_test.dart
+          test/diagnostics/input_lag_test.dart
+          test/ide/editor_status_test.dart
+          test/ide/git/git_service_test.dart
+          test/ide/terminal/pty_test.dart
+          test/ide/workbench/color_theme_picker_test.dart
+          test/ide/workbench/find_status_test.dart
+          test/ide/workbench/global_keys_test.dart
+          test/ide/workbench/open_at_test.dart
+          test/ide/workbench/parts/parts_test.dart
+          test/ide/workbench/services/bridge_test.dart
+          test/ide/workbench/services/debug_view_test.dart
+          test/ide/workbench/services/editor_commands_test.dart
+          test/ide/workbench/services/editors_test.dart
+          test/ide/workbench/services/explorer_lists_test.dart
+          test/ide/workbench/services/extensions_view_test.dart
+          test/ide/workbench/services/infrastructure_test.dart
+          test/ide/workbench/services/keybindings_test.dart
+          test/ide/workbench/services/language_services_test.dart
+          test/ide/workbench/services/layout_test.dart
+          test/ide/workbench/services/markdown_preview_service_test.dart
+          test/ide/workbench/services/navigation_history_test.dart
+          test/ide/workbench/services/quick_input_service_test.dart
+          test/ide/workbench/services/scm_service_test.dart
+          test/ide/workbench/services/search_view_test.dart
+          test/ide/workbench/services/storage_keep_test.dart
+          test/ide/workbench/services/terminal_view_test.dart
+          test/ide/workbench/services/workspace_binding_test.dart
+          test/models/codex_import_test.dart
+          test/notifications/attention_service_test.dart
+          test/platform/app_binding_test.dart
+          test/preference_store_test.dart
+          test/remote/local_tools_test.dart
+          test/remote/ports_view_test.dart
+          test/settings/models_page_test.dart
+          test/settings/settings_entry_test.dart
+          test/settings/ssh_page_test.dart
+          test/sidebar_hosts_test.dart
+          test/steps_test.dart
+          test/theme/auto_color_theme_test.dart
+          test/theme/theme_transition_test.dart
+          test/tips/feature_tips_controller_test.dart
+          test/window_material_test.dart
+          test/remote/remote_host_settings_test.dart
+          test/browser/extension_permissions_test.dart
+          test/ide/workbench/document_editor_panes_test.dart
+          test/ide/workbench/theme_preview_auto_test.dart
+          test/ide/workbench/theme_preview_session_test.dart
+          test/ide/workbench/color_theme_gallery_test.dart
+          test/theme/pebrel_theme_test.dart
       - name: Test restored native transport and pairing packages
         run: flutter test packages/bao_iroh/test packages/bao_link/test --timeout 5m
       # Requires a developer's live upstream account and is intentionally
@@ -311,13 +367,13 @@ jobs:
         shell: pwsh
         run: |
           # Public versioned URL + verified hash and size; no expiring Actions artifact.
-          # Source: be40e3e4131a6502ee0590901fa576223f7107b2, release custom-v1.9.0+33.
+          # Source: 2b437301ece2ddb9796bdc5305470dabbee2e617, release custom-v1.9.0+34.
           $baseline = Join-Path $env:RUNNER_TEMP 'baseline-installer'
           New-Item -ItemType Directory -Force $baseline | Out-Null
           $setup = Join-Path $baseline 'BaoCode-1.9.0-setup.exe'
-          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.9.0%2B33/BaoCode-1.9.0-setup.exe' -OutFile $setup
-          if ((Get-Item $setup).Length -ne 36685533) { throw 'Pinned release Setup size mismatch' }
-          if ((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() -ne 'af449f8028225c7d11733a1e61405c316bfc57364224b0abebf8100a4fe64157') { throw 'Pinned release Setup checksum mismatch' }
+          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.9.0%2B34/BaoCode-1.9.0-setup.exe' -OutFile $setup
+          if ((Get-Item $setup).Length -ne 36680198) { throw 'Pinned release Setup size mismatch' }
+          if ((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() -ne '164999a4e733c0b95bccf79eb8c4e13ca384144f163eaff08e3f169dec8d940b') { throw 'Pinned release Setup checksum mismatch' }
       - name: Install pinned release then replace in isolated per-user directory
         shell: pwsh
         run: |
@@ -325,7 +381,7 @@ jobs:
           $new = @(Get-ChildItem build/installers -Filter '*-setup.exe')
           if ($new.Count -ne 1) { throw 'Expected one new Setup' }
           $version = (Select-String -Path pubspec.yaml -Pattern '^version: (.+)$').Matches[0].Groups[1].Value
-          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.9.0+33
+          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.9.0+34
       - uses: actions/upload-artifact@v6
         with:
           name: custom-installer
