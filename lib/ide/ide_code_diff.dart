@@ -171,8 +171,10 @@ class IdeCodeDiff extends StatefulWidget {
   }
 
   static TextStyle _style(WorkbenchThemeService themes) =>
-      AppFonts.codeStyle(13)
-          .copyWith(color: themes.colors['editor.foreground'], height: AppFonts.codeHeight(1.45));
+      AppFonts.codeStyle(13).copyWith(
+        color: themes.colors['editor.foreground'],
+        height: AppFonts.codeHeight(1.45),
+      );
 
   /// How long typing goes on before what is typed is written.
   static const writeDelay = Duration(milliseconds: 400);

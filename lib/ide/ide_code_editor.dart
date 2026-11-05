@@ -661,7 +661,10 @@ class IdeCodeEditorState extends State<IdeCodeEditor> {
         (widget.interfaceSized
                 ? AppFonts.uiCodeStyle(13)
                 : AppFonts.codeStyle(13))
-            .copyWith(color: colors['editor.foreground'], height: AppFonts.codeHeight(1.45));
+            .copyWith(
+              color: colors['editor.foreground'],
+              height: AppFonts.codeHeight(1.45),
+            );
     final agent = widget.bare ? null : widget.agent;
     // In the code's scale, which the deleted code of an agent change is
     // drawn in.

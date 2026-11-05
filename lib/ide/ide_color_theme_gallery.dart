@@ -120,7 +120,9 @@ class _IdeColorThemeGalleryState extends State<IdeColorThemeGallery> {
           .firstOrNull;
       final colors = themeColors;
       final uiFamily = CodeFont.typography.uiFamily;
-      final uiFamilies = uiFamily == null ? null : CodeFont.parseFamilies(uiFamily);
+      final uiFamilies = uiFamily == null
+          ? null
+          : CodeFont.parseFamilies(uiFamily);
       final locked = _closing || _importing || session.busy;
       return PopScope(
         canPop: !locked,
@@ -152,7 +154,10 @@ class _IdeColorThemeGalleryState extends State<IdeColorThemeGallery> {
                             ? null
                             : [
                                 ...uiFamilies.skip(1),
-                                ...?Theme.of(context).textTheme.bodyMedium?.fontFamilyFallback,
+                                ...?Theme.of(context)
+                                    .textTheme
+                                    .bodyMedium
+                                    ?.fontFamilyFallback,
                               ],
                         decoration: TextDecoration.none,
                       ),
@@ -200,10 +205,18 @@ class _IdeColorThemeGalleryState extends State<IdeColorThemeGallery> {
                                   Semantics(
                                     toggled: session.typographyEnabled,
                                     child: IdeButton(
-                                      key: const ValueKey('pebrel-typography-toggle'),
+                                      key: const ValueKey(
+                                        'pebrel-typography-toggle',
+                                      ),
                                       label: session.typographyEnabled
-                                          ? _text('Pebrel typography: On', 'Pebrel 排版：开启')
-                                          : _text('Pebrel typography: Off', 'Pebrel 排版：关闭'),
+                                          ? _text(
+                                              'Pebrel typography: On',
+                                              'Pebrel 排版：开启',
+                                            )
+                                          : _text(
+                                              'Pebrel typography: Off',
+                                              'Pebrel 排版：关闭',
+                                            ),
                                       secondary: !session.typographyEnabled,
                                       onPressed: locked
                                           ? null
@@ -252,7 +265,8 @@ class _IdeColorThemeGalleryState extends State<IdeColorThemeGallery> {
                                     },
                                   );
                                   final preview = _ThemePreview(
-                                    typographyEnabled: session.typographyEnabled,
+                                    typographyEnabled:
+                                        session.typographyEnabled,
                                     label:
                                         selected?.label ?? session.selectedId,
                                     text: _text,
@@ -546,7 +560,11 @@ class _PaletteLandscape extends CustomPainter {
 }
 
 class _ThemePreview extends StatelessWidget {
-  const _ThemePreview({required this.label, required this.text, required this.typographyEnabled});
+  const _ThemePreview({
+    required this.label,
+    required this.text,
+    required this.typographyEnabled,
+  });
   final bool typographyEnabled;
   final String label;
   final String Function(String, String) text;
@@ -596,22 +614,30 @@ class _ThemePreview extends StatelessWidget {
                       typographyEnabled
                           ? CodeFont.typography.family != null
                                 ? text('Theme typography active', '主题排版覆盖已生效')
-                                : text('Preset enabled; inactive for this theme', '预设已开启；当前主题不使用此预设')
+                                : text(
+                                    'Preset enabled; inactive for this theme',
+                                    '预设已开启；当前主题不使用此预设',
+                                  )
                           : text('Screenshot preset off', '截图排版预设已关闭'),
                       key: const ValueKey('pebrel-typography-status'),
-                      style: TextStyle(color: colors['foreground'], fontSize: 12),
+                      style: TextStyle(
+                        color: colors['foreground'],
+                        fontSize: 12,
+                      ),
                     ),
                     const SizedBox(height: 6),
                     Text(
                       '${text('Font fallback stack', '字体候选列表')}: '
                       '${CodeFont.effectiveFamilies.join(', ')}'
                       ' · ${CodeFont.typography.size ?? CodeFont.size.value} px\n'
-                      '${CodeFont.pebrelFontBundled
-                          ? text('Maple Mono Normal NF CN: bundled with the app', 'Maple Mono Normal NF CN：应用内置字体')
-                          : text('Maple Mono Normal NF CN: not bundled; a fallback may be used', 'Maple Mono Normal NF CN：尚未内置，可能使用回退字体')}\n'
+                      '${CodeFont.pebrelFontBundled ? text('Maple Mono Normal NF CN: bundled with the app', 'Maple Mono Normal NF CN：应用内置字体') : text('Maple Mono Normal NF CN: not bundled; a fallback may be used', 'Maple Mono Normal NF CN：尚未内置，可能使用回退字体')}\n'
                       '${text('15 px screenshot preset applies to Pebrel themes. Theme overrides take priority; your original font settings are kept.', '15 px 截图预设适用于 Pebrel 主题，主题自带排版优先；原有字体设置保持不变。')}',
                       key: const ValueKey('pebrel-font-source'),
-                      style: TextStyle(color: colors['descriptionForeground'], fontSize: 11, height: 1.5),
+                      style: TextStyle(
+                        color: colors['descriptionForeground'],
+                        fontSize: 11,
+                        height: 1.5,
+                      ),
                     ),
                     const SizedBox(height: 18),
                     Text(
@@ -635,9 +661,8 @@ class _ThemePreview extends StatelessWidget {
                       ),
                       child: Text(
                         'const idea = {\n  theme: "${label.replaceFirst('Pebrel ', '')}",\n  ready: true\n};',
-                        style: AppFonts.codeStyle(13).copyWith(
-                          color: colors['editor.foreground'],
-                        ),
+                        style: AppFonts.codeStyle(13)
+                            .copyWith(color: colors['editor.foreground']),
                       ),
                     ),
                     const SizedBox(height: 20),

@@ -130,85 +130,97 @@ void main() {
       expect(themes.colorThemeId, 'original');
     },
   );
-  test('typography preview restores its snapshot on Cancel without saving', () async {
-    final typography = ValueNotifier<bool>(true);
-    final saves = <bool>[];
-    final session = IdeThemePreviewSession(
-      _Themes(),
-      typographyPreset: typography,
-      persistTypographyPreset: (enabled) async => saves.add(enabled),
-    );
-    session.setTypographyEnabled(false);
-    expect(typography.value, isFalse);
-    expect(saves, isEmpty);
-    await session.cancel();
-    expect(typography.value, isTrue);
-    expect(saves, isEmpty);
-    session.dispose();
-    typography.dispose();
-  });
+  test(
+    'typography preview restores its snapshot on Cancel without saving',
+    () async {
+      final typography = ValueNotifier<bool>(true);
+      final saves = <bool>[];
+      final session = IdeThemePreviewSession(
+        _Themes(),
+        typographyPreset: typography,
+        persistTypographyPreset: (enabled) async => saves.add(enabled),
+      );
+      session.setTypographyEnabled(false);
+      expect(typography.value, isFalse);
+      expect(saves, isEmpty);
+      await session.cancel();
+      expect(typography.value, isTrue);
+      expect(saves, isEmpty);
+      session.dispose();
+      typography.dispose();
+    },
+  );
 
-  test('Apply keeps typography and subsequent cleanup does not reset it', () async {
-    final typography = ValueNotifier<bool>(false);
-    final saves = <bool>[];
-    final session = IdeThemePreviewSession(
-      _Themes(),
-      typographyPreset: typography,
-      persistTypographyPreset: (enabled) async => saves.add(enabled),
-    );
-    session.setTypographyEnabled(true);
-    expect(await session.apply(), isTrue);
-    await session.cancel();
-    expect(typography.value, isTrue);
-    expect(saves, [true]);
-    session.dispose();
-    typography.dispose();
-  });
+  test(
+    'Apply keeps typography and subsequent cleanup does not reset it',
+    () async {
+      final typography = ValueNotifier<bool>(false);
+      final saves = <bool>[];
+      final session = IdeThemePreviewSession(
+        _Themes(),
+        typographyPreset: typography,
+        persistTypographyPreset: (enabled) async => saves.add(enabled),
+      );
+      session.setTypographyEnabled(true);
+      expect(await session.apply(), isTrue);
+      await session.cancel();
+      expect(typography.value, isTrue);
+      expect(saves, [true]);
+      session.dispose();
+      typography.dispose();
+    },
+  );
 
-  test('failed typography persistence rolls back the committed palette', () async {
-    final typography = ValueNotifier<bool>(false);
-    final themes = _Themes();
-    final session = IdeThemePreviewSession(
-      themes,
-      typographyPreset: typography,
-      persistTypographyPreset: (_) async => throw StateError('Cannot write settings'),
-    );
-    await session.select('new');
-    session.setTypographyEnabled(true);
-    expect(await session.apply(), isFalse);
-    expect(themes.colorThemeId, 'original');
-    expect(themes.persisted, ['new', 'original']);
-    expect(session.error, isA<StateError>());
-    await session.cancel();
-    expect(typography.value, isFalse);
-    session.dispose();
-    typography.dispose();
-  });
+  test(
+    'failed typography persistence rolls back the committed palette',
+    () async {
+      final typography = ValueNotifier<bool>(false);
+      final themes = _Themes();
+      final session = IdeThemePreviewSession(
+        themes,
+        typographyPreset: typography,
+        persistTypographyPreset: (_) async =>
+            throw StateError('Cannot write settings'),
+      );
+      await session.select('new');
+      session.setTypographyEnabled(true);
+      expect(await session.apply(), isFalse);
+      expect(themes.colorThemeId, 'original');
+      expect(themes.persisted, ['new', 'original']);
+      expect(session.error, isA<StateError>());
+      await session.cancel();
+      expect(typography.value, isFalse);
+      session.dispose();
+      typography.dispose();
+    },
+  );
 
-  test('route removed during Apply restores typography and saved palette', () async {
-    final typography = ValueNotifier<bool>(false);
-    final saves = <bool>[];
-    final themes = _Themes();
-    final session = IdeThemePreviewSession(
-      themes,
-      typographyPreset: typography,
-      persistTypographyPreset: (enabled) async => saves.add(enabled),
-    );
-    await session.select('new');
-    session.setTypographyEnabled(true);
-    final gate = themes.gate = Completer<void>();
-    final apply = session.apply();
-    await Future<void>.delayed(Duration.zero);
-    final cancel = session.cancel();
-    gate.complete();
-    expect(await apply, isFalse);
-    await cancel;
-    expect(typography.value, isFalse);
-    expect(saves, [true, false]);
-    expect(themes.persisted, ['new', 'original']);
-    expect(themes.colorThemeId, 'original');
-    session.dispose();
-    typography.dispose();
-  });
-
+  test(
+    'route removed during Apply restores typography and saved palette',
+    () async {
+      final typography = ValueNotifier<bool>(false);
+      final saves = <bool>[];
+      final themes = _Themes();
+      final session = IdeThemePreviewSession(
+        themes,
+        typographyPreset: typography,
+        persistTypographyPreset: (enabled) async => saves.add(enabled),
+      );
+      await session.select('new');
+      session.setTypographyEnabled(true);
+      final gate = themes.gate = Completer<void>();
+      final apply = session.apply();
+      await Future<void>.delayed(Duration.zero);
+      final cancel = session.cancel();
+      gate.complete();
+      expect(await apply, isFalse);
+      await cancel;
+      expect(typography.value, isFalse);
+      expect(saves, [true, false]);
+      expect(themes.persisted, ['new', 'original']);
+      expect(themes.colorThemeId, 'original');
+      session.dispose();
+      typography.dispose();
+    },
+  );
 }

@@ -148,7 +148,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
-  testWidgets('typography toggle previews and Escape restores original', (tester) async {
+  testWidgets('typography toggle previews and Escape restores original', (
+    tester,
+  ) async {
     final themes = _Themes();
     await _open(tester, themes);
     await tester.tap(find.byKey(const ValueKey('pebrel-typography-toggle')));
@@ -181,7 +183,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('gallery honors the UI font family fallback list', (tester) async {
+  testWidgets('gallery honors the UI font family fallback list', (
+    tester,
+  ) async {
     final original = WorkbenchThemeService.instance;
     final service = WorkbenchThemeService();
     WorkbenchThemeService.instance = service;
@@ -209,5 +213,4 @@ void main() {
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
   });
-
 }

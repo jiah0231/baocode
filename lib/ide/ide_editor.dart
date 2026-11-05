@@ -2752,9 +2752,11 @@ class IdeEditorState extends State<IdeEditor> {
         : (event) => _resolveKey(event).command,
   );
 
-  TextStyle _editorStyle(WorkbenchColors colors) =>
-      AppFonts.codeStyle(13)
-          .copyWith(color: colors['editor.foreground'], height: AppFonts.codeHeight(1.45));
+  TextStyle _editorStyle(WorkbenchColors colors) => AppFonts.codeStyle(13)
+      .copyWith(
+        color: colors['editor.foreground'],
+        height: AppFonts.codeHeight(1.45),
+      );
 
   /// The active document's editor; in a diff, the modified side, with
   /// what the diff gives it ([side]); else with its agent change in it

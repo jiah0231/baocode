@@ -1211,7 +1211,8 @@ class _LineRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final style = AppFonts.codeStyle(12).copyWith(height: AppFonts.codeHeight(1.5));
+    final style = AppFonts.codeStyle(12)
+        .copyWith(height: AppFonts.codeHeight(1.5));
     final background = marked
         ? themeColors['editor.rangeHighlightBackground']
         : Colors.transparent;

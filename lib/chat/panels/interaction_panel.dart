@@ -832,7 +832,8 @@ class _ApprovalPreview extends StatelessWidget {
 
   final ApprovalPreview? preview;
 
-  static TextStyle get _mono => AppFonts.uiCodeStyle(12).copyWith(height: AppFonts.codeHeight(1.5));
+  static TextStyle get _mono =>
+      AppFonts.uiCodeStyle(12).copyWith(height: AppFonts.codeHeight(1.5));
 
   @override
   Widget build(BuildContext context) {

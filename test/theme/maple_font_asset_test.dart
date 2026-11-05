@@ -5,9 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('bundled Maple font is the unchanged pinned upstream binary', () {
-    final bytes = File(
-      'assets/fonts/maple/MapleMonoNormal-NF-CN-Regular.ttf',
-    ).readAsBytesSync();
+    final bytes = File('assets/fonts/maple/MapleMonoNormal-NF-CN-Regular.ttf')
+        .readAsBytesSync();
     expect(bytes.length, 20563672);
     expect(
       sha256.convert(bytes).toString(),

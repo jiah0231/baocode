@@ -406,4 +406,5 @@ class _StepBodyState extends State<StepBody> {
 
 /// Monospaced text as steps show it: commands, output, matches.
 TextStyle get stepMono =>
-    AppFonts.uiCodeStyle(12).copyWith(height: AppFonts.codeHeight(1.5), color: AppColors.textMuted);
+    AppFonts.uiCodeStyle(12)
+        .copyWith(height: AppFonts.codeHeight(1.5), color: AppColors.textMuted);
