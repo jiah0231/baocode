@@ -757,7 +757,10 @@ void main() {
 
     await _openPicker(tester);
     expect(_active(tester), 'Bao Dark');
-    await _key(tester, LogicalKeyboardKey.arrowUp);
+    // Installed themes can add neighbors (including Pebrel's Warm Sand).
+    // Select the target by name without assuming its position in the list.
+    await tester.enterText(_input, 'Solarized Light');
+    await tester.pump();
     expect(_active(tester), 'Solarized Light');
     await settle();
     expect(themes.colorThemeId, 'Solarized Light');
@@ -769,7 +772,8 @@ void main() {
     expect(storage.kept, isEmpty, reason: 'cancelling does not keep a choice');
 
     await _openPicker(tester);
-    await _key(tester, LogicalKeyboardKey.arrowDown);
+    await tester.enterText(_input, 'Dark Modern');
+    await tester.pump();
     expect(_active(tester), 'Dark Modern');
     await _key(tester, LogicalKeyboardKey.enter);
     await settle();

@@ -46,7 +46,8 @@ void main() {
     // Wide enough for both tabs to show whole beside the chat.
     tester.view.physicalSize = const Size(1100, 700);
     tester.view.devicePixelRatio = 1;
-    final root = p.join(p.separator, 'virtual-project');
+    // Keep the drive on Windows, matching IdeWorkspace.open's absolute paths.
+    final root = p.join(p.rootPrefix(p.current), 'virtual-project');
     final first = p.join(root, 'main.dart');
     final second = p.join(root, 'other.dart');
     final files = _MemoryFiles({first: 'alpha\nbeta', second: 'one\ntwo\n'});
@@ -57,7 +58,11 @@ void main() {
     });
 
     await workspace.open(first);
+    expect(workspace.active!.openError, isNull);
+    expect(workspace.active!.text, files.contents[first]);
     await workspace.open(second);
+    expect(workspace.active!.openError, isNull);
+    expect(workspace.active!.text, files.contents[second]);
     workspace.select(first);
     await tester.pumpWidget(
       MaterialApp(
@@ -176,7 +181,7 @@ void main() {
   ) async {
     tester.view.physicalSize = const Size(1200, 750);
     tester.view.devicePixelRatio = 1;
-    final root = p.join(p.separator, 'virtual-project');
+    final root = p.join(p.rootPrefix(p.current), 'virtual-project');
     final path = p.join(root, 'main.dart');
     final workspace = IdeWorkspace(
       root,
@@ -187,6 +192,8 @@ void main() {
       tester.view.reset();
     });
     await workspace.open(path);
+    expect(workspace.active!.openError, isNull);
+    expect(workspace.active!.text, 'Alpha alpha\r\nAlpha');
     await tester.pumpWidget(
       MaterialApp(
         home: IdeWorkbench(
@@ -227,7 +234,7 @@ void main() {
   testWidgets('zero-width regex find advances across lines', (tester) async {
     tester.view.physicalSize = const Size(1200, 750);
     tester.view.devicePixelRatio = 1;
-    final root = p.join(p.separator, 'virtual-project');
+    final root = p.join(p.rootPrefix(p.current), 'virtual-project');
     final path = p.join(root, 'main.dart');
     final workspace = IdeWorkspace(
       root,
@@ -238,6 +245,8 @@ void main() {
       tester.view.reset();
     });
     await workspace.open(path);
+    expect(workspace.active!.openError, isNull);
+    expect(workspace.active!.text, 'a\nb\nc');
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -273,7 +282,7 @@ void main() {
   ) async {
     tester.view.physicalSize = const Size(1200, 750);
     tester.view.devicePixelRatio = 1;
-    final root = p.join(p.separator, 'virtual-project');
+    final root = p.join(p.rootPrefix(p.current), 'virtual-project');
     final path = p.join(root, 'main.dart');
     final workspace = IdeWorkspace(
       root,
@@ -284,6 +293,8 @@ void main() {
       tester.view.reset();
     });
     await workspace.open(path);
+    expect(workspace.active!.openError, isNull);
+    expect(workspace.active!.text, 'Alpha alpha alphabet\nAlpha');
     await tester.pumpWidget(
       MaterialApp(
         home: IdeWorkbench(

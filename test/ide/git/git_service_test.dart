@@ -50,6 +50,9 @@ void main() {
       ('user.email', 'ada@example.com'),
       ('commit.gpgsign', 'false'),
       ('core.hooksPath', hooks.path),
+      // Fixture bytes are LF even when Windows Git defaults to CRLF checkout.
+      ('core.autocrlf', 'false'),
+      ('core.eol', 'lf'),
     ]) {
       await git(['config', key, value]);
     }
