@@ -251,6 +251,16 @@ List<ChatItem> _items(ChatSession session) => [
   for (var i = 0; i < session.itemCount; i++) session.itemAt(i),
 ];
 
+// Native prompt discovery performs filesystem I/O. Event-queue turns alone
+// do not establish its completion, especially on a Windows runner.
+Future<void> _waitUntil(bool Function() done, String transition) async {
+  final clock = Stopwatch()..start();
+  while (!done() && clock.elapsed < const Duration(seconds: 10)) {
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+  expect(done(), isTrue, reason: 'Timed out waiting for $transition');
+}
+
 void main() {
   test('a new empty chat cannot fork or create a server session', () async {
     final h = _Harness();
@@ -305,8 +315,7 @@ void main() {
       expect((await session.fork(title: 'copy'))?.id, 'forked');
       expect(server.requests('thread/resume'), isEmpty);
       expect(server.requests('turn/start'), isEmpty);
-      h.kernels.single.prepare();
-      await pumpEventQueue();
+      expect(await session.prepareConversation(), isTrue);
       expect(server.requests('thread/resume'), hasLength(1));
       expect(
         _items(session).whereType<UserMessageItem>().single.text,
@@ -394,7 +403,10 @@ void main() {
       expect(server.requests('thread/resume'), isEmpty);
       server.holdResume = true;
       h.kernels.single.prepare();
-      await pumpEventQueue();
+      await _waitUntil(
+        () => server.pendingResume != null,
+        'the source thread/resume request',
+      );
       expect(server.pendingResume, isNotNull);
       var completed = false;
       final second = session.fork(title: 'second copy').then((value) {
@@ -454,7 +466,10 @@ void main() {
       server.failResume = true;
       final kernel = h.kernels.single;
       kernel.prepare();
-      await pumpEventQueue();
+      await _waitUntil(
+        () => kernel.health.status == KernelHealthStatus.failed,
+        'the rejected source resume to report failed health',
+      );
       expect(kernel.health.status, KernelHealthStatus.failed);
       expect(kernel.health.message, contains('resume'));
       expect(kernel.health.detail, contains('Resume rejected'));
@@ -471,7 +486,10 @@ void main() {
       addTearDown(session.dispose);
       final server = h.servers.single..holdResume = true;
       h.kernels.single.prepare();
-      await pumpEventQueue();
+      await _waitUntil(
+        () => server.pendingResume != null,
+        'the source thread/resume request',
+      );
       expect(server.pendingResume, isNotNull);
       var completed = false;
       final fork = session.fork(title: 'copy').then((value) {
@@ -492,8 +510,7 @@ void main() {
       final h = _Harness();
       final session = h.session();
       addTearDown(session.dispose);
-      h.kernels.single.prepare();
-      await pumpEventQueue();
+      expect(await session.prepareConversation(), isTrue);
       session.send(const ComposerMessage(text: 'Still working'));
       await pumpEventQueue();
       final sourceItems = _items(session)
@@ -528,8 +545,7 @@ void main() {
       final h = _Harness();
       final session = h.session();
       addTearDown(session.dispose);
-      h.kernels.single.prepare();
-      await pumpEventQueue();
+      expect(await session.prepareConversation(), isTrue);
       final server = h.servers.single;
       server.push({
         'method': 'turn/started',
@@ -557,8 +573,7 @@ void main() {
       final h = _Harness();
       final session = h.session();
       addTearDown(session.dispose);
-      h.kernels.single.prepare();
-      await pumpEventQueue();
+      expect(await session.prepareConversation(), isTrue);
       session.send(const ComposerMessage(text: 'Working'));
       await pumpEventQueue();
       final server = h.servers.single;
@@ -586,11 +601,13 @@ void main() {
       final session = h.session();
       addTearDown(session.dispose);
       final server = h.servers.single;
-      h.kernels.single.prepare();
-      await pumpEventQueue();
+      expect(await session.prepareConversation(), isTrue);
       server.holdTurn = true;
       session.send(const ComposerMessage(text: 'Starting'));
-      await pumpEventQueue();
+      await _waitUntil(
+        () => server.pendingTurn != null,
+        'the held turn/start request',
+      );
       expect(server.pendingTurn, isNotNull);
       expect(await session.fork(title: 'unsafe copy'), isNull);
       expect(h.requests('thread/fork'), isEmpty);
@@ -608,8 +625,7 @@ void main() {
       final session = h.session();
       addTearDown(session.dispose);
       final server = h.servers.single..version = '0.165.0';
-      h.kernels.single.prepare();
-      await pumpEventQueue();
+      expect(await session.prepareConversation(), isTrue);
       session.send(const ComposerMessage(text: 'Working'));
       await pumpEventQueue();
       expect(await session.fork(title: 'unsafe copy'), isNull);
@@ -639,8 +655,7 @@ void main() {
       final session = h.session();
       addTearDown(session.dispose);
       h.servers.single.version = version;
-      h.kernels.single.prepare();
-      await pumpEventQueue();
+      expect(await session.prepareConversation(), isTrue);
       session.send(const ComposerMessage(text: 'Working'));
       await pumpEventQueue();
       final fork = await session.fork(title: 'copy');
@@ -727,13 +742,21 @@ void main() {
         message: const ComposerMessage(text: 'Continue in the copy'),
       );
       expect(forked, isNotNull);
-      await pumpEventQueue(times: 100);
+      await _waitUntil(
+        () => h.requests('thread/resume').any(
+          (request) => (request['params'] as Map)['threadId'] == 'forked',
+        ),
+        'the forked thread/resume request',
+      );
       final child = h.resumed('forked');
       expect(child.pendingResume, isNotNull);
       expect(child.requests('turn/start'), isEmpty);
       expect(_items(forked!.session).whereType<UserMessageItem>(), isEmpty);
       child.releaseResume();
-      await pumpEventQueue(times: 100);
+      await _waitUntil(
+        () => child.requests('turn/start').isNotEmpty,
+        'the forked turn/start after history has loaded',
+      );
       expect(child.requests('turn/start'), hasLength(1));
       expect(
         _items(forked.session).whereType<UserMessageItem>().map((i) => i.text),
@@ -759,7 +782,10 @@ void main() {
       message: const ComposerMessage(text: 'Do not send without history'),
     );
     expect(forked, isNotNull);
-    await pumpEventQueue(times: 100);
+    await _waitUntil(
+      () => forked!.session.health.status == KernelHealthStatus.failed,
+      'the rejected forked resume to report failed health',
+    );
     expect(h.resumed('forked').requests('turn/start'), isEmpty);
     expect(_items(forked!.session).whereType<UserMessageItem>(), isEmpty);
     expect(forked.session.health.status, KernelHealthStatus.failed);

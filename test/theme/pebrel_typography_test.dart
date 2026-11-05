@@ -154,10 +154,7 @@ void main() {
                 scaler.scale(AppFonts.uiCodeStyle(12.5).fontSize!),
                 inlineSize,
               );
-              expect(
-                scaler.scale(_localizedUiFontSize()),
-                uiSize,
-              );
+              expect(scaler.scale(_localizedUiFontSize()), uiSize);
               expect(vscodeTerminalFontSize(scaler, system), terminalSize);
               expect(CodeFont.typography.uiSize, isNull);
               expect(CodeFont.typography.size, isNull);
