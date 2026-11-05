@@ -41,6 +41,16 @@ jobs:
       - name: Analyze
         id: analyze
         run: flutter analyze --no-pub
+      - name: Test local Office document previews
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
+        run: >-
+          flutter test --no-pub
+          test/ide/document/document_reader_test.dart
+          test/ide/document/document_byte_read_test.dart
+          test/ide/document_preview_test.dart
+          test/chat/side_panel/file_preview_document_test.dart
+          test/chat/side_panel/file_preview_agent_test.dart
+          test/chat/side_panel/side_panel_test.dart
       - name: Test original font asset and typography
         run: >-
           flutter test
@@ -251,13 +261,13 @@ jobs:
         shell: pwsh
         run: |
           # Public versioned URL + verified hash and size; no expiring Actions artifact.
-          # Source: 4edb81bf66d51ff921e8a1a668f73ac49f527544, release custom-v1.9.0+30.
+          # Source: 9d13a348f2cb0dcb8c3b01ddcaeb88d72f1307ca, release custom-v1.9.0+31.
           $baseline = Join-Path $env:RUNNER_TEMP 'baseline-installer'
           New-Item -ItemType Directory -Force $baseline | Out-Null
           $setup = Join-Path $baseline 'BaoCode-1.9.0-setup.exe'
-          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.9.0%2B30/BaoCode-1.9.0-setup.exe' -OutFile $setup
-          if ((Get-Item $setup).Length -ne 32622215) { throw 'Pinned release Setup size mismatch' }
-          if ((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() -ne 'd0a256c9cb533653feacd6a3b4180199380ef7a9ecda3725fe9585a0580c098c') { throw 'Pinned release Setup checksum mismatch' }
+          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.9.0%2B31/BaoCode-1.9.0-setup.exe' -OutFile $setup
+          if ((Get-Item $setup).Length -ne 32624626) { throw 'Pinned release Setup size mismatch' }
+          if ((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() -ne '7841531f4a53e199e8d4e3d89a9bf70facf79d5612f220d258ac670a12e52ce4') { throw 'Pinned release Setup checksum mismatch' }
       - name: Install pinned release then replace in isolated per-user directory
         shell: pwsh
         run: |
@@ -265,7 +275,7 @@ jobs:
           $new = @(Get-ChildItem build/installers -Filter '*-setup.exe')
           if ($new.Count -ne 1) { throw 'Expected one new Setup' }
           $version = (Select-String -Path pubspec.yaml -Pattern '^version: (.+)$').Matches[0].Groups[1].Value
-          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.9.0+30
+          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.9.0+31
       - name: Record build identity and checksums
         shell: pwsh
         run: |

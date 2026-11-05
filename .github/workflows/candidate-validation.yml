@@ -128,6 +128,16 @@ jobs:
           "source_exact=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           if ($formatFailed) { throw 'Changed Dart files need formatting; diagnostic patch retained' }
           if ('${{ steps.preparation.outputs.changed }}' -ne 'false') { throw 'Dependency-generated differences require review; diagnostic patch retained' }
+      - name: Test local Office document previews
+        if: ${{ !cancelled() && steps.font_asset.outcome == 'success' && steps.analyze.outcome == 'success' && steps.formatting.outputs.source_exact == 'true' && steps.preparation.outputs.changed == 'false' }}
+        run: >-
+          flutter test --no-pub
+          test/ide/document/document_reader_test.dart
+          test/ide/document/document_byte_read_test.dart
+          test/ide/document_preview_test.dart
+          test/chat/side_panel/file_preview_document_test.dart
+          test/chat/side_panel/file_preview_agent_test.dart
+          test/chat/side_panel/side_panel_test.dart
       - name: Run explicitly selected non-browser regressions
         if: ${{ !cancelled() && steps.font_asset.outcome == 'success' && steps.analyze.outcome == 'success' && steps.formatting.outputs.source_exact == 'true' && steps.preparation.outputs.changed == 'false' }}
         shell: pwsh

@@ -95,6 +95,8 @@ import 'ide_dialog.dart';
 import 'ide_editor.dart';
 import 'ide_editor_placeholder.dart';
 import 'ide_image_preview.dart';
+import 'ide_document_preview.dart';
+import 'document/document_format.dart';
 import 'markdown/markdown_paste.dart';
 import 'markdown/markdown_preview.dart';
 import 'ide_explorer.dart';
@@ -4742,6 +4744,18 @@ class IdeWorkbenchState extends State<IdeWorkbench> {
                               ),
                               child: FileViews.byId(active.view!)!
                                   .build(context, active.path),
+                            )
+                          : active.isMedia && ideIsDocumentPath(active.path)
+                          ? IdeDocumentPreview(
+                              key: ValueKey(active),
+                              path: active.path,
+                              files: widget.workspace.files,
+                              onOpenInDefaultApp:
+                                  _local && WindowControls.canOpenInDefaultApp
+                                  ? () => unawaited(
+                                      _openInDefaultApp(active.path),
+                                    )
+                                  : null,
                             )
                           : active.isMedia
                           ? IdeImagePreview(

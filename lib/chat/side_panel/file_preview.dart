@@ -14,6 +14,8 @@ import 'package:path/path.dart' as p;
 import '../../base/shown_when_ready.dart';
 import '../../base/smooth_scroll.dart';
 import '../../ide/file_service.dart';
+import '../../ide/document/document_format.dart';
+import '../../ide/ide_document_preview.dart';
 import '../../ide/ide_agent_edits.dart';
 import '../../ide/ide_code_diff.dart';
 import '../../ide/ide_code_editor.dart';
@@ -212,6 +214,8 @@ class _FilePreviewState extends State<FilePreview> {
   /// An image shows as it is, its changes too: there is no text to compare.
   bool get _image => ideIsImagePath(_request.path);
 
+  bool get _document => ideIsDocumentPath(_request.path);
+
   /// A markdown file rendered: its changes too, as the file is after them
   /// (its changes a click away), unless it was deleted.
   bool get _isMarkdown =>
@@ -225,7 +229,10 @@ class _FilePreviewState extends State<FilePreview> {
   /// The file's own text shows, to edit: not its changes, nor the index's,
   /// nor what is only shown ([FileOpenRequest.readOnly]).
   bool get _editable =>
-      !_request.diff && _request.modified == null && !_request.readOnly;
+      !_document &&
+      !_request.diff &&
+      _request.modified == null &&
+      !_request.readOnly;
 
   @override
   void initState() {
@@ -243,7 +250,7 @@ class _FilePreviewState extends State<FilePreview> {
   void _languageModesChanged() {
     if (!mounted) return;
     setState(() {});
-    if (_edit == null && !_image) unawaited(_read(++_load));
+    if (_edit == null && !_image && !_document) unawaited(_read(++_load));
   }
 
   void _attach(SidePanelFileEdit edit) {
@@ -277,7 +284,7 @@ class _FilePreviewState extends State<FilePreview> {
       _detach();
       if (widget.edit case final edit? when _editable) _attach(edit);
       _start();
-    } else if (oldWidget.reveal != widget.reveal && !_image) {
+    } else if (oldWidget.reveal != widget.reveal && !_image && !_document) {
       // Asked for again (the agent wrote it again, say): read anew, what
       // shows kept until then.
       unawaited(_read(++_load));
@@ -356,7 +363,10 @@ class _FilePreviewState extends State<FilePreview> {
     // The agent's change shows in the text.
     if (_request.agentChange && isMarkdownPath(_request.path)) _source = true;
     _dropMarkdown();
-    if (_image) return;
+    if (_image || _document) {
+      _ready();
+      return;
+    }
     // Its tab's edit shows as it is while the file is read anew.
     if (_edit case final edit?) {
       _loaded = const _Text([]);
@@ -555,7 +565,7 @@ class _FilePreviewState extends State<FilePreview> {
               ),
             ),
           ),
-          if (!_image && widget.language)
+          if (!_image && !_document && widget.language)
             _TextButton(
               label: IdeLanguageNames.forPath(path),
               tooltip: l10n.languageModeChange,
@@ -601,6 +611,25 @@ class _FilePreviewState extends State<FilePreview> {
   }
 
   Widget _body(BuildContext context) {
+    if (_document) {
+      return IdeDocumentPreview(
+        path: _request.path,
+        files: widget.files,
+        // Built-in local/range readers enforce the limit during the read,
+        // not only after an unbounded image reader has allocated its bytes.
+        read: widget.files is IdeRangeFiles || widget.readBytes == readFileBytes
+            ? null
+            : widget.readBytes,
+        revision: widget.reveal,
+        historical: _request.diff || _request.modified != null,
+        onOpenInDefaultApp:
+            widget.files is! IdeHostFiles &&
+                WindowControls.canOpenInDefaultApp &&
+                _request.modified == null
+            ? () => unawaited(openExternal(_request.path))
+            : null,
+      );
+    }
     if (_image) {
       return IdeImagePreview(path: _request.path, read: widget.readBytes);
     }
