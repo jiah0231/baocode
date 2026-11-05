@@ -63,10 +63,18 @@ void main() {
       matching: find.byType(Image),
     );
     await _waitFor(tester, imageFinder);
-    final image = tester.widget<Image>(imageFinder);
-    final context = tester.element(imageFinder);
-    await tester.runAsync(() => precacheImage(image.image, context));
-    await tester.pump();
+    // The Image stream was created in the test's fake-async zone. Awaiting
+    // precacheImage inside runAsync can deadlock its completion behind pump.
+    // Poll the decoded widget with the same bounded real-time helper instead.
+    await _waitFor(
+      tester,
+      find.descendant(
+        of: imageFinder,
+        matching: find.byWidgetPredicate(
+          (widget) => widget is RawImage && widget.image != null,
+        ),
+      ),
+    );
     final raw = tester.widget<RawImage>(
       find.descendant(of: imageFinder, matching: find.byType(RawImage)),
     );
