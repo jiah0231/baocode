@@ -4,7 +4,8 @@ import 'ide_color_theme_picker.dart';
 
 Future<void> Function() _captureSelection(IdeColorThemeController themes) {
   if (themes is IdeColorThemeTransactionController) {
-    return themes.captureColorThemeSelection();
+    return (themes as IdeColorThemeTransactionController)
+        .captureColorThemeSelection();
   }
   final id = themes.colorThemeId;
   return () => themes.setColorTheme(id);

@@ -830,7 +830,7 @@ class WorkbenchThemeService extends ChangeNotifier
     final revision = _preferenceRevision;
     final store = storage;
     if (restoreSelection && store is ColorThemeSelectionStorage) {
-      await store.restoreColorThemeSelection(
+      await (store as ColorThemeSelectionStorage).restoreColorThemeSelection(
         setting: setting,
         data: theme.toStorage(),
         autoDetectColorScheme: automatic,

@@ -1846,8 +1846,9 @@ class CodexKernel
   Future<void> _run(KernelTurn turn) async {
     try {
       await _ensureStarted();
-      if (_disposed || _stoppedTurns.contains(turn.id) || _turn != turn.id)
+      if (_disposed || _stoppedTurns.contains(turn.id) || _turn != turn.id) {
         return;
+      }
       // Picked on the other side of BaoCode since the thread began: the
       // server keeps it to the side it began on, so it goes on as a copy
       // of itself there (see [_forkToProvider]).
@@ -1855,8 +1856,9 @@ class CodexKernel
           when !_sameWay(_threadProvider, _modelId ?? '')) {
         await _forkToProvider(threadId);
       }
-      if (_disposed || _stoppedTurns.contains(turn.id) || _turn != turn.id)
+      if (_disposed || _stoppedTurns.contains(turn.id) || _turn != turn.id) {
         return;
+      }
       await _ensureThread();
       if (_stoppedTurns.contains(turn.id) || _turn != turn.id) return;
       // A native goal may start work while thread/resume is pending.

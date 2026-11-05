@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:ui' show Brightness;
 
 import 'package:baocode/ide/ide_color_theme_picker.dart';
 import 'package:baocode/ide/ide_theme_preview_session.dart';
