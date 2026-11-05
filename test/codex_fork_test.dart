@@ -743,9 +743,11 @@ void main() {
       );
       expect(forked, isNotNull);
       await _waitUntil(
-        () => h.requests('thread/resume').any(
-          (request) => (request['params'] as Map)['threadId'] == 'forked',
-        ),
+        () => h
+            .requests('thread/resume')
+            .any(
+              (request) => (request['params'] as Map)['threadId'] == 'forked',
+            ),
         'the forked thread/resume request',
       );
       final child = h.resumed('forked');
