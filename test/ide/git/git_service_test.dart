@@ -113,7 +113,7 @@ void main() {
     final changes = await service.commitChanges(log.first.id);
     expect(
       [for (final c in changes) (c.path, c.status)],
-      [(p.join(root, 'lib/a.dart'), 'M')],
+      [(p.join(root, 'lib', 'a.dart'), 'M')],
     );
   }, skip: hasGit ? false : 'Git is not installed');
 

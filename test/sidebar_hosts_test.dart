@@ -265,6 +265,128 @@ void main() {
     expect(workspace.isHidden(app), isTrue);
   });
 
+  testWidgets(
+    'removing a host with all projects already hidden restores none',
+    (tester) async {
+      final workspace = await pumpLoaded(tester);
+      await workspace.openFolder('ssh://dev/srv/app');
+      await workspace.openFolder('ssh://dev/srv/lib');
+      final projects = workspace.projects
+          .where((p) => p.host == 'dev')
+          .toList();
+      for (final project in projects) {
+        workspace.hideProject(project);
+      }
+      workspace.removeSshHost('dev');
+      workspace.addSshHost('dev');
+      for (final project in projects) {
+        expect(workspace.isHidden(project), isTrue, reason: project.path);
+      }
+    },
+  );
+
+  testWidgets(
+    'manual hide supersedes host removal, including repeated removal',
+    (tester) async {
+      final workspace = await pumpLoaded(tester);
+      await workspace.openFolder('ssh://dev/srv/app');
+      await workspace.openFolder('ssh://dev/srv/lib');
+      final app = workspace.projects.firstWhere((p) => p.name == 'app');
+      final lib = workspace.projects.firstWhere((p) => p.name == 'lib');
+      workspace.removeSshHost('dev');
+      workspace.hideProject(app);
+      workspace.removeSshHost('dev');
+      workspace.addSshHost('dev');
+      expect(workspace.isHidden(app), isTrue);
+      expect(workspace.isHidden(lib), isFalse);
+      workspace.addSshHost('dev');
+      expect(workspace.isHidden(app), isTrue);
+      expect(workspace.isHidden(lib), isFalse);
+    },
+  );
+
+  testWidgets(
+    'host removal ownership survives restart with identical hide times',
+    (tester) async {
+      final store = MemoryPreferenceStore();
+      var workspace = await pumpLoaded(tester, preferences: store);
+      const appPath = 'ssh://dev/srv/app';
+      const libPath = 'ssh://dev/srv/lib';
+      await workspace.openFolder(appPath);
+      await workspace.openFolder(libPath);
+      workspace.hideProject(
+        workspace.projects.firstWhere((p) => p.path == appPath),
+      );
+      workspace.removeSshHost('dev');
+      await tester.pumpWidget(const SizedBox());
+
+      final sidebar = store.preferences['sidebar']! as Map;
+      expect(sidebar['hostHiddenProjects'], {libPath: 'dev'});
+      // Deterministic clock collision, without sleeping or changing assertions.
+      final sameTime = DateTime(2100).toIso8601String();
+      store.preferences = {
+        ...store.preferences,
+        'sidebar': {
+          ...sidebar,
+          'hiddenProjects': {appPath: sameTime, libPath: sameTime},
+        },
+      };
+      workspace = await pumpLoaded(tester, preferences: store);
+      final app = workspace.projects.firstWhere((p) => p.path == appPath);
+      final lib = workspace.projects.firstWhere((p) => p.path == libPath);
+      expect(workspace.isHidden(app), isTrue);
+      expect(workspace.isHidden(lib), isTrue);
+      workspace.addSshHost('dev');
+      expect(workspace.isHidden(app), isTrue);
+      expect(workspace.isHidden(lib), isFalse);
+      expect(
+        (store.preferences['sidebar']! as Map)['hostHiddenProjects'],
+        isNull,
+      );
+    },
+  );
+
+  testWidgets('legacy hidden projects stay hidden until explicitly opened', (
+    tester,
+  ) async {
+    const appPath = 'ssh://dev/srv/app';
+    const libPath = 'ssh://dev/srv/lib';
+    final sameTime = DateTime(2100).toIso8601String();
+    final store = MemoryPreferenceStore({
+      'sidebar': {
+        'folders': [appPath, libPath],
+        'hiddenProjects': {appPath: sameTime, libPath: sameTime},
+      },
+    });
+    final workspace = await pumpLoaded(tester, preferences: store);
+    final app = workspace.projects.firstWhere((p) => p.path == appPath);
+    final lib = workspace.projects.firstWhere((p) => p.path == libPath);
+    workspace.addSshHost('dev');
+    expect(workspace.isHidden(app), isTrue);
+    expect(workspace.isHidden(lib), isTrue);
+    await workspace.openFolder(appPath);
+    expect(workspace.isHidden(app), isFalse);
+    expect(workspace.isHidden(lib), isTrue);
+  });
+
+  testWidgets('host removal metadata cannot restore a different host', (
+    tester,
+  ) async {
+    const path = 'ssh://dev/srv/app';
+    final store = MemoryPreferenceStore({
+      'sidebar': {
+        'folders': [path],
+        'hiddenProjects': {path: DateTime(2100).toIso8601String()},
+        'hostHiddenProjects': {path: 'other'},
+      },
+    });
+    final workspace = await pumpLoaded(tester, preferences: store);
+    final app = workspace.projects.firstWhere((p) => p.path == path);
+    workspace.addSshHost('dev');
+    workspace.addSshHost('other');
+    expect(workspace.isHidden(app), isTrue);
+  });
+
   testWidgets('a host is renamed in the heading, given an icon; both kept '
       'between runs', (tester) async {
     final store = MemoryPreferenceStore();

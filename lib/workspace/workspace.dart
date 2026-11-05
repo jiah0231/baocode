@@ -1610,6 +1610,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// again once opened, or asked something since (see [_unhide]).
   final Map<String, DateTime> _hiddenProjects = {};
 
+  /// Only projects hidden by removing their host may return with that host.
+  /// Timestamps describe when, not why: separate actions can share a clock tick.
+  final Map<String, String> _hostHiddenProjects = {};
+
   bool isHidden(Project project) =>
       _hiddenProjects.containsKey(project.path) || isAppFolder(project.path);
 
@@ -1675,11 +1679,13 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// Takes [project] off the sidebar; nothing of it is deleted.
   void hideProject(Project project) {
     _hiddenProjects[project.path] = DateTime.now();
+    _hostHiddenProjects.remove(project.path);
     _save();
     notifyListeners();
   }
 
   void _unhide(String path) {
+    _hostHiddenProjects.remove(path);
     if (_hiddenProjects.remove(path) != null) _save();
     _listUnlisted(path);
   }
@@ -1762,19 +1768,13 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   void addSshHost(String host) {
     if (_sshHosts.contains(host)) return;
     _sshHosts.add(host);
-    final hidden = {
-      for (final project in _projects)
-        if (project.host == host) project.path: ?_hiddenProjects[project.path],
-    };
-    if (hidden.isNotEmpty) {
-      // Taken off with the host: at the time it went, the last.
-      final removed = hidden.values.reduce((a, b) => a.isAfter(b) ? a : b);
-      hidden.forEach((path, since) {
-        if (since == removed) {
-          _hiddenProjects.remove(path);
-          _listUnlisted(path);
+    for (final project in _projects) {
+      if (project.host == host && _hostHiddenProjects[project.path] == host) {
+        _hostHiddenProjects.remove(project.path);
+        if (_hiddenProjects.remove(project.path) != null) {
+          _listUnlisted(project.path);
         }
-      });
+      }
     }
     _save();
     notifyListeners();
@@ -1788,8 +1788,9 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     final now = DateTime.now();
     for (final project in _projects) {
       // Those off already stay as they were (see [addSshHost]).
-      if (project.host == host) {
-        _hiddenProjects.putIfAbsent(project.path, () => now);
+      if (project.host == host && !_hiddenProjects.containsKey(project.path)) {
+        _hiddenProjects[project.path] = now;
+        _hostHiddenProjects[project.path] = host;
       }
     }
     if (_sidebarHost == host) _sidebarHost = null;
@@ -2109,6 +2110,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     if (_workspaces.remove(workspace.path) == null) return;
     _folders.remove(workspace.path);
     _hiddenProjects[workspace.path] = DateTime.now();
+    _hostHiddenProjects.remove(workspace.path);
     _save();
     notifyListeners();
   }
@@ -2307,6 +2309,9 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     _hiddenProjects
       ..remove(from)
       ..remove(to);
+    _hostHiddenProjects
+      ..remove(from)
+      ..remove(to);
     replace(_projectOrder);
     replace(_pinnedProjects);
     replace(_recentFolders);
@@ -2445,6 +2450,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       _projectOrder.length,
       _pinnedProjects.length,
       _hiddenProjects.length,
+      _hostHiddenProjects.length,
       _order.length,
       _projectIcons.length,
       _projectNames.length,
@@ -2456,6 +2462,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     _projectOrder.retainWhere(paths.contains);
     _pinnedProjects.retainWhere(paths.contains);
     _hiddenProjects.removeWhere((path, _) => !paths.contains(path));
+    _hostHiddenProjects.removeWhere((path, _) => !paths.contains(path));
     _order.removeWhere((path, _) => !paths.contains(path));
     _projectIcons.removeWhere(
       (path, _) => !paths.contains(path) && !path.startsWith(_hostIcon),
@@ -2762,6 +2769,17 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
           _hiddenProjects[key] = since;
         }
       }
+      // Older preferences only recorded times, which cannot distinguish a
+      // manual hide from removing a host. Keep those hidden until opened.
+      for (final MapEntry(:key, :value) in strings(
+        sidebar['hostHiddenProjects'],
+      ).entries) {
+        if (_hiddenProjects.containsKey(key) &&
+            RemoteLocation.hostOf(key) == value &&
+            !_sshHosts.contains(value)) {
+          _hostHiddenProjects[key] = value;
+        }
+      }
       if (sidebar['order'] case final Map<Object?, Object?> order) {
         for (final MapEntry(:key, :value) in order.entries) {
           if ((key, value) case (final String path, final List<Object?> ids)) {
@@ -2893,6 +2911,8 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
           for (final MapEntry(:key, :value) in _hiddenProjects.entries)
             key: value.toIso8601String(),
         },
+        if (_hostHiddenProjects.isNotEmpty)
+          'hostHiddenProjects': {..._hostHiddenProjects},
         'order': {
           for (final MapEntry(:key, :value) in _order.entries) key: [...value],
         },
