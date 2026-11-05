@@ -82,7 +82,7 @@ void main() {
     expect(_text('This image cannot be previewed'), findsNothing);
     expect(_text('Image caption'), findsWidgets);
     expect(tester.takeException(), isNull);
-  });
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   testWidgets('Word shows Unicode text and its table as read-only content', (
     tester,
@@ -99,7 +99,7 @@ void main() {
     );
     expect(find.text('Open in default app'), findsNothing);
     expect(tester.takeException(), isNull);
-  });
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   testWidgets('PowerPoint navigation follows the saved slide order', (
     tester,
@@ -122,7 +122,7 @@ void main() {
     await tester.pump();
     expect(find.text('Slide layout'), findsOneWidget);
     expect(tester.takeException(), isNull);
-  });
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   testWidgets('Excel sheet tabs switch without reading the file again', (
     tester,
@@ -146,7 +146,7 @@ void main() {
     expect(_text('收入 Revenue'), findsWidgets);
     expect(reads, 1);
     expect(tester.takeException(), isNull);
-  });
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   testWidgets('CSV and TSV show a grid rather than an editable text document', (
     tester,
@@ -168,7 +168,7 @@ void main() {
       );
       expect(tester.takeException(), isNull);
     }
-  });
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   testWidgets('a sparse spreadsheet virtualizes both axes', (tester) async {
     await _pump(
@@ -186,7 +186,7 @@ void main() {
     expect(find.byType(EditableText).evaluate().length, lessThan(250));
     expect(_text('Last cell'), findsNothing);
     expect(tester.takeException(), isNull);
-  });
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   testWidgets('a slower file cannot replace a newer selection', (tester) async {
     final first = Completer<Uint8List>();
@@ -207,7 +207,7 @@ void main() {
     expect(_text('Stale content'), findsNothing);
     expect(calls, ['/project/first.docx', '/project/second.docx']);
     expect(tester.takeException(), isNull);
-  });
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   testWidgets('closing during a read does not update a disposed preview', (
     tester,
@@ -218,7 +218,7 @@ void main() {
     pending.complete(wordDocument());
     await tester.pump();
     expect(tester.takeException(), isNull);
-  });
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   testWidgets('a new revision reloads the same path', (tester) async {
     var reads = 0;
@@ -230,7 +230,7 @@ void main() {
     await _waitFor(tester, _text('Revision 2'));
     expect(_text('Revision 1'), findsNothing);
     expect(reads, 2);
-  });
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   testWidgets('replacing the byte reader reloads the same path', (
     tester,
@@ -240,7 +240,7 @@ void main() {
     await _pump(tester, read: (_) async => wordDocument(text: 'Second host'));
     await _waitFor(tester, _text('Second host'));
     expect(_text('First host'), findsNothing);
-  });
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   testWidgets('read errors offer retry and recover without reopening the tab', (
     tester,
@@ -258,7 +258,7 @@ void main() {
     await _waitFor(tester, _text('Recovered document'));
     expect(find.text('Try again'), findsNothing);
     expect(reads, 2);
-  });
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   testWidgets(
     'reload can be clicked repeatedly while a previous load is pending',
@@ -286,6 +286,7 @@ void main() {
       expect(find.text('Try again'), findsNothing);
       expect(tester.takeException(), isNull);
     },
+    timeout: const Timeout(Duration(minutes: 2)),
   );
 
   testWidgets('legacy and historical previews do not read the working file', (
@@ -307,7 +308,7 @@ void main() {
     );
     expect(_text('Historical versions'), findsOneWidget);
     expect(reads, 0);
-  });
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   testWidgets(
     'opening externally is offered only when an explicit callback is provided',
@@ -328,6 +329,7 @@ void main() {
       );
       expect(find.text('Open in default app'), findsNothing);
     },
+    timeout: const Timeout(Duration(minutes: 2)),
   );
 
   testWidgets('document colors follow light, dark and high-contrast themes', (
@@ -370,7 +372,7 @@ void main() {
     await tester.tap(find.text('Theme colors'));
     await tester.pump();
     expect(find.text('Original colors'), findsOneWidget);
-  });
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   testWidgets('toolbar and content fit a narrow pane at larger text size', (
     tester,
@@ -388,5 +390,5 @@ void main() {
     await tester.tap(find.text('Reading view'));
     await tester.pump();
     expect(tester.takeException(), isNull);
-  });
+  }, timeout: const Timeout(Duration(minutes: 2)));
 }

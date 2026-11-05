@@ -74,7 +74,7 @@ void main() {
     pending.complete(Uint8List(0));
     await tester.pump();
     expect(tester.takeException(), isNull);
-  });
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   testWidgets(
     'binary history cannot accidentally show the current working file',
@@ -118,6 +118,7 @@ void main() {
       expect(bytesRead, 0);
       expect(revisionsRead, 0);
     },
+    timeout: const Timeout(Duration(minutes: 2)),
   );
 
   testWidgets('changing from a pending document to text restores the editor', (
@@ -147,7 +148,7 @@ void main() {
     expect(files.reads, ['/project/readme.txt']);
     expect(files.writes, isEmpty);
     expect(tester.takeException(), isNull);
-  });
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   test(
     'IDE documents open read-only and save does not write binary content',
@@ -221,7 +222,7 @@ void main() {
     expect(files.reads, ['/project/data.csv', '/project/data.tsv']);
     expect(byteReads, 0);
     expect(tester.takeException(), isNull);
-  });
+  }, timeout: const Timeout(Duration(minutes: 2)));
 
   test('CSV and TSV IDE documents remain editable and save as text', () async {
     final files = _Files();

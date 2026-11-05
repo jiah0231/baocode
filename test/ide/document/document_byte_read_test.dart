@@ -81,11 +81,11 @@ void main() {
         cancel: cancellation.future,
       );
       final expectation = expectLater(result, _readError('cancelled'));
-      await started.future;
+      await started.future.timeout(const Duration(seconds: 5));
       expect(files.lastCancellation, isNotNull);
       cancellation.complete();
-      await expectation;
-      await files.lastCancellation!;
+      await expectation.timeout(const Duration(seconds: 5));
+      await files.lastCancellation!.timeout(const Duration(seconds: 5));
       pending.complete((bytes: Uint8List(4), size: 4));
       expect(files.requests, hasLength(1));
       expect(files.textReads, 0);
@@ -112,25 +112,30 @@ void main() {
       },
     );
 
-    test('local bytes are bounded even when the file grows after its size check', () async {
-      final directory = await Directory.systemTemp.createTemp('document-grow-');
-      addTearDown(() => directory.delete(recursive: true));
-      final file = File('${directory.path}/growing.docx');
-      await file.writeAsBytes(List.filled(16, 1));
-      var checks = 0;
-      await expectLater(
-        readLocalDocumentBytes(file.path, 64, () {
-          // Before open, after open, then before the first read (after length).
-          if (++checks == 3) {
-            file.writeAsBytesSync(List.filled(64, 2), mode: FileMode.append);
-          }
-        }),
-        _readError('tooLarge'),
-      );
-      expect(checks, greaterThanOrEqualTo(3));
-      expect(await file.length(), 80);
-      await file.rename('${directory.path}/closed.docx');
-    });
+    test(
+      'local bytes are bounded even when the file grows after its size check',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'document-grow-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final file = File('${directory.path}/growing.docx');
+        await file.writeAsBytes(List.filled(16, 1));
+        var checks = 0;
+        await expectLater(
+          readLocalDocumentBytes(file.path, 64, () {
+            // Before type lookup, after lookup, after open, then after length.
+            if (++checks == 4) {
+              file.writeAsBytesSync(List.filled(64, 2), mode: FileMode.append);
+            }
+          }),
+          _readError('tooLarge'),
+        );
+        expect(checks, greaterThanOrEqualTo(4));
+        expect(await file.length(), 80);
+        await file.rename('${directory.path}/closed.docx');
+      },
+    );
 
     test(
       'an explicit mock reader never stats a local path or decodes text',
@@ -223,9 +228,9 @@ void main() {
         },
       );
       final expectation = expectLater(result, _readError('cancelled'));
-      await started.future;
+      await started.future.timeout(const Duration(seconds: 5));
       cancellation.complete();
-      await expectation;
+      await expectation.timeout(const Duration(seconds: 5));
       transport.complete(Uint8List(4));
     });
 

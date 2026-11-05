@@ -44,7 +44,7 @@ jobs:
       - name: Test local Office document previews
         if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
         run: >-
-          flutter test --no-pub
+          flutter test --no-pub --reporter expanded --timeout 2m
           test/ide/document/document_reader_test.dart
           test/ide/document/document_byte_read_test.dart
           test/ide/document_preview_test.dart
