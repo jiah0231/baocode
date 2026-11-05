@@ -22,15 +22,19 @@ Only fully verified bytes are atomically written to
 file is rejected, not overwritten. `--verify-only` checks the reconstructed
 font without writing it. This does not install a font into the OS.
 
-Only the isolated `candidate-validation.yml` workflow is wired for this
-representation. It reassembles before package resolution and checks the
-font again before tests. Its existing tracked-source, preparation and
-formatting checks remain mandatory. The generated TTF is a verified build
-input; Git's tracked-source check alone cannot validate that untracked file.
+The isolated `candidate-validation.yml`, ordinary Windows
+`codex-parity-windows.yml`, and signed `custom-update-release.yml` workflows
+reassemble before package resolution. All retain their existing tracked-source
+or validation gates. The two Windows build jobs also recheck the source font
+before packaging and verify the bundled font's exact size and SHA-256 afterward.
+The signed workflow's separate Linux publication job reassembles locally before
+package resolution and verifies it again before its existing signing step.
+The generated TTF is a verified build input; Git's tracked-source check alone
+cannot validate that untracked file.
 
-This candidate is **not a release**. Other build/release workflows do not yet
-perform reassembly and must not be used to publish this representation.
-Before a production build, either restore the original TTF as a tracked
-byte-identical file or explicitly integrate and validate the same reassembly
-step in that build workflow. Do not upload or install a partially assembled
-file, suppress integrity failures, or substitute another font.
+Other build workflows still require the same explicit reassembly command before
+package resolution or must restore the original byte-identical TTF as a tracked
+file. This wiring does not itself approve or complete a release: existing tests,
+build, installation, signature and publication gates remain required. Do not
+upload or install a partially assembled file, suppress integrity failures, or
+substitute another font.
