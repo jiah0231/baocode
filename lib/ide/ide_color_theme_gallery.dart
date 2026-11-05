@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import '../l10n/l10n.dart';
 import '../settings/user_settings.dart';
+import '../settings/pages/application_font_picker.dart';
 import '../theme/code_font.dart';
 import '../theme/app_theme.dart' show AppFonts;
 import '../theme/workbench_theme.dart';
@@ -22,12 +23,12 @@ Future<void> showIdeColorThemeGallery(
 }) async {
   final session = IdeThemePreviewSession(
     themes,
-    typographyPreset: CodeFont.pebrelPreset,
+    typographyPreset: CodeFont.mapleFont,
     persistTypographyPreset: settings == null
         ? null
         : (enabled) => settings.update(
-            CodeFont.pebrelPresetSettingKey,
-            enabled ? true : null,
+            CodeFont.mapleFontSettingKey,
+            enabled,
           ),
   );
   try {
@@ -176,8 +177,8 @@ class _IdeColorThemeGalleryState extends State<IdeColorThemeGallery> {
                             const SizedBox(height: 8),
                             Text(
                               _text(
-                                'Preview colors and typography. Apply to keep, Cancel to restore.',
-                                '实时预览配色与排版，应用后保存，取消恢复原样。',
+                                'Preview colors and a font for every theme. Text sizes follow your BaoCode settings.',
+                                '预览配色与通用字体，字号沿用 BaoCode 设置；应用后保存，取消恢复。',
                               ),
                               style: TextStyle(
                                 color: colors['descriptionForeground'],
@@ -202,28 +203,11 @@ class _IdeColorThemeGalleryState extends State<IdeColorThemeGallery> {
                                               setState(() => _dark = filter.$1),
                                   ),
                                 if (session.typographyPreset != null)
-                                  Semantics(
-                                    toggled: session.typographyEnabled,
-                                    child: IdeButton(
-                                      key: const ValueKey(
-                                        'pebrel-typography-toggle',
-                                      ),
-                                      label: session.typographyEnabled
-                                          ? _text(
-                                              'Pebrel typography: On',
-                                              'Pebrel 排版：开启',
-                                            )
-                                          : _text(
-                                              'Pebrel typography: Off',
-                                              'Pebrel 排版：关闭',
-                                            ),
-                                      secondary: !session.typographyEnabled,
-                                      onPressed: locked
-                                          ? null
-                                          : () => session.setTypographyEnabled(
-                                              !session.typographyEnabled,
-                                            ),
-                                    ),
+                                  ApplicationFontPicker(
+                                    maple: session.typographyEnabled,
+                                    onChanged: locked
+                                        ? null
+                                        : session.setTypographyEnabled,
                                   ),
                                 if (widget.importTheme != null)
                                   IdeButton(
@@ -612,14 +596,9 @@ class _ThemePreview extends StatelessWidget {
                     const SizedBox(height: 10),
                     Text(
                       typographyEnabled
-                          ? CodeFont.typography.family != null
-                                ? text('Theme typography active', '主题排版覆盖已生效')
-                                : text(
-                                    'Preset enabled; inactive for this theme',
-                                    '预设已开启；当前主题不使用此预设',
-                                  )
-                          : text('Screenshot preset off', '截图排版预设已关闭'),
-                      key: const ValueKey('pebrel-typography-status'),
+                          ? text('Maple Mono · all themes', 'Maple Mono · 所有主题通用')
+                          : text('Using your existing fonts', '沿用现有字体设置'),
+                      key: const ValueKey('application-font-status'),
                       style: TextStyle(
                         color: colors['foreground'],
                         fontSize: 12,
@@ -629,10 +608,10 @@ class _ThemePreview extends StatelessWidget {
                     Text(
                       '${text('Font fallback stack', '字体候选列表')}: '
                       '${CodeFont.effectiveFamilies.join(', ')}'
-                      ' · ${CodeFont.typography.size ?? CodeFont.size.value} px\n'
+                      ' · ${CodeFont.size.value} px\n'
                       '${CodeFont.pebrelFontBundled ? text('Maple Mono Normal NF CN: bundled with the app', 'Maple Mono Normal NF CN：应用内置字体') : text('Maple Mono Normal NF CN: not bundled; a fallback may be used', 'Maple Mono Normal NF CN：尚未内置，可能使用回退字体')}\n'
-                      '${text('15 px screenshot preset applies to Pebrel themes. Theme overrides take priority; your original font settings are kept.', '15 px 截图预设适用于 Pebrel 主题，主题自带排版优先；原有字体设置保持不变。')}',
-                      key: const ValueKey('pebrel-font-source'),
+                      '${text('The font works across all themes. Code size, terminal size and interface zoom keep following BaoCode settings. Other font names are fallback candidates, not proof of installation.', '字体适用于所有主题；代码字号、终端字号与界面缩放均沿用 BaoCode 设置。其他字体名称仅为候选，不表示已在系统安装。')}',
+                      key: const ValueKey('application-font-source'),
                       style: TextStyle(
                         color: colors['descriptionForeground'],
                         fontSize: 11,

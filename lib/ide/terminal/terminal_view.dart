@@ -174,7 +174,7 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient {
     _findText.addListener(_findTextChanged);
     _findFocus.addListener(_findFocusChanged);
     CodeFont.terminalSize.addListener(_syncTerminalFontSize);
-    CodeFont.pebrelPreset.addListener(_syncTerminalFontSize);
+    CodeFont.mapleFont.addListener(_syncTerminalFontSize);
     _fontThemes.addListener(_syncTerminalFontSize);
   }
 
@@ -315,7 +315,7 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient {
   @override
   void dispose() {
     CodeFont.terminalSize.removeListener(_syncTerminalFontSize);
-    CodeFont.pebrelPreset.removeListener(_syncTerminalFontSize);
+    CodeFont.mapleFont.removeListener(_syncTerminalFontSize);
     _fontThemes.removeListener(_syncTerminalFontSize);
     HardwareKeyboard.instance.removeHandler(_modifiersChanged);
     _detach(_instance);

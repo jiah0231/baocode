@@ -2,7 +2,7 @@
 import 'pebrel_theme.dart';
 
 /// A rendering-only overlay. It never rewrites editor or terminal preferences.
-/// The screenshot preset is a BaoCode choice, not a property of each palette.
+/// The global bundled-font choice is independent of the selected palette.
 class PebrelTypography {
   const PebrelTypography({
     this.family,
@@ -16,15 +16,11 @@ class PebrelTypography {
   });
 
   static const none = PebrelTypography();
-  static const screenshot = PebrelTypography(
+
+  /// A global family choice only. Sizes always follow BaoCode preferences.
+  static const maple = PebrelTypography(
     family: 'Maple Mono Normal NF CN',
-    size: 15,
-    weight: 400,
-    lineHeight: 1.45,
-    letterSpacing: 0,
-    ligatures: true,
     uiFamily: 'Maple Mono Normal NF CN',
-    uiSize: 15,
   );
 
   final String? family;
@@ -38,13 +34,13 @@ class PebrelTypography {
 
   factory PebrelTypography.resolve(
     PebrelThemeDefinition? definition, {
-    bool screenshotPreset = false,
+    bool globalMapleFont = false,
   }) {
-    if (definition == null) return none;
+    final base = globalMapleFont ? maple : none;
+    if (definition == null) return base;
     final values = definition.typography;
-    // An explicit document opt-out wins even over the optional preset.
-    if (values['enabled'] == false) return none;
-    final base = screenshotPreset ? screenshot : none;
+    // A document opt-out affects its overrides, not the global font choice.
+    if (values['enabled'] == false) return base;
     double? number(String key) => (values[key] as num?)?.toDouble();
     // Old built-in snapshots contain true as a model default, not a user
     // override. They must not silently turn the user's ligatures back on.
@@ -52,24 +48,21 @@ class PebrelTypography {
         values['enabled'] == true ||
         const [
           'font_family',
-          'font_size',
           'font_weight',
           'line_height',
           'letter_spacing',
           'ui_font_family',
-          'ui_font_size',
         ].any((key) => values[key] != null);
     return PebrelTypography(
-      family: values['font_family'] as String? ?? base.family,
-      size: number('font_size') ?? base.size,
+      family: base.family ?? (values['font_family'] as String?),
+      // Retain imported sizes in the lossless document, never apply them.
       weight: values['font_weight'] as int? ?? base.weight,
       lineHeight: number('line_height') ?? base.lineHeight,
       letterSpacing: number('letter_spacing') ?? base.letterSpacing,
       ligatures: hasOverride || values['ligatures'] == false
           ? values['ligatures'] as bool? ?? base.ligatures
           : base.ligatures,
-      uiFamily: values['ui_font_family'] as String? ?? base.uiFamily,
-      uiSize: number('ui_font_size') ?? base.uiSize,
+      uiFamily: base.uiFamily ?? (values['ui_font_family'] as String?),
     );
   }
 }

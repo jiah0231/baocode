@@ -17,7 +17,16 @@ abstract final class CodeFont {
   // Set true only alongside the verified font asset and its OFL notice.
   static const pebrelFontBundled = true;
   static const pebrelPresetSettingKey = 'baocode.pebrelTypographyPreset';
-  static final pebrelPreset = ValueNotifier<bool>(false);
+  static const mapleFontSettingKey = 'baocode.mapleFont';
+  static final mapleFont = ValueNotifier<bool>(false);
+
+  /// Compatibility alias for existing preview sessions, not a theme preset.
+  static final pebrelPreset = mapleFont;
+
+  /// New explicit false must win over a legacy true. Reading old settings is
+  /// non-mutating; the next font selection writes the new key as a boolean.
+  static bool parseMapleFont(Object? current, Object? legacy) =>
+      current is bool ? current : legacy == true;
 
   // Font styles are read for every visible text run. Resolve only when the
   // immutable theme definition or preset changes, not on each paint/build.
@@ -29,12 +38,12 @@ abstract final class CodeFont {
     final themes = WorkbenchThemeService.instance;
     final definition = themes.pebrelTheme(themes.colorThemeId);
     if (!identical(definition, _typographySource) ||
-        pebrelPreset.value != _typographyPreset) {
+        mapleFont.value != _typographyPreset) {
       _typographySource = definition;
-      _typographyPreset = pebrelPreset.value;
+      _typographyPreset = mapleFont.value;
       _typography = PebrelTypography.resolve(
         definition,
-        screenshotPreset: _typographyPreset,
+        globalMapleFont: _typographyPreset,
       );
     }
     return _typography;
@@ -49,8 +58,6 @@ abstract final class CodeFont {
           ...defaultFamilies,
           'monospace',
         }.toList();
-
-  static double get uiTypographyScale => (typography.uiSize ?? 13) / 13;
 
   static const familySettingKey = 'editor.fontFamily';
   static const sizeSettingKey = 'editor.fontSize';
@@ -204,14 +211,12 @@ abstract final class CodeFont {
 
   /// [base], a size code is drawn at on macOS, moved by the user's choice:
   /// at the default it is [base] there, and one point more on Windows.
-  static double sized(double base) =>
-      base + (typography.size ?? size.value) - _macSize;
+  static double sized(double base) => base + size.value - _macSize;
 
   /// [base], a size code among the window's own text is drawn at on macOS
   /// (the chat's code, a panel's paths), as [sized] has it at the default:
   /// the user's code size does not move it, the window's text scale does.
-  static double uiSized(double base) =>
-      base + (typography.size ?? defaultSize) - _macSize;
+  static double uiSized(double base) => base + defaultSize - _macSize;
 
   /// The features code is drawn with: none (the font's own, ligatures on),
   /// or the two that make ligatures, `liga` and `calt`, switched off.
@@ -223,7 +228,10 @@ abstract final class CodeFont {
   /// Sets the notifiers from [read] now and whenever [changes] notifies.
   static void follow(Listenable changes, Object? Function(String key) read) {
     void update() {
-      pebrelPreset.value = read(pebrelPresetSettingKey) == true;
+      mapleFont.value = parseMapleFont(
+        read(mapleFontSettingKey),
+        read(pebrelPresetSettingKey),
+      );
       final next = parseFamilies(read(familySettingKey));
       if (!listEquals(next, families.value)) families.value = next;
       size.value = parseSize(read(sizeSettingKey));
@@ -254,28 +262,4 @@ class SystemTextScale extends InheritedWidget {
   @override
   bool updateShouldNotify(SystemTextScale oldWidget) =>
       oldWidget.scaler != scaler;
-}
-
-/// Composes Pebrel's UI base size with the existing accessibility scaler.
-class TypographyTextScaler extends TextScaler {
-  const TypographyTextScaler(this.base, this.factor);
-  final TextScaler base;
-  final double factor;
-
-  @override
-  double scale(double fontSize) => base.scale(fontSize * factor);
-
-  @override
-  @Deprecated('Use scale instead.')
-  // ignore: deprecated_member_use
-  double get textScaleFactor => base.textScaleFactor * factor;
-
-  @override
-  bool operator ==(Object other) =>
-      other is TypographyTextScaler &&
-      other.base == base &&
-      other.factor == factor;
-
-  @override
-  int get hashCode => Object.hash(base, factor);
 }

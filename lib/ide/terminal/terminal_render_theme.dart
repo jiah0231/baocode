@@ -442,8 +442,7 @@ double vscodeTerminalFontSize([
   TextScaler? textScaler,
   TextScaler? systemScaler,
 ]) {
-  if ((CodeFont.typography.size ?? CodeFont.terminalSize.value)
-      case final size?) {
+  if (CodeFont.terminalSize.value case final size?) {
     return (systemScaler ?? textScaler)?.scale(size) ?? size;
   }
   return textScaler?.scale(CodeFont.uiSized(terminalBaseFontSize)) ??

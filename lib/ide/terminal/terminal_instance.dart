@@ -211,7 +211,7 @@ class TerminalInstance extends ChangeNotifier {
     );
     _colorTheme.addListener(_updateTheme);
     CodeFont.families.addListener(_updateFont);
-    CodeFont.pebrelPreset.addListener(_updateFont);
+    CodeFont.mapleFont.addListener(_updateFont);
     _fontThemes.addListener(_updateFont);
     source = TerminalCoreSource(terminal, decorationService: decorations);
     clipboard = TerminalClipboard(
@@ -840,7 +840,7 @@ class TerminalInstance extends ChangeNotifier {
     _disposed = true;
     _colorTheme.removeListener(_updateTheme);
     CodeFont.families.removeListener(_updateFont);
-    CodeFont.pebrelPreset.removeListener(_updateFont);
+    CodeFont.mapleFont.removeListener(_updateFont);
     _fontThemes.removeListener(_updateFont);
     if (!_exited) _pty?.kill();
     unawaited(_printing?.cancel());

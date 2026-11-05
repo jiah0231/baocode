@@ -35,26 +35,25 @@ Light-derived LIGHT_ANSI; its source comments are retained in the excerpt.
 
 ## Typography adaptation (BaoCode)
 
-Explicit enabled typography fields now render in BaoCode. Font family, size,
-weight (nearest Flutter hundred-weight), line height, letter spacing and
-ligatures apply to code surfaces; UI family and base size apply to workbench
-text. UI base size scales relative to 13 logical pixels and composes with system
-accessibility scaling and window zoom. Code size is compensated for that UI
-base-size factor so an explicit 15 remains 15 before accessibility/zoom.
-Terminals consume family, size, weight, line height and letter spacing. Terminal
-line height has a renderer minimum of 1; smaller values remain lossless in the
-document and apply to code. Terminal ligatures remain disabled because this
-renderer shapes individual cells; no unsupported shaping is claimed.
+Font family, weight (nearest Flutter hundred-weight), line height, letter
+spacing and ligatures can be supplied explicitly by an imported theme. UI
+family applies to workbench text. Terminals consume family, weight, line height
+and letter spacing; their renderer requires line height of at least 1 and
+shapes individual cells, so terminal ligatures remain disabled.
 
-A separate, opt-in “Pebrel screenshot typography” preset supplies Maple Mono
-Normal NF CN, 15px, weight 400, 1.45 line height and zero added letter spacing,
-plus a 15px UI base size. This is BaoCode's screenshot-inspired preset, not
-metadata supplied by each of the sixteen upstream color palettes. Explicit
-document fields win over preset defaults; enabled=false disables the overlay.
-Absent fields retain user preferences. Legacy built-in ligatures=true is a
-model default and does not override a user's disabled ligatures by itself.
-Preview/cancel and switching to ordinary themes remove the rendering overlay
-without rewriting editor.* or terminal.* settings.
+Font sizes always follow BaoCode's existing editor, terminal and interface
+settings. Imported font_size and ui_font_size remain lossless on export but do
+not override those settings. No theme multiplier is added to system text
+scaling or window zoom.
+
+The optional global Maple Mono Normal NF CN choice changes font families only,
+for all themes. It takes precedence over theme font-family fields without
+rewriting editor.* or terminal.* preferences. Turning it off restores the
+existing font choices. It does not set a 15px size, weight, line height, letter
+spacing or ligature preference. Preview/Cancel restores both the global font
+selection and the original theme. The new baocode.mapleFont boolean takes
+precedence over the legacy baocode.pebrelTypographyPreset key; explicit false
+must be saved to disable a legacy true. Legacy settings are read, not rewritten.
 
 The unchanged Maple font asset is registered only within the application. See
 assets/fonts/maple/OFL.txt and NOTICE.md for its independent SIL OFL license,

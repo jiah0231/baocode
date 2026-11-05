@@ -158,6 +158,7 @@ jobs:
             'test/theme/pebrel_theme_test.dart',
             'test/theme/maple_font_asset_test.dart',
             'test/theme/pebrel_typography_test.dart',
+            'test/settings/appearance_code_font_test.dart',
             'test/theme/code_font_test.dart',
             'test/theme/code_text_scale_test.dart',
             'test/theme/workbench_theme_test.dart',

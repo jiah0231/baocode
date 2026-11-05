@@ -4,9 +4,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/ide/ide_color_theme_gallery.dart';
 import 'package:baocode/ide/ide_color_theme_picker.dart';
 import 'package:baocode/theme/code_font.dart';
+import 'package:baocode/settings/user_settings.dart';
 import 'package:baocode/theme/workbench_theme.dart'
     show ColorScheme, WorkbenchThemeService;
-import 'package:baocode/theme/pebrel_theme.dart';
+import 'package:baocode/theme/app_theme.dart' show AppFonts;
 
 class _Themes implements IdeColorThemeController {
   @override
@@ -39,8 +40,9 @@ class _Themes implements IdeColorThemeController {
 
 Future<void> _open(
   WidgetTester tester,
-  _Themes themes, {
+  IdeColorThemeController themes, {
   Future<String?> Function()? importTheme,
+  UserSettings? settings,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -51,6 +53,7 @@ Future<void> _open(
               context,
               themes,
               importTheme: importTheme,
+              settings: settings,
             ),
             child: const Text('Open gallery'),
           ),
@@ -63,8 +66,8 @@ Future<void> _open(
 }
 
 void main() {
-  setUp(() => CodeFont.pebrelPreset.value = false);
-  tearDown(() => CodeFont.pebrelPreset.value = false);
+  setUp(() => CodeFont.mapleFont.value = false);
+  tearDown(() => CodeFont.mapleFont.value = false);
   testWidgets(
     'filters keep high-contrast themes and Escape rolls back preview',
     (tester) async {
@@ -153,13 +156,14 @@ void main() {
   ) async {
     final themes = _Themes();
     await _open(tester, themes);
-    await tester.tap(find.byKey(const ValueKey('pebrel-typography-toggle')));
+    await tester.tap(find.byKey(const ValueKey('application-font-maple')));
     await tester.pumpAndSettle();
-    expect(CodeFont.pebrelPreset.value, isTrue);
-    expect(find.text('Pebrel typography: On'), findsOneWidget);
+    expect(CodeFont.mapleFont.value, isTrue);
+    expect(find.text('Maple Mono (bundled)'), findsOneWidget);
+    expect(find.text('Maple Mono · all themes'), findsOneWidget);
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
-    expect(CodeFont.pebrelPreset.value, isFalse);
+    expect(CodeFont.mapleFont.value, isFalse);
     expect(themes.saved, isEmpty);
     expect(tester.takeException(), isNull);
   });
@@ -167,50 +171,80 @@ void main() {
   testWidgets('typography Apply survives reopening and Cancel', (tester) async {
     final themes = _Themes();
     await _open(tester, themes);
-    await tester.tap(find.byKey(const ValueKey('pebrel-typography-toggle')));
+    await tester.tap(find.byKey(const ValueKey('application-font-maple')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Apply theme'));
     await tester.pumpAndSettle();
-    expect(CodeFont.pebrelPreset.value, isTrue);
+    expect(CodeFont.mapleFont.value, isTrue);
     await tester.tap(find.text('Open gallery'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('pebrel-typography-toggle')));
+    await tester.tap(find.byKey(const ValueKey('application-font-existing')));
     await tester.pumpAndSettle();
-    expect(CodeFont.pebrelPreset.value, isFalse);
+    expect(CodeFont.mapleFont.value, isFalse);
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
-    expect(CodeFont.pebrelPreset.value, isTrue);
+    expect(CodeFont.mapleFont.value, isTrue);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('gallery honors the UI font family fallback list', (
-    tester,
-  ) async {
+  testWidgets('global Maple preview uses existing sizes on ordinary themes', (tester) async {
     final original = WorkbenchThemeService.instance;
     final service = WorkbenchThemeService();
     WorkbenchThemeService.instance = service;
+    final originalSize = CodeFont.size.value;
+    final originalTerminal = CodeFont.terminalSize.value;
+    final originalZoom = CodeFont.uiScale.value;
+    CodeFont.size.value = 20;
+    CodeFont.terminalSize.value = 18;
+    CodeFont.uiScale.value = 125;
     addTearDown(() {
       WorkbenchThemeService.instance = original;
+      CodeFont.size.value = originalSize;
+      CodeFont.terminalSize.value = originalTerminal;
+      CodeFont.uiScale.value = originalZoom;
       service.dispose();
     });
-    await tester.runAsync(() async {
-      await service.initialize();
-      final raw = service.pebrelTheme('Pebrel Nord')!.toJson();
-      raw['typography'] = {
-        'ui_font_family': 'Missing UI, Maple Mono Normal NF CN',
-      };
-      const id = 'Pebrel Custom 33333333333333333333333333333333';
-      await service.setCustomPebrelThemes({
-        id: PebrelThemeDefinition.fromJson(raw),
-      });
-      await service.setColorTheme(id, preview: true);
-    });
-    await _open(tester, _Themes());
+    await tester.runAsync(service.initialize);
+    await _open(tester, service);
+    await tester.tap(find.byKey(const ValueKey('application-font-maple')));
+    await tester.pumpAndSettle();
     final title = tester.element(find.text('Make it your space'));
-    final style = DefaultTextStyle.of(title).style;
-    expect(style.fontFamily, 'Missing UI');
-    expect(style.fontFamilyFallback, contains('Maple Mono Normal NF CN'));
+    expect(DefaultTextStyle.of(title).style.fontFamily, 'Maple Mono Normal NF CN');
+    expect(AppFonts.codeStyle(13).fontSize, 20);
+    expect(CodeFont.terminalSize.value, 18);
+    expect(CodeFont.uiScale.value, 125);
+    expect(find.textContaining('all themes'), findsWidgets);
+    await tester.runAsync(() => service.setColorTheme('Bao Light', preview: true));
+    await tester.pumpAndSettle();
+    expect(CodeFont.effectiveFamilies.first, 'Maple Mono Normal NF CN');
+    expect(AppFonts.codeStyle(13).fontSize, 20);
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
+    expect(CodeFont.mapleFont.value, isFalse);
   });
+  testWidgets('Apply existing fonts writes explicit false over legacy choice', (tester) async {
+    CodeFont.pebrelPreset.value = true;
+    final settings = _RecordingSettings();
+    addTearDown(settings.dispose);
+    await _open(tester, _Themes(), settings: settings);
+    await tester.tap(find.byKey(const ValueKey('application-font-existing')));
+    await tester.pumpAndSettle();
+    expect(settings.written, isEmpty);
+    await tester.tap(find.text('Apply theme'));
+    await tester.pumpAndSettle();
+    expect(settings.written, {CodeFont.mapleFontSettingKey: false});
+    expect(CodeFont.mapleFont.value, isFalse);
+  });
+
+}
+
+
+class _RecordingSettings extends UserSettings {
+  _RecordingSettings() : super('/unused/settings.json');
+  final written = <String, Object?>{};
+
+  @override
+  Future<void> update(String key, Object? value) async {
+    written[key] = value;
+  }
 }

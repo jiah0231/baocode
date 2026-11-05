@@ -823,7 +823,7 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
   /// The code's font, size and ligatures: what restyles all code; and the
   /// windows' blur, which every surface over it is tinted for.
   static final Listenable _codeFont = Listenable.merge([
-    CodeFont.pebrelPreset,
+    CodeFont.mapleFont,
     CodeFont.families,
     CodeFont.size,
     CodeFont.ligatures,
@@ -1047,13 +1047,7 @@ class _BaoCodeAppState extends State<BaoCodeApp> {
             zoom == 1 ? system : TextScaler.linear(system.scale(1) / zoom),
           ),
           child: MediaQuery(
-            data: media.copyWith(
-              textScaler: snapped(
-                CodeFont.uiTypographyScale == 1
-                    ? system
-                    : TypographyTextScaler(system, CodeFont.uiTypographyScale),
-              ),
-            ),
+            data: media.copyWith(textScaler: snapped(system)),
             child: UiZoom(scale: zoom, child: scaled),
           ),
         );

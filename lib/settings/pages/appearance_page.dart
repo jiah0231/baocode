@@ -36,6 +36,7 @@ import '../../theme/workbench_theme.dart'
     show ThemeSettingDefaults, WorkbenchThemeService;
 import '../user_settings.dart';
 import 'settings_dropdown.dart';
+import 'application_font_picker.dart';
 import 'settings_widgets.dart';
 
 /// Settings → Appearance: the color theme (`workbench.colorTheme`, as
@@ -345,6 +346,12 @@ class AppearanceSettingsPage extends StatelessWidget {
     ];
   }
 
+  void _selectMapleFont(bool enabled) {
+    CodeFont.mapleFont.value = enabled;
+    // Explicit false supersedes the legacy Pebrel preference during migration.
+    _keep(CodeFont.mapleFontSettingKey, enabled);
+  }
+
   void _selectFamilies(List<String> families) {
     CodeFont.families.value = families;
     _keep(CodeFont.familySettingKey, CodeFont.familiesSetting(families));
@@ -396,6 +403,7 @@ class AppearanceSettingsPage extends StatelessWidget {
         WindowBlur.enabled,
         for (final role in PixelLoaderRole.values) ...[role.style, role.speed],
         CodeFont.families,
+        CodeFont.mapleFont,
         CodeFont.size,
         CodeFont.ligatures,
         CodeFont.uiScale,
@@ -658,8 +666,24 @@ class AppearanceSettingsPage extends StatelessWidget {
             SettingsCard(
               children: [
                 SettingsRow(
+                  label: l10n.localeName.startsWith('zh') ? '应用字体' : 'Application font',
+                  description: l10n.localeName.startsWith('zh')
+                      ? '适用于所有主题。Maple Mono Normal NF CN 随应用内置，无需系统安装；字号和缩放沿用下方设置。选择“沿用现有字体”恢复原字体。'
+                      : 'For every theme. Maple Mono Normal NF CN is bundled with the app; no system installation is needed. Sizes and zoom keep their settings below. Use existing fonts restores your original font choices.',
+                  below: [
+                    ApplicationFontPicker(
+                      maple: CodeFont.mapleFont.value,
+                      onChanged: _selectMapleFont,
+                    ),
+                  ],
+                ),
+                SettingsRow(
                   label: l10n.appearanceSettingsCodeFont,
-                  description: l10n.appearanceSettingsCodeFontDescription,
+                  description: CodeFont.mapleFont.value
+                      ? (l10n.localeName.startsWith('zh')
+                            ? '原字体设置会保留；选择“沿用现有字体”后生效，当前也用作回退字体。'
+                            : 'Your original font choices are kept. Use existing fonts to restore them; they also remain in the fallback stack.')
+                      : l10n.appearanceSettingsCodeFontDescription,
                   below: [
                     SettingsTextField(
                       value: listEquals(families, CodeFont.defaultFamilies)
@@ -817,6 +841,7 @@ class _TerminalFontPreview extends StatelessWidget {
       listenable: Listenable.merge([
         terminalColorTheme,
         CodeFont.families,
+        CodeFont.mapleFont,
         CodeFont.terminalSize,
       ]),
       builder: (context, _) {

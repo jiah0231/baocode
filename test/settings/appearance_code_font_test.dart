@@ -17,6 +17,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   tearDown(() {
+    CodeFont.mapleFont.value = false;
     CodeFont.families.value = CodeFont.defaultFamilies;
     CodeFont.size.value = CodeFont.defaultSize;
     CodeFont.ligatures.value = true;
@@ -389,6 +390,29 @@ void main() {
       await leave(tester);
     },
   );
+  testWidgets('application font is global and stores explicit off without changing sizes', (tester) async {
+    CodeFont.families.value = ['User Custom Font', 'monospace'];
+    CodeFont.size.value = 20;
+    CodeFont.terminalSize.value = 18;
+    CodeFont.uiScale.value = 125;
+    final settings = await pumpPage(tester);
+    final maple = find.byKey(const ValueKey('application-font-maple'));
+    await tester.ensureVisible(maple);
+    await tester.tap(maple);
+    await tester.pumpAndSettle();
+    expect(CodeFont.mapleFont.value, isTrue);
+    expect(settings.written, {CodeFont.mapleFontSettingKey: true});
+    expect(CodeFont.families.value, ['User Custom Font', 'monospace']);
+    expect(CodeFont.size.value, 20);
+    expect(CodeFont.terminalSize.value, 18);
+    expect(CodeFont.uiScale.value, 125);
+    await tester.tap(find.byKey(const ValueKey('application-font-existing')));
+    await tester.pumpAndSettle();
+    expect(CodeFont.mapleFont.value, isFalse);
+    expect(settings.written, {CodeFont.mapleFontSettingKey: false});
+    expect(CodeFont.effectiveFamilies.first, 'User Custom Font');
+    await leave(tester);
+  });
 }
 
 /// Leaves the page, then lets the editor's highlighting finish: its
