@@ -422,7 +422,7 @@ ITheme vscodeTerminalTheme([TerminalColorTheme? theme]) =>
 /// ending in `monospace`) follow them as the theme puts them.
 String vscodeTerminalFontFamily() {
   final families = [
-    ...CodeFont.families.value,
+    ...CodeFont.effectiveFamilies,
     if (AppPlatform.isWindows) ...AppFonts.windowsFallbacks else 'monospace',
     if (AppPlatform.isMacOS) 'AppleBraille',
   ];
@@ -442,7 +442,7 @@ double vscodeTerminalFontSize([
   TextScaler? textScaler,
   TextScaler? systemScaler,
 ]) {
-  if (CodeFont.terminalSize.value case final size?) {
+  if ((CodeFont.typography.size ?? CodeFont.terminalSize.value) case final size?) {
     return (systemScaler ?? textScaler)?.scale(size) ?? size;
   }
   return textScaler?.scale(CodeFont.uiSized(terminalBaseFontSize)) ??
@@ -469,11 +469,11 @@ ITerminalOptions vscodeTerminalOptions({
   theme: vscodeTerminalTheme(theme),
   drawBoldTextInBrightColors: true,
   fontFamily: vscodeTerminalFontFamily(),
-  fontWeight: 'normal',
+  fontWeight: CodeFont.typography.weight ?? 'normal',
   fontWeightBold: 'bold',
   fontSize: vscodeTerminalFontSize(),
-  letterSpacing: 0,
-  lineHeight: 1,
+  letterSpacing: CodeFont.typography.letterSpacing ?? 0,
+  lineHeight: (CodeFont.typography.lineHeight ?? 1).clamp(1.0, 3.0).toDouble(),
   minimumContrastRatio: terminalMinimumContrastRatio,
   tabStopWidth: 8,
   cursorBlink: false,

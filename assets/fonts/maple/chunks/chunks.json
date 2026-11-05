@@ -1,0 +1,36 @@
+{
+  "size": 20563672,
+  "sha256": "9ae0c348a44a681fa8fa20a34e782e95316cec880102295a128b65760944c0f5",
+  "parts": [
+    {
+      "name": "font.part000",
+      "size": 4194304,
+      "sha256": "d45400ee547f7659cbccc3ee4ffdfaa58e1a3496b006a2674253d0b88d527aed",
+      "git_blob": "8171060954361bdcc8cc7acfc592ed62de930d03"
+    },
+    {
+      "name": "font.part001",
+      "size": 4194304,
+      "sha256": "904c7226aafe7e8275c2336b200c7b5dc5b9793aaf243552e20a933097ffcb6e",
+      "git_blob": "813392759785e34d5ff0fcc4525ce56578e64aea"
+    },
+    {
+      "name": "font.part002",
+      "size": 4194304,
+      "sha256": "fa591c71596071c908f0a10a2d66befc0df197cd56e32d680fa1c370e6ba83a9",
+      "git_blob": "d2b788f88498bf88d7c45d558d1e4db78377ab34"
+    },
+    {
+      "name": "font.part003",
+      "size": 4194304,
+      "sha256": "0544b2e56d29a81215240190edde97083f7690c144c1dfc8aa4e9bc1be9421fd",
+      "git_blob": "876a5f7b257c427a8a40651af5be80a25caa456d"
+    },
+    {
+      "name": "font.part004",
+      "size": 3786456,
+      "sha256": "654c7d33f9ac7a8ebbc30eae026409e28a03a8c6f863315b1d1d5e44f0c1552a",
+      "git_blob": "0354d3b6d2a68f50130fa657288c64c57bc00792"
+    }
+  ]
+}

@@ -4,7 +4,7 @@ import 'dart:convert';
 
 /// A lossless app-owned snapshot, separate from the MIT editor's theme model.
 /// Geometry, typography, effects and unknown future fields survive round trips;
-/// selecting a palette does not overwrite the user's layout or font settings.
+/// rendering overrides do not overwrite the user's layout or font settings.
 class PebrelThemeDefinition {
   PebrelThemeDefinition._(this._document, this._source);
 
@@ -26,6 +26,9 @@ class PebrelThemeDefinition {
   Map<String, dynamic> get terminal => Map<String, dynamic>.from(
     jsonDecode(jsonEncode(_document['terminal'])) as Map,
   );
+
+  Map<String, dynamic> get typography =>
+      jsonDecode(jsonEncode(_document['typography'])) as Map<String, dynamic>;
 
   List<String> get indexedColors =>
       List<String>.from((_document['terminal'] as Map)['palette'] as List);
@@ -422,6 +425,9 @@ class PebrelThemeDefinition {
               value.contains(RegExp(r'[\x00-\x1f\x7f]')))) {
         fail('typography.$key');
       }
+    }
+    if (type['enabled'] != null && type['enabled'] is! bool) {
+      fail('typography.enabled');
     }
     if (type['ligatures'] != null && type['ligatures'] is! bool) {
       fail('typography.ligatures');

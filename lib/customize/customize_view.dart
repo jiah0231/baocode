@@ -1894,7 +1894,7 @@ class _McpStatusPanel extends StatelessWidget {
                     color: status.log.isEmpty
                         ? AppColors.textFaint
                         : AppColors.text,
-                    height: 1.45,
+                    height: AppFonts.codeHeight(1.45),
                   ),
                 ),
               ),

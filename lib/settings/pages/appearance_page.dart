@@ -485,6 +485,7 @@ class AppearanceSettingsPage extends StatelessWidget {
                       showIdeColorThemeGallery(
                         context,
                         themes,
+                        settings: settings,
                         importTheme:
                             themes is WorkbenchThemeService &&
                                 WindowControls.canPickFiles

@@ -39,7 +39,7 @@ typedef IdeCodeColorizer = Future<List<List<TextSpan>>?> Function(
 /// The editor's font for code in hovers (`applyFontInfo`), and the size
 /// the hover's text takes from it (`contentHoverWidget.ts`).
 TextStyle get ideHoverCodeStyle =>
-    AppFonts.codeStyle(13).copyWith(height: 1.45);
+    AppFonts.codeStyle(13).copyWith(height: AppFonts.codeHeight(1.45));
 
 /// [markdown] as a hover shows it. Each block carries the hover's side
 /// [padding], so rules can span the whole hover as VS Code's do.

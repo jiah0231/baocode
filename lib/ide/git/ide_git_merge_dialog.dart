@@ -911,7 +911,7 @@ class IdeGitMergeDialogState extends State<IdeGitMergeDialog> {
       showMinimap: false,
       onViewChanged: () => _viewChanged(pane),
       style: AppFonts.codeStyle(13)
-          .copyWith(color: colors['editor.foreground'], height: 1.45),
+          .copyWith(color: colors['editor.foreground'], height: AppFonts.codeHeight(1.45)),
     );
   }
 

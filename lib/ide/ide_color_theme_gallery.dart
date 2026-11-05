@@ -1,11 +1,14 @@
 // Original BaoCode theme gallery. Artwork is drawn from geometric shapes;
-// no third-party imagery or fonts are bundled.
+// no third-party imagery is bundled. Font attribution ships with its assets.
 import 'dart:async';
 
 import 'package:flutter/material.dart' hide ColorScheme;
 import 'package:flutter/services.dart';
 
 import '../l10n/l10n.dart';
+import '../settings/user_settings.dart';
+import '../theme/code_font.dart';
+import '../theme/app_theme.dart' show AppFonts;
 import '../theme/workbench_theme.dart';
 import 'ide_button.dart';
 import 'ide_color_theme_picker.dart';
@@ -15,8 +18,18 @@ Future<void> showIdeColorThemeGallery(
   BuildContext context,
   IdeColorThemeController themes, {
   Future<String?> Function()? importTheme,
+  UserSettings? settings,
 }) async {
-  final session = IdeThemePreviewSession(themes);
+  final session = IdeThemePreviewSession(
+    themes,
+    typographyPreset: CodeFont.pebrelPreset,
+    persistTypographyPreset: settings == null
+        ? null
+        : (enabled) => settings.update(
+            CodeFont.pebrelPresetSettingKey,
+            enabled ? true : null,
+          ),
+  );
   try {
     await showGeneralDialog<void>(
       context: context,
@@ -106,6 +119,8 @@ class _IdeColorThemeGalleryState extends State<IdeColorThemeGallery> {
           .where((entry) => entry.id == session.selectedId)
           .firstOrNull;
       final colors = themeColors;
+      final uiFamily = CodeFont.typography.uiFamily;
+      final uiFamilies = uiFamily == null ? null : CodeFont.parseFamilies(uiFamily);
       final locked = _closing || _importing || session.busy;
       return PopScope(
         canPop: !locked,
@@ -132,6 +147,13 @@ class _IdeColorThemeGalleryState extends State<IdeColorThemeGallery> {
                       style: TextStyle(
                         color: colors['foreground'],
                         fontSize: 13,
+                        fontFamily: uiFamilies?.first,
+                        fontFamilyFallback: uiFamilies == null
+                            ? null
+                            : [
+                                ...uiFamilies.skip(1),
+                                ...?Theme.of(context).textTheme.bodyMedium?.fontFamilyFallback,
+                              ],
                         decoration: TextDecoration.none,
                       ),
                       child: Padding(
@@ -149,8 +171,8 @@ class _IdeColorThemeGalleryState extends State<IdeColorThemeGallery> {
                             const SizedBox(height: 8),
                             Text(
                               _text(
-                                'Explore a palette. Preview it everywhere. Keep what feels right.',
-                                '挑选一套配色，实时预览整个工作空间，再决定是否应用。',
+                                'Preview colors and typography. Apply to keep, Cancel to restore.',
+                                '实时预览配色与排版，应用后保存，取消恢复原样。',
                               ),
                               style: TextStyle(
                                 color: colors['descriptionForeground'],
@@ -173,6 +195,22 @@ class _IdeColorThemeGalleryState extends State<IdeColorThemeGallery> {
                                         ? null
                                         : () =>
                                               setState(() => _dark = filter.$1),
+                                  ),
+                                if (session.typographyPreset != null)
+                                  Semantics(
+                                    toggled: session.typographyEnabled,
+                                    child: IdeButton(
+                                      key: const ValueKey('pebrel-typography-toggle'),
+                                      label: session.typographyEnabled
+                                          ? _text('Pebrel typography: On', 'Pebrel 排版：开启')
+                                          : _text('Pebrel typography: Off', 'Pebrel 排版：关闭'),
+                                      secondary: !session.typographyEnabled,
+                                      onPressed: locked
+                                          ? null
+                                          : () => session.setTypographyEnabled(
+                                              !session.typographyEnabled,
+                                            ),
+                                    ),
                                   ),
                                 if (widget.importTheme != null)
                                   IdeButton(
@@ -214,6 +252,7 @@ class _IdeColorThemeGalleryState extends State<IdeColorThemeGallery> {
                                     },
                                   );
                                   final preview = _ThemePreview(
+                                    typographyEnabled: session.typographyEnabled,
                                     label:
                                         selected?.label ?? session.selectedId,
                                     text: _text,
@@ -507,7 +546,8 @@ class _PaletteLandscape extends CustomPainter {
 }
 
 class _ThemePreview extends StatelessWidget {
-  const _ThemePreview({required this.label, required this.text});
+  const _ThemePreview({required this.label, required this.text, required this.typographyEnabled});
+  final bool typographyEnabled;
   final String label;
   final String Function(String, String) text;
   @override
@@ -551,6 +591,28 @@ class _ThemePreview extends StatelessWidget {
                         letterSpacing: 1.4,
                       ),
                     ),
+                    const SizedBox(height: 10),
+                    Text(
+                      typographyEnabled
+                          ? CodeFont.typography.family != null
+                                ? text('Theme typography active', '主题排版覆盖已生效')
+                                : text('Preset enabled; inactive for this theme', '预设已开启；当前主题不使用此预设')
+                          : text('Screenshot preset off', '截图排版预设已关闭'),
+                      key: const ValueKey('pebrel-typography-status'),
+                      style: TextStyle(color: colors['foreground'], fontSize: 12),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '${text('Font fallback stack', '字体候选列表')}: '
+                      '${CodeFont.effectiveFamilies.join(', ')}'
+                      ' · ${CodeFont.typography.size ?? CodeFont.size.value} px\n'
+                      '${CodeFont.pebrelFontBundled
+                          ? text('Maple Mono Normal NF CN: bundled with the app', 'Maple Mono Normal NF CN：应用内置字体')
+                          : text('Maple Mono Normal NF CN: not bundled; a fallback may be used', 'Maple Mono Normal NF CN：尚未内置，可能使用回退字体')}\n'
+                      '${text('15 px screenshot preset applies to Pebrel themes. Theme overrides take priority; your original font settings are kept.', '15 px 截图预设适用于 Pebrel 主题，主题自带排版优先；原有字体设置保持不变。')}',
+                      key: const ValueKey('pebrel-font-source'),
+                      style: TextStyle(color: colors['descriptionForeground'], fontSize: 11, height: 1.5),
+                    ),
                     const SizedBox(height: 18),
                     Text(
                       text(
@@ -573,11 +635,8 @@ class _ThemePreview extends StatelessWidget {
                       ),
                       child: Text(
                         'const idea = {\n  theme: "${label.replaceFirst('Pebrel ', '')}",\n  ready: true\n};',
-                        style: TextStyle(
+                        style: AppFonts.codeStyle(13).copyWith(
                           color: colors['editor.foreground'],
-                          fontSize: 12,
-                          height: 1.8,
-                          fontFamily: 'monospace',
                         ),
                       ),
                     ),

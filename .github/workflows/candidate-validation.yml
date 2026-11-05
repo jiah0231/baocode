@@ -19,6 +19,19 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Verify and reassemble the unchanged Maple font
+        id: font_asset
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git diff --quiet HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Tracked source differs before font reconstruction' }
+          python tool/ci/test_reassemble_maple_font.py
+          if ($LASTEXITCODE -ne 0) { throw 'Font reconstruction unit tests failed' }
+          python tool/ci/reassemble_maple_font.py
+          if ($LASTEXITCODE -ne 0) { throw 'Original font reconstruction failed' }
+          git diff --quiet HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Font reconstruction modified tracked source' }
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -116,7 +129,7 @@ jobs:
           if ($formatFailed) { throw 'Changed Dart files need formatting; diagnostic patch retained' }
           if ('${{ steps.preparation.outputs.changed }}' -ne 'false') { throw 'Dependency-generated differences require review; diagnostic patch retained' }
       - name: Run explicitly selected non-browser regressions
-        if: ${{ !cancelled() && steps.analyze.outcome == 'success' && steps.formatting.outputs.source_exact == 'true' && steps.preparation.outputs.changed == 'false' }}
+        if: ${{ !cancelled() && steps.font_asset.outcome == 'success' && steps.analyze.outcome == 'success' && steps.formatting.outputs.source_exact == 'true' && steps.preparation.outputs.changed == 'false' }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -143,11 +156,17 @@ jobs:
             'test/theme/pebrel_theme_store_test.dart',
             'test/theme/pebrel_app_colors_test.dart',
             'test/theme/pebrel_theme_test.dart',
+            'test/theme/maple_font_asset_test.dart',
+            'test/theme/pebrel_typography_test.dart',
+            'test/theme/code_font_test.dart',
+            'test/theme/code_text_scale_test.dart',
             'test/theme/workbench_theme_test.dart',
             'test/ide/terminal/terminal_colors_test.dart',
             'test/ide/workbench/color_theme_gallery_test.dart',
             'test/ide/workbench/theme_preview_session_test.dart'
           )
+          python tool/ci/reassemble_maple_font.py --verify-only
+          if ($LASTEXITCODE -ne 0) { throw 'Reconstructed font changed before tests' }
           flutter test --no-pub @tests
           if ($LASTEXITCODE -ne 0) { throw 'Non-browser candidate regressions failed' }
       - name: Retain exact-source formatter patch only

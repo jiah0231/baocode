@@ -478,7 +478,7 @@ class IdeMarkdownPreviewState extends State<IdeMarkdownPreview> {
       code: AppFonts.uiCodeStyle(12.5).copyWith(color: AppColors.inlineCode),
       codeBackground: AppColors.inlineCodeBackground,
       codeBlock: AppFonts.uiCodeStyle(12.5)
-          .copyWith(color: AppColors.text, height: 1.5),
+          .copyWith(color: AppColors.text, height: AppFonts.codeHeight(1.5)),
       codeBlockBackground: themeColors['textCodeBlock.background'],
       codeBlockBorder: themeColors['chat.requestBorder'],
       // As the chat's tables are.

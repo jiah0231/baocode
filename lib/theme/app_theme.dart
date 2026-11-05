@@ -286,18 +286,29 @@ abstract final class AppMetrics {
 abstract final class AppFonts {
   /// The font code, paths and commands are drawn in: the first of
   /// [CodeFont.families], which the user may change.
-  static String get mono => CodeFont.families.value.first;
+  static String get mono => CodeFont.effectiveFamilies.first;
 
   /// What code falls back on, in order: the families after [mono], then on
   /// Windows [windowsFallbacks]. A family not installed is passed over.
   static List<String> get monoFallbacks => [
-    ...CodeFont.families.value.skip(1),
+    ...CodeFont.effectiveFamilies.skip(1),
     if (AppPlatform.isWindows) ...windowsFallbacks,
   ];
 
+  /// Theme line height, or the surface's historical default.
+  static double codeHeight(double fallback) =>
+      CodeFont.typography.lineHeight ?? fallback;
+
+  static FontWeight? get codeWeight {
+    final weight = CodeFont.typography.weight;
+    return weight == null
+        ? null
+        : FontWeight.values[((weight + 50) ~/ 100 - 1).clamp(0, 8)];
+  }
+
   /// A style for code drawn at [size], as the code's size is moved (see
   /// [CodeFont.sized]), in [mono] with [monoFallbacks], and with ligatures
-  /// as [CodeFont.features] says. The caller adds the color and the height.
+  /// as [CodeFont.features] says. Callers use [codeHeight] for fallback height.
   /// For an editor or a file's view, zoomed with the window as the rest is
   /// (13 at 120% looks 15.6); code among the window's own text takes
   /// [uiCodeStyle].
@@ -305,7 +316,10 @@ abstract final class AppFonts {
     fontFamily: mono,
     fontFamilyFallback: monoFallbacks,
     fontFeatures: CodeFont.features,
-    fontSize: CodeFont.sized(size),
+    fontSize: CodeFont.sized(size) / CodeFont.uiTypographyScale,
+    fontWeight: codeWeight,
+    height: CodeFont.typography.lineHeight,
+    letterSpacing: CodeFont.typography.letterSpacing,
   );
 
   /// [codeStyle] for code among the window's own text (the chat's code
@@ -315,7 +329,10 @@ abstract final class AppFonts {
     fontFamily: mono,
     fontFamilyFallback: monoFallbacks,
     fontFeatures: CodeFont.features,
-    fontSize: CodeFont.uiSized(size),
+    fontSize: CodeFont.uiSized(size) / CodeFont.uiTypographyScale,
+    fontWeight: codeWeight,
+    height: CodeFont.typography.lineHeight,
+    letterSpacing: CodeFont.typography.letterSpacing,
   );
 
   /// What Windows falls back on. Set once, for all text, by the theme there
@@ -365,7 +382,15 @@ ThemeData buildAppTheme() {
   );
   return ThemeData(
     brightness: brightness,
-    fontFamilyFallback: AppPlatform.isWindows
+    fontFamily: CodeFont.typography.uiFamily == null
+        ? null
+        : CodeFont.parseFamilies(CodeFont.typography.uiFamily).first,
+    fontFamilyFallback: CodeFont.typography.uiFamily != null
+        ? [
+            ...CodeFont.parseFamilies(CodeFont.typography.uiFamily).skip(1),
+            if (AppPlatform.isWindows) ...AppFonts.windowsFallbacks,
+          ]
+        : AppPlatform.isWindows
         ? AppFonts.windowsFallbacks
         : null,
     // The conversation's own color is under it (see Workbench).

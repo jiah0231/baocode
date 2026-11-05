@@ -41,6 +41,7 @@ import 'package:flutter/widgets.dart';
 import '../../keybindings/keybinding_service.dart';
 import '../../l10n/l10n.dart';
 import '../../theme/code_font.dart';
+import '../../theme/workbench_theme.dart';
 import '../ide_commands.dart';
 import '../ide_dialog.dart';
 import '../ide_find_widget.dart';
@@ -160,6 +161,8 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient {
 
   IBufferRange? _linkRange() => _link?.range;
 
+  final _fontThemes = WorkbenchThemeService.instance;
+
   TerminalInstance get _instance => widget.instance;
 
   @override
@@ -171,6 +174,8 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient {
     _findText.addListener(_findTextChanged);
     _findFocus.addListener(_findFocusChanged);
     CodeFont.terminalSize.addListener(_syncTerminalFontSize);
+    CodeFont.pebrelPreset.addListener(_syncTerminalFontSize);
+    _fontThemes.addListener(_syncTerminalFontSize);
   }
 
   @override
@@ -310,6 +315,8 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient {
   @override
   void dispose() {
     CodeFont.terminalSize.removeListener(_syncTerminalFontSize);
+    CodeFont.pebrelPreset.removeListener(_syncTerminalFontSize);
+    _fontThemes.removeListener(_syncTerminalFontSize);
     HardwareKeyboard.instance.removeHandler(_modifiersChanged);
     _detach(_instance);
     _subscriptions.dispose();

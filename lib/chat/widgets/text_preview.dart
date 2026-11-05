@@ -86,7 +86,7 @@ class _TextPreviewState extends State<TextPreview> {
     final l10n = context.l10n;
     final size = MediaQuery.sizeOf(context);
     final style = AppFonts.uiCodeStyle(12.5)
-        .copyWith(color: AppColors.text, height: 1.5);
+        .copyWith(color: AppColors.text, height: AppFonts.codeHeight(1.5));
     final numbers = style.copyWith(color: AppColors.textFaint);
     final gutter = '${_lines.length}'.length * 8.0 + 16;
     return Center(

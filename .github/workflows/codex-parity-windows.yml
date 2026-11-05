@@ -221,13 +221,13 @@ jobs:
         shell: pwsh
         run: |
           # Public versioned URL + verified hash and size; no expiring Actions artifact.
-          # Source: c5e0be914dcb4c43b8d91c01bb1afb39b4bbe94a, release custom-v1.8.0+27.
+          # Source: b2774ed77d7b858b30a660c31ee32db26e94ec97, release custom-v1.9.0+29.
           $baseline = Join-Path $env:RUNNER_TEMP 'baseline-installer'
           New-Item -ItemType Directory -Force $baseline | Out-Null
-          $setup = Join-Path $baseline 'BaoCode-1.8.0-setup.exe'
-          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.8.0%2B27/BaoCode-1.8.0-setup.exe' -OutFile $setup
-          if ((Get-Item $setup).Length -ne 25664878) { throw 'Pinned release Setup size mismatch' }
-          if ((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() -ne '8c8b528d4b7baecec19d442135b7a858c0e836a9efda779951c0d244019fccbe') { throw 'Pinned release Setup checksum mismatch' }
+          $setup = Join-Path $baseline 'BaoCode-1.9.0-setup.exe'
+          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.9.0%2B29/BaoCode-1.9.0-setup.exe' -OutFile $setup
+          if ((Get-Item $setup).Length -ne 25766059) { throw 'Pinned release Setup size mismatch' }
+          if ((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() -ne '7cd3e5376ac310a01f64f4b8ae71930015ebb6fb8961658e8e5dfc93febaf5dd') { throw 'Pinned release Setup checksum mismatch' }
       - name: Install pinned release then replace in isolated per-user directory
         shell: pwsh
         run: |
@@ -235,7 +235,7 @@ jobs:
           $new = @(Get-ChildItem build/installers -Filter '*-setup.exe')
           if ($new.Count -ne 1) { throw 'Expected one new Setup' }
           $version = (Select-String -Path pubspec.yaml -Pattern '^version: (.+)$').Matches[0].Groups[1].Value
-          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.8.0+27
+          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.9.0+29
       - name: Record build identity and checksums
         shell: pwsh
         run: |

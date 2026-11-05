@@ -31,6 +31,7 @@ import 'package:path/path.dart' as p;
 
 import '../../settings/user_settings.dart';
 import '../../theme/code_font.dart';
+import '../../theme/workbench_theme.dart';
 import 'pty.dart';
 import 'shell_integration/shell_integration.dart';
 import 'shell_integration/shell_integration_injection.dart';
@@ -210,6 +211,8 @@ class TerminalInstance extends ChangeNotifier {
     );
     _colorTheme.addListener(_updateTheme);
     CodeFont.families.addListener(_updateFont);
+    CodeFont.pebrelPreset.addListener(_updateFont);
+    _fontThemes.addListener(_updateFont);
     source = TerminalCoreSource(terminal, decorationService: decorations);
     clipboard = TerminalClipboard(
       selection: selection,
@@ -456,8 +459,15 @@ class TerminalInstance extends ChangeNotifier {
   /// option. The interface text scale is applied by [TerminalView], where the
   /// terminal has a widget context; changing the editor code size must not
   /// remeasure terminal cells.
+  final _fontThemes = WorkbenchThemeService.instance;
+
   void _updateFont() {
-    xterm.options.fontFamily = vscodeTerminalFontFamily();
+    final typography = CodeFont.typography;
+    xterm.options
+      ..fontFamily = vscodeTerminalFontFamily()
+      ..fontWeight = typography.weight ?? 'normal'
+      ..lineHeight = (typography.lineHeight ?? 1).clamp(1.0, 3.0).toDouble()
+      ..letterSpacing = typography.letterSpacing ?? 0;
   }
 
   /// The find widget's theme listener, with `_updateFindColors`' new colors.
@@ -830,6 +840,8 @@ class TerminalInstance extends ChangeNotifier {
     _disposed = true;
     _colorTheme.removeListener(_updateTheme);
     CodeFont.families.removeListener(_updateFont);
+    CodeFont.pebrelPreset.removeListener(_updateFont);
+    _fontThemes.removeListener(_updateFont);
     if (!_exited) _pty?.kill();
     unawaited(_printing?.cancel());
     unawaited(_output.close());

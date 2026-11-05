@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.9.0+29
+version: 1.9.0+30
 
 environment:
   sdk: ^3.13.4
@@ -133,10 +133,16 @@ flutter:
     - assets/network/
     # GPL app-owned Pebrel palette snapshots and attribution.
     - assets/pebrel/
+    - assets/fonts/maple/OFL.txt
+    - assets/fonts/maple/NOTICE.md
     # VS Code TextMate grammars and color themes (tool/generate_textmate_assets.mjs).
 
   # VS Code's icon font (tool/generate_codicons.mjs; lib/theme/codicons.dart).
   fonts:
+    - family: Maple Mono Normal NF CN
+      fonts:
+        - asset: assets/fonts/maple/MapleMonoNormal-NF-CN-Regular.ttf
+          weight: 400
     - family: codicon
       fonts:
         - asset: assets/codicons/codicon.ttf

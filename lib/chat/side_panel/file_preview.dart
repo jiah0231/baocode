@@ -864,7 +864,7 @@ class _FilePreviewState extends State<FilePreview> {
   }
 
   static TextStyle _codeStyle(BuildContext context) =>
-      AppFonts.codeStyle(12).copyWith(height: 1.5);
+      AppFonts.codeStyle(12).copyWith(height: AppFonts.codeHeight(1.5));
 
   static TextScaler _codeScaler(BuildContext context) =>
       MediaQuery.textScalerOf(context);
@@ -1211,7 +1211,7 @@ class _LineRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final style = AppFonts.codeStyle(12).copyWith(height: 1.5);
+    final style = AppFonts.codeStyle(12).copyWith(height: AppFonts.codeHeight(1.5));
     final background = marked
         ? themeColors['editor.rangeHighlightBackground']
         : Colors.transparent;

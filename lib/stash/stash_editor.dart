@@ -975,7 +975,7 @@ class StashEditorState extends State<StashEditor> implements FileDropDelegate {
       codeBackground: AppColors.inlineCodeBackground,
       // As the chat's code blocks are: typed in, in place.
       codeBlock: AppFonts.uiCodeStyle(12.5)
-          .copyWith(color: AppColors.text, height: 1.5),
+          .copyWith(color: AppColors.text, height: AppFonts.codeHeight(1.5)),
       codeBlockBackground: themeColors['textCodeBlock.background'],
       codeBlockBorder: themeColors['chat.requestBorder'],
       // As the chat's tables are.

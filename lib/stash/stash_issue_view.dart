@@ -492,7 +492,7 @@ class _StashIssueDialogState extends State<StashIssueDialog> {
                 text.isEmpty ? l10n.stashIssueNoText : text,
                 style: AppFonts.uiCodeStyle(12).copyWith(
                   color: text.isEmpty ? AppColors.textFaint : AppColors.text,
-                  height: 1.5,
+                  height: AppFonts.codeHeight(1.5),
                 ),
               ),
             ),

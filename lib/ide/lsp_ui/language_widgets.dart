@@ -27,7 +27,7 @@ import 'suggest_session.dart';
 
 /// The editor's font for code in the widgets, in [color].
 TextStyle _mono(Color color) =>
-    AppFonts.codeStyle(12.5).copyWith(color: color, height: 1.4);
+    AppFonts.codeStyle(12.5).copyWith(color: color, height: AppFonts.codeHeight(1.4));
 
 /// Text drawn at CSS `opacity`.
 Color _faded(Color color, double opacity) =>

@@ -317,7 +317,7 @@ class _Tag extends StatelessWidget {
       text,
       style: AppFonts.uiCodeStyle(12).copyWith(
         color: AppColors.textMuted,
-        height: 1.6,
+        height: AppFonts.codeHeight(1.6),
       ),
     ),
   );

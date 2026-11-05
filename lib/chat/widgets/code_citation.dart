@@ -681,7 +681,7 @@ class _CodeCardState extends State<_CodeCard> {
     final lines = widget.code.split('\n');
     final citation = widget.citation;
     final style = AppFonts.uiCodeStyle(12)
-        .copyWith(color: themeColors['editor.foreground'], height: 1.5);
+        .copyWith(color: themeColors['editor.foreground'], height: AppFonts.codeHeight(1.5));
     final count = (lines.length + _linesPerParagraph - 1) ~/ _linesPerParagraph;
     final numbers = switch (citation) {
       // As the code's paragraphs, so a line's number lies beside it.
