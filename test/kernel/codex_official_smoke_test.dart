@@ -32,7 +32,23 @@ void main() {
       try {
         final installer = createCodexInstaller();
         expect(installer.supported, isTrue);
-        final release = await installer.latest();
+        final latest = await installer.latest();
+        // A moving latest must not expand the reviewed Bot permission family.
+        // Keep the full protocol check on the verified 0.166.0 package instead
+        // of silently accepting a newer server or skipping restricted checks.
+        expect(
+          CodexAppTools.supportsRestrictedBots('baocode/${latest.version}'),
+          latest.version.startsWith('0.166.'),
+        );
+        final metadata = jsonDecode(
+          await File(
+            'test/fixtures/codex/official_release_0_166_0.json',
+          ).readAsString(),
+        ) as Map<String, dynamic>;
+        final release = CodexInstallRelease.fromJson(metadata, latest.target);
+        expect(release.version, '0.166.0');
+        // ignore: avoid_print
+        print('Current official ${latest.version}; protocol baseline 0.166.0');
         // ignore: avoid_print
         print('Official Codex ${release.version} ${release.target}');
         final executable = await installer.install(release, (message) {

@@ -9,6 +9,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 import '../support/harness.dart';
+import '../support/message_text.dart';
+
+// Git Bash accepts drive paths with forward slashes. Quote the path as one
+// argument, including spaces/apostrophes, and let sh read it without chmod.
+String shellScript(String path) {
+  final portable = path.replaceAll(r'\', '/').replaceAll("'", "'\"'\"'");
+  return "sh '$portable'";
+}
 
 /// The less travelled ways: plans approved, agents that fail, compaction
 /// under pressure, notebooks with outputs, inputs not quite right.
@@ -17,13 +25,13 @@ void main() {
 
   tearDown(() => h.dispose());
 
-  String sentIn(ModelRequest request) => jsonEncode(request.body['messages']);
+  String sentIn(ModelRequest request) => messageText(request.body['messages']);
 
   test('a plan approved: the mode is left, the plan given back', () async {
     h = await Harness.start(permissionMode: 'plan');
     h.model.script.add(Reply.text('looking'));
     await h.turn('plan');
-    final plan = RegExp(r'write it to ([^ ]+\.md)')
+    final plan = RegExp(r'write it to (.+?\.md)')
         .firstMatch(sentIn(h.model.turns.first))![1]!;
     h.model.script.addAll([
       Reply.tool('Write', {
@@ -66,7 +74,7 @@ void main() {
     h = await Harness.start(permissionMode: 'plan');
     h.model.script.add(Reply.text('looking'));
     await h.turn('plan');
-    final plan = RegExp(r'write it to ([^ ]+\.md)')
+    final plan = RegExp(r'write it to (.+?\.md)')
         .firstMatch(sentIn(h.model.turns.first))![1]!;
     expect(File(plan).existsSync(), isFalse);
     h.model.script.addAll([
@@ -217,14 +225,13 @@ void main() {
         ..writeAsStringSync(
           '#!/bin/sh\necho \'{"hookSpecificOutput": {"hookEventName": "SubagentStart", "additionalContext": "Mind the tests."}}\'\n',
         );
-      Process.runSync('chmod', ['+x', hook.path]);
       h = await Harness.start(
         settings: {
           'hooks': {
             'SubagentStart': [
               {
                 'hooks': [
-                  {'type': 'command', 'command': hook.path},
+                  {'type': 'command', 'command': shellScript(hook.path)},
                 ],
               },
             ],
@@ -377,7 +384,6 @@ void main() {
         addTearDown(() => Directory(bin).deleteSync(recursive: true));
         final hook = File(p.join(bin, 'pre.sh'))
           ..writeAsStringSync('#!/bin/sh\necho "Keep the API notes."\n');
-        Process.runSync('chmod', ['+x', hook.path]);
         h = await Harness.start(
           permissionMode: 'plan',
           settings: {
@@ -386,7 +392,7 @@ void main() {
                 {
                   'matcher': 'manual',
                   'hooks': [
-                    {'type': 'command', 'command': hook.path},
+                    {'type': 'command', 'command': shellScript(hook.path)},
                   ],
                 },
               ],
@@ -395,7 +401,7 @@ void main() {
         );
         h.model.script.add(Reply.text('looking'));
         await h.turn('plan');
-        final plan = RegExp(r'write it to ([^ ]+\.md)')
+        final plan = RegExp(r'write it to (.+?\.md)')
             .firstMatch(sentIn(h.model.turns.first))![1]!;
         h.model.script.addAll([
           Reply.tool('Write', {'file_path': plan, 'content': '# Plan'}),
@@ -413,7 +419,7 @@ void main() {
         final summary = h
             .of('user')
             .lastWhere((m) => m['isCompactSummary'] == true);
-        expect(jsonEncode(summary), contains(plan));
+        expect(messageText(summary), contains(plan));
       },
     );
 
@@ -676,8 +682,19 @@ void main() {
       ]);
       await h.turn('go');
       final results = h.toolResults;
+      // Git Bash can report its cwd as /c/... rather than the native
+      // C:\... path. The tool appends a separate cwd-reset note in that case.
+      // Validate that note exactly, then test the command output itself.
+      final parts = '${results[0]['content']}'.split(
+        '\nShell cwd was reset to ',
+      );
+      expect(parts.length, inInclusiveRange(1, 2));
+      if (parts.length == 2) {
+        expect(Platform.isWindows, isTrue);
+        expect(parts[1], h.cwd);
+      }
       expect(
-        '${results[0]['content']}',
+        parts.first,
         allOf(contains('lines truncated'), startsWith('1\n'), endsWith('500')),
       );
       final [none, missing] = results.sublist(1, 3);
