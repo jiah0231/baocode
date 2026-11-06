@@ -76,6 +76,7 @@ class CodexKernel
     CodexTransportFactory? start,
     ModelProviders? providers,
     Future<ProxyEndpoint?> Function()? providerProxy,
+    bool useManagedDefault = true,
   }) : _start = start ?? startCodexProcess,
        _providers = providers ?? ModelProviders.current,
        _proxy = providerProxy ?? codexProxyEndpoint {
@@ -83,6 +84,13 @@ class CodexKernel
     _sessionId = _context.resume?.id;
     final settings = _context.settings;
     _modelId = settings[KernelChoiceKind.model.name];
+    // New chats use BaoCode's unified providers when available. Saved
+    // native chats keep their original route and can still be resumed.
+    if (useManagedDefault &&
+        _context.resume == null &&
+        parseModelRef(_modelId) == null) {
+      _modelId = _providers.firstModel ?? _modelId;
+    }
     _effort = settings[KernelChoiceKind.effort.name];
     _modeId = _pick(settings[KernelChoiceKind.mode.name], _modes, 'agent');
     _permissionId = _pick(
@@ -103,6 +111,7 @@ class CodexKernel
     // The models it last listed, until its own list arrives: the picker is
     // right from the start, as Claude Code's is.
     _useCachedModels();
+    if (_custom != null) _settleSettings(_modelId!);
     // What is in effect is reported as it is, not left to the first option.
     (model as LocalChoice).reported = _modelId;
     (mode as LocalChoice).reported = _modeId;
@@ -156,6 +165,7 @@ class CodexKernel
     onChanged: (id) {
       if (!_reportingModel) _modelSelected = true;
       _modelId = id;
+      _syncModelOptions();
       // Another model may not take the effort this one does.
       _settleSettings(id);
       if (!_reportingModel && _selectionAfterResume != null) {
@@ -1224,7 +1234,12 @@ class CodexKernel
     _modelOptions
       ..clear()
       ..addAll([
-        ...(_models.isNotEmpty
+        // Keep native choices for native conversations and as a fallback
+        // without managed models, not as a duplicate group in managed chats.
+        if (_providers.enabled.isEmpty ||
+            (_modelId != null && parseModelRef(_modelId) == null) ||
+            (_context.resume != null && _modelId == null))
+          ...(_models.isNotEmpty
             ? _models
             : [
                 if (_modelId case final id?
@@ -1495,6 +1510,8 @@ class CodexKernel
     start: _start,
     providers: _providers,
     providerProxy: _proxy,
+    // A helper operates on an explicit route, not a new conversation.
+    useManagedDefault: false,
   );
 
   /// Bind asynchronous preparation to the process that requested it.
@@ -1595,7 +1612,8 @@ class CodexKernel
     _selectionAfterResume = null;
     if (selected == null) return;
     _modelId = selected.model;
-    if (_modelId case final id?) _settleSettings(id);
+    _syncModelOptions();
+    if (_custom != null) _settleSettings(_modelId!);
     _effort = selected.effort;
     _fast = selected.fast;
     (model as LocalChoice).reported = _modelId;
@@ -1712,6 +1730,7 @@ class CodexKernel
           ? model.substring(0, open)
           : model;
       _modelId = parseModelRef(plain) != null ? plain : model;
+      _syncModelOptions();
       if (_modelOptions.any((option) => option.id == _modelId)) {
         _reportModel(_modelId!);
       }

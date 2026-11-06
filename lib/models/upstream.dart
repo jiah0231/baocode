@@ -322,10 +322,39 @@ List<RemoteModel> parseModelList(Object? json) {
       }
     }
     models.add(
-      RemoteModel(id, label: label, contextWindow: window, kind: _kindOf(item)),
+      RemoteModel(
+        id,
+        label: label,
+        contextWindow: window,
+        efforts: _reasoningLevels(item),
+        kind: _kindOf(item),
+      ),
     );
   }
   return models;
+}
+
+/// The reasoning levels the upstream advertises, including Magpie's
+/// `/v1/models` catalog. No list means unknown, while an empty list (or
+/// `reasoning: false`) means no reasoning choice, not the generic defaults.
+List<String>? _reasoningLevels(Map model) {
+  if (model['reasoning'] == false) return const [];
+  final raw =
+      model['supported_reasoning_levels'] ??
+      model['reasoning_levels'] ??
+      model['supportedReasoningEfforts'];
+  if (raw is! List) return null;
+  return {
+    for (final item in raw)
+      if (switch (item) {
+            {'effort': final String effort} => effort,
+            {'reasoningEffort': final String effort} => effort,
+            final String effort => effort,
+            _ => null,
+          }
+          case final effort? when effort.trim().isNotEmpty)
+        effort.trim(),
+  }.toList();
 }
 
 /// What a listed model is for, where its entry says: what it answers with

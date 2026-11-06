@@ -1329,6 +1329,30 @@ void main() {
       );
     });
 
+    for (final provider in ['gw', 'rsp']) {
+      test('Ultra reaches $provider unchanged', () async {
+        final answer = await post(
+          await on(provider),
+          {
+            'model': '@$provider/gpt-5(ultra)',
+            'stream': true,
+            'input': 'hi',
+            'reasoning': {'effort': 'ultra'},
+          },
+          headers: {'authorization': 'Bearer tok'},
+        );
+        expect(answer.status, 200);
+        final sent = relay.requests.single.body! as Map;
+        expect(sent['model'], 'gpt-5');
+        expect(
+          provider == 'gw'
+              ? sent['reasoning_effort']
+              : (sent['reasoning'] as Map)['effort'],
+          'ultra',
+        );
+      });
+    }
+
     test('what went wrong is said as OpenAI\'s error', () async {
       relay.reply = (_) =>
           (429, const ['{"error":{"message":"Out of quota"}}']);
