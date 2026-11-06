@@ -104,6 +104,7 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
       final answer = await _service.ask(
         question: question,
         selectedText: widget.source?.selectedText ?? '',
+        selectionTruncated: widget.source?.truncated ?? false,
         surroundingText: _includeContext
             ? widget.source?.contextText ?? ''
             : '',

@@ -17,6 +17,7 @@ import 'package:baocode/chat/widgets/markdown_view.dart';
 import 'package:baocode/workspace/window_controls.dart';
 import 'package:baocode/main.dart';
 import 'package:super_sliver_list/super_sliver_list.dart';
+import 'package:path/path.dart' as p;
 import 'package:baocode/kernel/claude_code/claude_code_kernel.dart';
 import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/chat/widgets/edge_fade_mask.dart';
@@ -699,7 +700,7 @@ void main() {
     expect(controller.selection.baseOffset, controller.length);
     expect(
       composerEmbedsIn(controller.text).single.embed,
-      ComposerCodeEmbed.of(code.withPath('lib/a.dart')),
+      ComposerCodeEmbed.of(code.withPath(p.join('lib', 'a.dart'))),
     );
   });
 

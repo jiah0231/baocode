@@ -227,6 +227,8 @@ void main() {
       ),
     );
     expect(edit.onPressed, isNull);
+    await send(tester);
+    expect(request.input!['selectionTruncated'], isTrue);
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
     await open(tester);

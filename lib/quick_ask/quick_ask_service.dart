@@ -69,6 +69,7 @@ class QuickAskService {
   Future<String> ask({
     required String question,
     String selectedText = '',
+    bool selectionTruncated = false,
     String surroundingText = '',
     String? source,
     String? sessionModel,
@@ -87,7 +88,7 @@ class QuickAskService {
         throw const QuickAskException(QuickAskFailure.noSelection);
       }
       // A replacement must be based on the complete selected range.
-      if (selectedText.length > quickAskSelectionLimit) {
+      if (selectionTruncated || selectedText.length > quickAskSelectionLimit) {
         throw const QuickAskException(QuickAskFailure.selectionTooLong);
       }
     }
@@ -107,7 +108,8 @@ class QuickAskService {
       'mode': mode.name,
       if (source != null) 'source': _clip(source, 300),
       'selection': _clip(selectedText, quickAskSelectionLimit),
-      'selectionTruncated': selectedText.length > quickAskSelectionLimit,
+      'selectionTruncated':
+          selectionTruncated || selectedText.length > quickAskSelectionLimit,
       'context': _clip(surroundingText, quickAskContextLimit),
       'contextTruncated': surroundingText.length > quickAskContextLimit,
     });
@@ -154,6 +156,7 @@ class QuickAskService {
 Future<String> askQuickQuestion({
   required String question,
   String selectedText = '',
+  bool selectionTruncated = false,
   String surroundingText = '',
   String? source,
   String? sessionModel,
@@ -162,6 +165,7 @@ Future<String> askQuickQuestion({
 }) => QuickAskService().ask(
   question: question,
   selectedText: selectedText,
+  selectionTruncated: selectionTruncated,
   surroundingText: surroundingText,
   source: source,
   sessionModel: sessionModel,

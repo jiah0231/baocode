@@ -243,6 +243,29 @@ void main() {
   );
 
   test(
+    'an already clipped selection stays marked and cannot be edited',
+    () async {
+      await service.ask(
+        question: 'Explain this',
+        selectedText: 'A captured excerpt',
+        selectionTruncated: true,
+      );
+      expect(requester.prompt!['selection'], 'A captured excerpt');
+      expect(requester.prompt!['selectionTruncated'], isTrue);
+      await expectLater(
+        service.ask(
+          question: 'Fix this',
+          selectedText: 'A captured excerpt',
+          selectionTruncated: true,
+          mode: QuickAskMode.edit,
+        ),
+        failure(QuickAskFailure.selectionTooLong),
+      );
+      expect(requester.calls, 1);
+    },
+  );
+
+  test(
     'edit preserves indentation and newlines, without applying anything',
     () async {
       requester.answer = '  final answer = 42;\n';
