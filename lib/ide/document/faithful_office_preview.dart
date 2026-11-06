@@ -12,6 +12,7 @@ import '../../platform/native_overlay_occlusion.dart';
 import '../../theme/codicons.dart';
 import '../file_service.dart';
 import '../ide_button.dart';
+import '../ide_hover.dart';
 import '../ide_spinning.dart';
 import 'document_model.dart';
 import 'document_preview_notices.dart';
@@ -248,6 +249,10 @@ class _FaithfulOfficePreviewState extends State<FaithfulOfficePreview> {
       case 'loaded':
         _deadline?.cancel();
         setState(() => _loaded = true);
+      case 'reload':
+        if (_loaded) unawaited(_load());
+      case 'openExternal':
+        if (_loaded) widget.onOpenInDefaultApp?.call();
       case 'error':
         _failed();
     }
@@ -286,6 +291,7 @@ class _FaithfulOfficePreviewState extends State<FaithfulOfficePreview> {
         ),
       ),
       'sourceUrl': DocumentPreviewNotices.source.toString(),
+      'canOpenExternal': widget.onOpenInDefaultApp != null,
       'dark': AppColors.surface.computeLuminance() < .5,
     };
     final encoded = jsonEncode(theme);
@@ -380,33 +386,33 @@ class _FaithfulOfficePreviewState extends State<FaithfulOfficePreview> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
+            // Once loaded, these actions share the native viewer's compact
+            // toolbar. Keep a small fallback while loading or showing errors.
+            if (!_loaded)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 color: AppColors.surface,
-                border: Border(bottom: BorderSide(color: AppColors.partBorder)),
-              ),
-              child: Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  IdeButton(
-                    label: strings.reload,
-                    icon: Codicons.refresh,
-                    secondary: true,
-                    onPressed: () => unawaited(_load()),
-                  ),
-                  if (widget.onOpenInDefaultApp != null)
-                    IdeButton(
-                      label: strings.openExternal,
-                      icon: Codicons.linkExternal,
-                      secondary: true,
-                      onPressed: widget.onOpenInDefaultApp,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    IdeActionButton(
+                      icon: Codicons.refresh,
+                      tooltip: strings.reload,
+                      size: 24,
+                      iconSize: 14,
+                      onPressed: () => unawaited(_load()),
                     ),
-                ],
+                    if (widget.onOpenInDefaultApp != null)
+                      IdeActionButton(
+                        icon: Codicons.linkExternal,
+                        tooltip: strings.openExternal,
+                        size: 24,
+                        iconSize: 14,
+                        onPressed: widget.onOpenInDefaultApp,
+                      ),
+                  ],
+                ),
               ),
-            ),
             Expanded(child: _body(strings)),
           ],
         ),

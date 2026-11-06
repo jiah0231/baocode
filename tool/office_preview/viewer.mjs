@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Thin host only: rendering, toolbars and interactions remain upstream code.
+// Thin host: original rendering and interactions, with compact BaoCode chrome.
+import {compactPreviewToolbar} from './compact-toolbar.mjs';
 const loaders={word:()=>import('./word.js'),excel:()=>import('./excel.js'),powerpoint:()=>import('./powerpoint.js'),pdf:()=>import('./pdf.js'),cad:()=>import('./cad.js'),epub:()=>import('./epub.js'),notability:()=>import('./notability.js'),goodnotes:()=>import('./goodnotes.js')};
 const extensions={doc:'word',docx:'word',xls:'excel',xlsx:'excel',ppt:'powerpoint',pptx:'powerpoint',pdf:'pdf',dwg:'cad',dxf:'cad',epub:'epub',note:'notability',goodnotes:'goodnotes'};
 const defaultExtension={word:'docx',excel:'xlsx',powerpoint:'pptx',cad:'dxf',notability:'note'};
@@ -8,7 +9,7 @@ const container=document.getElementById('document-container');
 const status=document.getElementById('status');
 const toast=document.getElementById('toast');
 let current=null,generation=0,toastTimer=0;
-let sourceUrl='https://github.com/jiah0231/baocode';
+let sourceUrl='https://github.com/jiah0231/baocode',canOpenExternal=false;
 function event(type,detail={}){
   const value={type,...detail};
   window.dispatchEvent(new CustomEvent('bao-office-event',{detail:value}));
@@ -24,6 +25,7 @@ function destroy(){
   container.replaceChildren();status.hidden=true;
 }
 function setTheme(theme={}){
+  if(typeof theme.canOpenExternal==='boolean'){canOpenExternal=theme.canOpenExternal;current?.toolbar?.setOpenExternalVisible(canOpenExternal);}
   if(typeof theme.dark==='boolean'){document.documentElement.style.colorScheme=theme.dark?'dark':'light';document.documentElement.dataset.theme=theme.dark?'dark':'light';}
   if(typeof theme.sourceUrl==='string'){try{const source=new URL(theme.sourceUrl);if(source.protocol==='https:'&&source.hostname==='github.com'&&source.pathname.startsWith('/jiah0231/baocode/')&&!source.username&&!source.password&&!source.search&&!source.hash){sourceUrl=source.href;document.getElementById('source-url').textContent=sourceUrl;}}catch{}}
   const map={background:['--editor-bg','--editor-surface'],foreground:['--editor-text'],border:['--editor-border','--control-border'],accent:['--editor-accent'],muted:['--editor-text-muted'],surface:['--editor-surface'],toolbarHover:['--toolbar-hover'],toolbarActive:['--toolbar-active']};
@@ -69,6 +71,7 @@ async function load({kind,name,url='/document',bytes:input}={}){
     const cleanup=await plugin.mount({container:host,name:resolved.name,bytes,signal:controller.signal,notify,reading});
     state.dispose=cleanup;
     if(token!==generation||controller.signal.aborted){cleanup?.();host.remove();return;}
+    state.toolbar=compactPreviewToolbar(host.shadowRoot,{canOpenExternal,onReload:()=>event('reload'),onOpenExternal:()=>event('openExternal')});
     await document.fonts?.ready;
     if(token!==generation||controller.signal.aborted)return;
     status.hidden=true;event('loaded',{kind:resolved.id,generation:token});

@@ -60,11 +60,11 @@ After `{type:"ready"}`, native code sends:
 {type: "theme", theme: {background: "#fff", foreground: "#202124", border: "#ddd", dark: false, sourceUrl: "https://github.com/jiah0231/baocode/tree/<build-commit>/tool/office_preview"}}
 ```
 
-`kind` accepts a plugin ID or any listed extension. Always pass the original basename: the upstream plugin distinguishes DOC from DOCX, PPT from PPTX and DWG from DXF using that name. Native events are strictly `{type:"ready"}`, `{type:"loaded"}` or `{type:"error",message:"..."}`. Rendering helpers are not exposed to native eval.
+`kind` accepts a plugin ID or any listed extension. Always pass the original basename: the upstream plugin distinguishes DOC from DOCX, PPT from PPTX and DWG from DXF using that name. Native events are strictly `{type:"ready"}`, `{type:"loaded"}`, `{type:"error",message:"..."}`, `{type:"reload"}` or `{type:"openExternal"}`. The last two carry no path, URL or command: they invoke the existing Flutter callbacks for this already-selected document only, after it has loaded. Rendering helpers are not exposed to native eval.
 
 Browser tests can call `window.BaoOfficeViewer.load({kind,name,bytes:Uint8Array})`, `setTheme(...)`, `destroy()`, and inspect the open Shadow DOM through `BaoOfficeViewer.root`. More detailed test events are emitted only as `bao-office-event` browser events. Native code does not accept those additional fields.
 
-The adapter handles cancellation, delayed mounts, disposal, notifications, reading-state subscriptions and the source/license dialog. It does not replace the original toolbar, renderer, fonts or paper colours. Theme changes set only the declared NoteBoard UI variables. Word's optional “阅读排版” toggle intentionally reflows content exactly as in the original plugin; it is not enabled by default.
+The adapter handles cancellation, delayed mounts, disposal, notifications, reading-state subscriptions and the source/license dialog. It keeps the original toolbar actions, renderer, fonts and paper colours. `compact-toolbar.mjs` adds a toolbar-only style adaptation inside the plugin Shadow DOM: duplicate filenames are hidden, desktop controls stay 24px even in narrow panes, and refresh/open icons share that same row. True coarse-pointer devices retain 32px targets. The fixed actions move to compact Flutter fallback icons while loading or showing an error. Wrapped toolbar groups remain reachable in very narrow panes. Theme changes set only the declared NoteBoard UI variables. Word's optional “阅读排版” toggle intentionally reflows content exactly as in the original plugin; it is not enabled by default.
 
 ## Offline and privacy boundary
 
@@ -105,3 +105,6 @@ Other libraries retain their original permissive or dual licenses: docx-preview 
 ## Modification record
 
 2026-11-05: Imported the pinned NoteBoard preview sources without changes; supplied a BaoCode WebView2 message/file bridge and theme mapping; bundled all renderers, workers, fonts and WASM as local assets; added exact source/hash inventories and tests; added an in-app source/license entry. The surrounding NoteBoard React/Tauri application is not copied or emulated. No upstream copyrights or licenses have been removed or relabelled.
+
+
+2026-11-06: Added BaoCode-only compact toolbar styling and fixed refresh/open actions. The pinned upstream modules, original document rendering, source/permission notices and source/license entry remain unchanged.

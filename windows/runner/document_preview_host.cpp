@@ -494,9 +494,14 @@ struct Preview : std::enable_shared_from_this<Preview> {
                     wcsnlen(message, 4097) <= 4096) type = EventType(message);
               }
               CoTaskMemFree(message);
-              if ((type == L"ready" || type == L"loaded" || type == L"error") && self->emit) {
-                self->emit(self->id, type == L"ready" ? "ready" : type == L"loaded" ? "loaded" : "error");
-              }
+              // Only fixed actions on this preview are forwarded. No URL,
+              // file path or caller-supplied command crosses this boundary.
+              const char* event = type == L"ready" ? "ready" :
+                  type == L"loaded" ? "loaded" :
+                  type == L"error" ? "error" :
+                  type == L"reload" ? "reload" :
+                  type == L"openExternal" ? "openExternal" : nullptr;
+              if (event && self->emit) self->emit(self->id, event);
               return S_OK;
             }).Get(), &token)) ||
         FAILED(web->add_NavigationCompleted(

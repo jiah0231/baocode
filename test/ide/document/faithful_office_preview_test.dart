@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:baocode/ide/document/faithful_office_preview.dart';
+import 'package:baocode/ide/ide_hover.dart';
 import 'package:baocode/platform/native_overlay_occlusion.dart';
 import 'package:baocode/theme/workbench_theme.dart' hide ColorScheme;
 import 'package:flutter/material.dart';
@@ -114,7 +115,7 @@ Future<void> _pump(
 
 void main() {
   testWidgets(
-    'preview omits explanatory rows and preserves toolbar actions',
+    'compact actions share the loaded viewer without a separate toolbar row',
     (tester) async {
       final host = _Host(tester);
       var reads = 0;
@@ -128,37 +129,47 @@ void main() {
         },
         onOpenInDefaultApp: () => externalOpens++,
       );
-      void expectControlsOnly() {
-        expect(find.textContaining('Read only'), findsNothing);
-        expect(find.textContaining('NoteBoard'), findsNothing);
-        expect(find.text('Reload'), findsOneWidget);
-        expect(find.text('Open in default app'), findsOneWidget);
-      }
-
-      expectControlsOnly();
+      Finder action(String tooltip) => find.byWidgetPredicate(
+        (widget) => widget is IdeActionButton && widget.tooltip == tooltip,
+      );
+      expect(find.text('Reload'), findsNothing);
+      expect(find.text('Open in default app'), findsNothing);
+      expect(tester.getSize(action('Reload')), const Size(24, 24));
+      expect(tester.getSize(action('Open in default app')), const Size(24, 24));
+      await tester.tap(action('Open in default app'));
+      expect(externalOpens, 1);
       final first = await host.opened();
       final bounds = host.of('open').single;
       expect(bounds['format'], 'pdf');
-      expect(
-        (bounds['y'] as double) + (bounds['height'] as double),
-        closeTo(tester.view.physicalSize.height, .01),
-        reason: 'The removed footer must not leave unused preview space.',
-      );
-      await host.event(first, 'ready');
-      await host.event(first, 'loaded');
-      expectControlsOnly();
-      await tester.tap(find.text('Open in default app'));
-      expect(externalOpens, 1);
+      expect(bounds['y'], 28.0);
+      await host.event(first, 'openExternal');
+      await host.event(first, 'reload');
+      expect(externalOpens, 1, reason: 'Unloaded hosts cannot request actions.');
       expect(reads, 1);
-      await tester.tap(find.text('Reload'));
-      await tester.pump();
+      await host.event(first, 'ready');
+      expect(host.messages.first['theme']['canOpenExternal'], isTrue);
+      await host.event(first, 'loaded');
+      expect(find.byType(IdeActionButton), findsNothing);
+      await _wait(
+        tester,
+        () => host.of('updateBounds').any((bounds) => bounds['y'] == 0.0),
+      );
+      final loadedBounds = host.of('updateBounds').last;
+      expect(loadedBounds['height'], tester.view.physicalSize.height);
+      await host.event(first, 'openExternal');
+      expect(externalOpens, 2);
+      await host.event(first, 'reload');
       final second = await host.opened(2);
       expect(second, isNot(first));
       expect(reads, 2);
       expect(host.of('dispose').map((a) => a['id']), contains(first));
+      await host.event(first, 'reload');
+      await host.event(first, 'openExternal');
+      expect(reads, 2, reason: 'Repeated events from a disposed host are ignored.');
+      expect(externalOpens, 2);
       await host.event(second, 'ready');
       await host.event(second, 'loaded');
-      expectControlsOnly();
+      expect(find.byType(IdeActionButton), findsNothing);
     },
     timeout: _timeout,
   );
@@ -276,6 +287,8 @@ void main() {
     await host.event(id, 'ready');
     expect(host.messages.where((m) => m['type'] == 'load'), hasLength(1));
     await host.event(id, 'loaded');
+    expect(host.messages.first['theme']['canOpenExternal'], isFalse);
+    await host.event(id, 'openExternal');
     expect(
       host.calls.map((c) => c.method),
       isNot(contains('evaluateJavaScript')),
@@ -353,8 +366,7 @@ void main() {
       expect(host.messages, hasLength(messages));
       await host.event(second, 'ready');
       await host.event(second, 'loaded');
-      await tester.tap(find.text('Reload'));
-      await tester.pump();
+      await host.event(second, 'reload');
       final third = await host.opened(3);
       expect(reads, 3);
       expect(host.of('dispose').map((a) => a['id']), contains(second));
