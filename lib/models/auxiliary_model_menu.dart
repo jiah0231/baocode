@@ -66,6 +66,20 @@ String? actionsModelName(AppLocalizations l10n, ModelProviders providers) {
   };
 }
 
+/// The quick question window's dedicated model, or its auxiliary default.
+String quickAskModelName(AppLocalizations l10n, ModelProviders providers) =>
+    switch (providers.quickAskModel) {
+      null || ModelProviders.followAuxiliary => l10n.aiModelAuxiliary,
+      builtinProviderId when providers.builtinAvailable =>
+        l10n.modelsAuxiliaryBuiltin,
+      builtinProviderId => l10n.aiModelAuxiliary,
+      final value => switch (providers.resolve(value)) {
+        (final provider, final model) =>
+          '${provider.name} · ${provider.labelOf(model)}',
+        null => value,
+      },
+    };
+
 /// Shows the menu that picks the model of the AI actions
 /// ([ModelProviders.actionsModel], one for them all) at [anchor]; it says
 /// so first while none is picked. Whether one is picked once it closes.

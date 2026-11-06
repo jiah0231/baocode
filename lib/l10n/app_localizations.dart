@@ -11943,6 +11943,18 @@ abstract class AppLocalizations {
   /// **'Used for auxiliary work, such as generating conversation titles and commit messages. Automatic: the session\'s model (for commit messages, new sessions\' default); an upstream\'s by its Haiku tier.'**
   String get modelsAuxiliaryDescription;
 
+  /// No description provided for @modelsQuickAsk.
+  ///
+  /// In en, this message translates to:
+  /// **'Quick Ask Model'**
+  String get modelsQuickAsk;
+
+  /// No description provided for @modelsQuickAskDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Used only for the quick question and selection edit window. Follows the auxiliary model by default; does not change conversation models.'**
+  String get modelsQuickAskDescription;
+
   /// No description provided for @modelsAuxiliaryAuto.
   ///
   /// In en, this message translates to:
@@ -22596,6 +22608,186 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Show in Side Panel'**
   String get browserShowInPanel;
+
+  /// No description provided for @quickAskTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Quick Ask / Edit'**
+  String get quickAskTitle;
+
+  /// No description provided for @quickAskAsk.
+  ///
+  /// In en, this message translates to:
+  /// **'Ask'**
+  String get quickAskAsk;
+
+  /// No description provided for @quickAskEdit.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit selection'**
+  String get quickAskEdit;
+
+  /// No description provided for @quickAskNoSelection.
+  ///
+  /// In en, this message translates to:
+  /// **'Select code or conversation text for a focused answer.'**
+  String get quickAskNoSelection;
+
+  /// No description provided for @quickAskPrivacy.
+  ///
+  /// In en, this message translates to:
+  /// **'Only the selected excerpt and a small nearby context are sent to this model. No tools or full history.'**
+  String get quickAskPrivacy;
+
+  /// No description provided for @quickAskTruncated.
+  ///
+  /// In en, this message translates to:
+  /// **'This excerpt was shortened. Select a smaller range to edit it.'**
+  String get quickAskTruncated;
+
+  /// No description provided for @quickAskShowContext.
+  ///
+  /// In en, this message translates to:
+  /// **'Review context'**
+  String get quickAskShowContext;
+
+  /// No description provided for @quickAskHideContext.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide context'**
+  String get quickAskHideContext;
+
+  /// No description provided for @quickAskContextOn.
+  ///
+  /// In en, this message translates to:
+  /// **'Nearby context: on'**
+  String get quickAskContextOn;
+
+  /// No description provided for @quickAskContextOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Nearby context: off'**
+  String get quickAskContextOff;
+
+  /// No description provided for @quickAskSelection.
+  ///
+  /// In en, this message translates to:
+  /// **'Selected excerpt'**
+  String get quickAskSelection;
+
+  /// No description provided for @quickAskNearby.
+  ///
+  /// In en, this message translates to:
+  /// **'Nearby context'**
+  String get quickAskNearby;
+
+  /// No description provided for @quickAskQuestionHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Ask a question (up to 4,000 characters)'**
+  String get quickAskQuestionHint;
+
+  /// No description provided for @quickAskEditHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Describe how to change this selection'**
+  String get quickAskEditHint;
+
+  /// No description provided for @quickAskTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'The request timed out. Try again or choose another model.'**
+  String get quickAskTimeout;
+
+  /// No description provided for @quickAskFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not get an answer. Check the chosen model and connection, then retry.'**
+  String get quickAskFailed;
+
+  /// No description provided for @quickAskSourceChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'The source changed or closed. Select it again before applying. Your proposal is still available to copy.'**
+  String get quickAskSourceChanged;
+
+  /// No description provided for @quickAskCopyFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not copy the text. Select and copy it manually.'**
+  String get quickAskCopyFailed;
+
+  /// No description provided for @quickAskOriginal.
+  ///
+  /// In en, this message translates to:
+  /// **'Original selection'**
+  String get quickAskOriginal;
+
+  /// No description provided for @quickAskProposed.
+  ///
+  /// In en, this message translates to:
+  /// **'Proposed replacement (editable)'**
+  String get quickAskProposed;
+
+  /// No description provided for @quickAskApplyHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Apply replaces only the original selection as one undoable edit. Normal save settings still apply.'**
+  String get quickAskApplyHint;
+
+  /// No description provided for @quickAskCopyHint.
+  ///
+  /// In en, this message translates to:
+  /// **'This source is read-only here. Copy the replacement to use it.'**
+  String get quickAskCopyHint;
+
+  /// No description provided for @quickAskAnswer.
+  ///
+  /// In en, this message translates to:
+  /// **'Answer'**
+  String get quickAskAnswer;
+
+  /// No description provided for @quickAskCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied'**
+  String get quickAskCopied;
+
+  /// No description provided for @quickAskCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy'**
+  String get quickAskCopy;
+
+  /// No description provided for @quickAskApplied.
+  ///
+  /// In en, this message translates to:
+  /// **'Applied'**
+  String get quickAskApplied;
+
+  /// No description provided for @quickAskApply.
+  ///
+  /// In en, this message translates to:
+  /// **'Apply replacement'**
+  String get quickAskApply;
+
+  /// No description provided for @quickAskSendHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Ctrl/⌘ + Enter to send · Esc to close'**
+  String get quickAskSendHint;
+
+  /// No description provided for @quickAskStop.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop'**
+  String get quickAskStop;
+
+  /// No description provided for @quickAskSend.
+  ///
+  /// In en, this message translates to:
+  /// **'Send'**
+  String get quickAskSend;
 }
 
 class _AppLocalizationsDelegate

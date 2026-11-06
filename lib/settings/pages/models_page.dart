@@ -259,6 +259,27 @@ class _ModelsSettingsPageState extends State<ModelsSettingsPage> {
     );
   }
 
+  Widget _quickAskRow(BuildContext context) {
+    final l10n = context.l10n;
+    final shown = quickAskModelName(l10n, _providers);
+    return SettingsRow(
+      label: l10n.modelsQuickAsk,
+      description: l10n.modelsQuickAskDescription,
+      trailing: SettingsDropdown(
+        current: shown,
+        semanticLabel: l10n.modelsChoiceLabel(l10n.modelsQuickAsk, shown),
+        entries: () => auxiliaryModelEntries(
+          l10n,
+          _providers,
+          current: _providers.quickAskModel ?? ModelProviders.followAuxiliary,
+          auto: ModelProviders.followAuxiliary,
+          autoLabel: l10n.aiModelAuxiliary,
+          onPick: (model) => unawaited(_providers.setQuickAskModel(model)),
+        ),
+      ),
+    );
+  }
+
   /// The image model: what the agents make pictures with.
   Widget _imageRow(BuildContext context) {
     final l10n = context.l10n;
@@ -374,6 +395,7 @@ class _ModelsSettingsPageState extends State<ModelsSettingsPage> {
               ),
             ),
             _auxiliaryRow(context),
+            _quickAskRow(context),
             _imageRow(context),
           ],
         ),

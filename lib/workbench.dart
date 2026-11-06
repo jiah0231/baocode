@@ -87,6 +87,8 @@ import 'keybindings/default_keybindings.dart';
 import 'keybindings/key_chord.dart';
 import 'keybindings/keybinding_service.dart';
 import 'keybindings/window_keybindings.dart';
+import 'quick_ask/quick_ask_context.dart';
+import 'quick_ask/quick_ask_dialog.dart';
 import 'l10n/command_titles.dart';
 import 'l10n/l10n.dart';
 import 'notifications/attention_host.dart';
@@ -1120,6 +1122,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     final windows = _windows;
     final window = widget.window;
     final anyWindow = {
+      WindowCommandIds.quickAsk: () => unawaited(_openQuickAsk()),
       if (WindowControls.canFullScreen)
         WindowCommandIds.toggleFullScreen: () =>
             unawaited(WindowControls.toggleFullScreen(viewId: _viewId)),
@@ -1147,6 +1150,21 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         _workspace.layout = WorkspaceLayout.chat;
       },
     };
+  }
+
+  bool _quickAskOpen = false;
+
+  Future<void> _openQuickAsk() async {
+    if (_quickAskOpen || ChatKeys.isComposing || !mounted) return;
+    final focus = FocusManager.instance.primaryFocus;
+    final source = QuickAskContext.captureFocused();
+    _quickAskOpen = true;
+    try {
+      await showQuickAsk(context, source: source);
+    } finally {
+      _quickAskOpen = false;
+      if (mounted && focus?.context?.mounted == true) focus!.requestFocus();
+    }
   }
 
   /// The window's scale [steps] of [CodeFont.uiScaleStep] on (null: back
@@ -1452,6 +1470,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
     return [
       ?action(ChatCommandIds.newChat, Codicons.add),
+      ?action(WindowCommandIds.quickAsk, Codicons.sparkle),
       ?action(_customizeCommand, Codicons.plug),
       ?action(openSettingsCommandId, Codicons.settingsGear),
       ?action(openKeybindingsCommandId, Codicons.keyboard),

@@ -10,6 +10,7 @@ import 'package:baocode/chat/chat_session.dart';
 import 'package:baocode/chat/composer/composer_draft.dart';
 import 'package:baocode/chat/widgets/step_header.dart';
 import 'package:baocode/theme/app_theme.dart';
+import 'package:baocode/quick_ask/quick_ask_context.dart';
 import 'package:super_sliver_list/super_sliver_list.dart';
 
 /// Text left on the selection's list that is no longer there, far below:
@@ -125,6 +126,12 @@ void main() {
     await tester.pump();
     await mouse.up();
     await tester.pump();
+
+    final quickAsk = QuickAskContext.captureFocused();
+    expect(quickAsk?.selectedText, answer);
+    expect(quickAsk?.contextText, contains('Why does it fail?'));
+    expect(quickAsk?.applyReplacement, isNull);
+    expect(copied, isNull); // Capturing never reads or writes the clipboard.
 
     // Steps come in while the answer stays selected: the status row below
     // them moves down and says what comes next, both in one frame.
@@ -567,6 +574,13 @@ void main() {
     expect(copied, startsWith('Question 0?'));
     expect(copied, contains('Answer 30, at some length.'));
     expect(copied, endsWith('And a second line.'));
+    final quickAsk = QuickAskContext.captureFocused()!;
+    expect(quickAsk.selectedText, startsWith('Question 0?'));
+    expect(quickAsk.selectedText.length, lessThanOrEqualTo(8000));
+    expect(quickAsk.contextText.length, lessThanOrEqualTo(4000));
+    expect(quickAsk.selectedText, isNot(contains('Question 59?')));
+    expect(quickAsk.truncated, isTrue);
+    expect(quickAsk.applyReplacement, isNull);
   });
 
   testWidgets('text left on the selection\'s list, no longer registered, is '

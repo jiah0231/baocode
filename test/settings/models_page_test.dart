@@ -432,6 +432,39 @@ void main() {
     expect(find.text('Gateway · Flash'), findsOneWidget);
   });
 
+  testWidgets(
+    'quick questions pick a separate model with an auxiliary default',
+    (tester) async {
+      await providers.save(
+        const ModelProvider(
+          id: 'gw',
+          name: 'Gateway',
+          baseUrl: 'https://gw.example.com',
+          models: [ProviderModel(id: 'flash', label: 'Flash')],
+        ),
+      );
+      await pump(tester);
+      expect(find.text('Quick Ask Model'), findsOneWidget);
+      expect(find.text('Same as Auxiliary Model'), findsOneWidget);
+      await tester.tap(find.text('Same as Auxiliary Model'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Gateway').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Flash').last);
+      await tester.pumpAndSettle();
+      expect(providers.quickAskModel, '@gw/flash');
+      expect(providers.defaultModel, isNull);
+      expect(providers.auxiliaryModel, isNull);
+      expect(providers.actionsModel, isNull);
+      expect(find.text('Gateway · Flash'), findsOneWidget);
+      await tester.tap(find.text('Gateway · Flash'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Same as Auxiliary Model'));
+      await tester.pumpAndSettle();
+      expect(providers.quickAskModel, ModelProviders.followAuxiliary);
+    },
+  );
+
   testWidgets('a model is added by hand, and edited', (tester) async {
     await providers.save(
       const ModelProvider(

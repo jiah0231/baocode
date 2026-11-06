@@ -7357,6 +7357,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Used for auxiliary work, such as generating conversation titles and commit messages. Automatic: the session\'s model (for commit messages, new sessions\' default); an upstream\'s by its Haiku tier.';
 
   @override
+  String get modelsQuickAsk => 'Quick Ask Model';
+
+  @override
+  String get modelsQuickAskDescription =>
+      'Used only for the quick question and selection edit window. Follows the auxiliary model by default; does not change conversation models.';
+
+  @override
   String get modelsAuxiliaryAuto => 'Automatic';
 
   @override
@@ -13883,4 +13890,103 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get browserShowInPanel => 'Show in Side Panel';
+
+  @override
+  String get quickAskTitle => 'Quick Ask / Edit';
+
+  @override
+  String get quickAskAsk => 'Ask';
+
+  @override
+  String get quickAskEdit => 'Edit selection';
+
+  @override
+  String get quickAskNoSelection =>
+      'Select code or conversation text for a focused answer.';
+
+  @override
+  String get quickAskPrivacy =>
+      'Only the selected excerpt and a small nearby context are sent to this model. No tools or full history.';
+
+  @override
+  String get quickAskTruncated =>
+      'This excerpt was shortened. Select a smaller range to edit it.';
+
+  @override
+  String get quickAskShowContext => 'Review context';
+
+  @override
+  String get quickAskHideContext => 'Hide context';
+
+  @override
+  String get quickAskContextOn => 'Nearby context: on';
+
+  @override
+  String get quickAskContextOff => 'Nearby context: off';
+
+  @override
+  String get quickAskSelection => 'Selected excerpt';
+
+  @override
+  String get quickAskNearby => 'Nearby context';
+
+  @override
+  String get quickAskQuestionHint => 'Ask a question (up to 4,000 characters)';
+
+  @override
+  String get quickAskEditHint => 'Describe how to change this selection';
+
+  @override
+  String get quickAskTimeout =>
+      'The request timed out. Try again or choose another model.';
+
+  @override
+  String get quickAskFailed =>
+      'Could not get an answer. Check the chosen model and connection, then retry.';
+
+  @override
+  String get quickAskSourceChanged =>
+      'The source changed or closed. Select it again before applying. Your proposal is still available to copy.';
+
+  @override
+  String get quickAskCopyFailed =>
+      'Could not copy the text. Select and copy it manually.';
+
+  @override
+  String get quickAskOriginal => 'Original selection';
+
+  @override
+  String get quickAskProposed => 'Proposed replacement (editable)';
+
+  @override
+  String get quickAskApplyHint =>
+      'Apply replaces only the original selection as one undoable edit. Normal save settings still apply.';
+
+  @override
+  String get quickAskCopyHint =>
+      'This source is read-only here. Copy the replacement to use it.';
+
+  @override
+  String get quickAskAnswer => 'Answer';
+
+  @override
+  String get quickAskCopied => 'Copied';
+
+  @override
+  String get quickAskCopy => 'Copy';
+
+  @override
+  String get quickAskApplied => 'Applied';
+
+  @override
+  String get quickAskApply => 'Apply replacement';
+
+  @override
+  String get quickAskSendHint => 'Ctrl/⌘ + Enter to send · Esc to close';
+
+  @override
+  String get quickAskStop => 'Stop';
+
+  @override
+  String get quickAskSend => 'Send';
 }
