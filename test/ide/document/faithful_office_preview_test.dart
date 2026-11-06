@@ -141,7 +141,7 @@ void main() {
       final first = await host.opened();
       final bounds = host.of('open').single;
       expect(bounds['format'], 'pdf');
-      expect(bounds['y'], 28.0);
+      expect(bounds['y'], 28.0 * tester.view.devicePixelRatio);
       await host.event(first, 'openExternal');
       await host.event(first, 'reload');
       expect(externalOpens, 1, reason: 'Unloaded hosts cannot request actions.');
@@ -295,7 +295,7 @@ void main() {
     );
   }, timeout: _timeout);
 
-  testWidgets('completed preflight does not retain the previous test zone', (
+  testWidgets('native reload does not retain a previous preview test zone', (
     tester,
   ) async {
     final host = _Host(tester);
@@ -313,6 +313,13 @@ void main() {
     expect(host.of('open').single['format'], 'pptx');
     await host.event(id, 'ready');
     await host.event(id, 'loaded');
+    await host.event(id, 'reload');
+    final reloaded = await host.opened(2);
+    expect(reloaded, isNot(id));
+    expect(reads, 2);
+    expect(host.of('dispose').map((args) => args['id']), contains(id));
+    await host.event(reloaded, 'ready');
+    await host.event(reloaded, 'loaded');
   }, timeout: _timeout);
 
   testWidgets('switching files ignores the cancelled read and stale events', (

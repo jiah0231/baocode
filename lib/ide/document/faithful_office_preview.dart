@@ -99,6 +99,7 @@ abstract final class _OfficeHost {
   static final clients = <int, _FaithfulOfficePreviewState>{};
   static int nextId = 0;
   static bool listening = false;
+  static bool framesRegistered = false;
 
   static int register(_FaithfulOfficePreviewState state) {
     if (!listening) {
@@ -109,6 +110,9 @@ abstract final class _OfficeHost {
         if (args is! Map || args['id'] is! int) return;
         clients[args['id']]?._event(args);
       });
+    }
+    if (!framesRegistered) {
+      framesRegistered = true;
       // No polling or self-scheduled frames. Reposition only on app frames,
       // after layout, including split resizing, UI zoom and tab visibility.
       WidgetsBinding.instance.addPersistentFrameCallback((_) {
@@ -129,6 +133,12 @@ abstract final class _OfficeHost {
 
   static void close(int id) {
     clients.remove(id);
+    if (clients.isEmpty) {
+      // Channel callbacks retain their registration zone. Release the idle
+      // handler so a later preview's reload runs in its own active lifetime.
+      channel.setMethodCallHandler(null);
+      listening = false;
+    }
     unawaited(invoke('dispose', {'id': id}).catchError((Object _) {}));
   }
 }
