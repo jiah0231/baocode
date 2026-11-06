@@ -45,7 +45,7 @@ try {
   Install $old (Join-Path $root 'old-install.log')
   Assert-Version $exe $baseline
   if (!(Test-Path (Join-Path $appDir 'unins000.exe'))) { throw 'Missing installation marker' }
-  # No running app: exercise same-product same-marketing-version replacement,
+  # No running app: exercise same-product replacement across marketing/build versions,
   # not forced process closure. WAITPID/quit guards remain unit-tested separately.
   Install $new (Join-Path $root 'upgrade.log')
   Assert-Version $exe $expected

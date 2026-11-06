@@ -112,6 +112,28 @@ jobs:
           test/models/codex_test.dart
           test/models/proxy/model_proxy_test.dart
           test/models/proxy/translate/claude_from_responses_request_test.dart
+      # Every test file added or changed between the +39 upstream base and e92b7cf.
+      # Additional model/usage/window suites cover the related production changes.
+      - name: Test v1.9.1 chat, sidebar, model, window and agent regressions
+        run: >-
+          flutter test --no-pub --reporter expanded --timeout 2m
+          test/chat/message_edit_visibility_test.dart
+          test/chat/side_panel/side_panel_test.dart
+          test/chat/step_folds_test.dart
+          test/composer_test.dart
+          test/ide/git/log_details_layout_test.dart
+          test/kernel/subagent_model_kernel_test.dart
+          test/kernel_test.dart
+          test/keybindings/window_keybindings_test.dart
+          test/models/models_test.dart
+          test/models/model_welcome_test.dart
+          test/settings/models_page_test.dart
+          test/sidebar_test.dart
+          test/usage_panel_test.dart
+          test/usage/usage_calls_list_test.dart
+          test/window
+          packages/bao_agent/test/engine/edges_test.dart
+          packages/bao_agent/test/engine/turns_test.dart
       - uses: actions/setup-node@v4
         with:
           node-version: '24.12.0'
@@ -399,17 +421,21 @@ jobs:
           $app.Refresh()
           if ($app.HasExited) { throw "Startup failed: $($app.ExitCode)" }
           Stop-Process -Id $app.Id
+      - name: Test native Windows session-end shutdown and relaunch
+        timeout-minutes: 5
+        shell: pwsh
+        run: ./tool/ci/windows_session_end_smoke.ps1 -Executable build/windows/x64/runner/Release/baocode.exe
       - name: Fetch permanent pinned release for isolated upgrade test
         shell: pwsh
         run: |
           # Public versioned URL + verified hash and size; no expiring Actions artifact.
-          # Source: 2a334af70cb457045b9a963b3c156312d6a7f0f2, release custom-v1.9.0+38.
+          # Source: e6663e67aec9f905f7583863ae5f94105d1767da, release custom-v1.9.0+39.
           $baseline = Join-Path $env:RUNNER_TEMP 'baseline-installer'
           New-Item -ItemType Directory -Force $baseline | Out-Null
           $setup = Join-Path $baseline 'BaoCode-1.9.0-setup.exe'
-          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.9.0%2B38/BaoCode-1.9.0-setup.exe' -OutFile $setup
-          if ((Get-Item $setup).Length -ne 36812981) { throw 'Pinned release Setup size mismatch' }
-          if ((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() -ne '28194813e346c81a2542f745ca99447d630700448dd807417b0e2441fc73faea') { throw 'Pinned release Setup checksum mismatch' }
+          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.9.0%2B39/BaoCode-1.9.0-setup.exe' -OutFile $setup
+          if ((Get-Item $setup).Length -ne 36800952) { throw 'Pinned release Setup size mismatch' }
+          if ((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() -ne 'a23fa154bbc4e65688d30e8a314d757d63e2e43023621838193006f1540cbd81') { throw 'Pinned release Setup checksum mismatch' }
       - name: Install pinned release then replace in isolated per-user directory
         shell: pwsh
         run: |
@@ -417,7 +443,7 @@ jobs:
           $new = @(Get-ChildItem build/installers -Filter '*-setup.exe')
           if ($new.Count -ne 1) { throw 'Expected one new Setup' }
           $version = (Select-String -Path pubspec.yaml -Pattern '^version: (.+)$').Matches[0].Groups[1].Value
-          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.9.0+38
+          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.9.0+39
       - uses: actions/upload-artifact@v6
         with:
           name: custom-installer
