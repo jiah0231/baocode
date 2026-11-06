@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:baocode/chat/side_panel/file_open.dart';
 import 'package:baocode/chat/side_panel/file_preview.dart';
