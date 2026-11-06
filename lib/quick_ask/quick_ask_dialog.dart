@@ -142,8 +142,9 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
         _busy ||
         _applied ||
         _answer == null ||
-        _mode != QuickAskMode.edit)
+        _mode != QuickAskMode.edit) {
       return;
+    }
     setState(() => _applying = true);
     var applied = false;
     try {
@@ -313,8 +314,9 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
                                         ? null
                                         : () {
                                             final anchor = anchorOf(context);
-                                            if (anchor != null)
+                                            if (anchor != null) {
                                               unawaited(_pickModel(anchor));
+                                            }
                                           },
                                   ),
                                 ),
@@ -444,8 +446,9 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
                                     maxLines: 12,
                                     semanticsLabel: l10n.quickAskProposed,
                                     onChanged: (_) {
-                                      if (_copied)
+                                      if (_copied) {
                                         setState(() => _copied = false);
+                                      }
                                     },
                                   ),
                                 const SizedBox(height: 6),

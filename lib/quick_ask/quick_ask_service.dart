@@ -57,11 +57,10 @@ Future<String> _request(
 /// a conversation, looks up files, applies edits, or saves the result.
 class QuickAskService {
   QuickAskService({
-    ModelProviders? providers,
+    this._providers,
     QuickAskRequester? request,
     this.timeout = const Duration(seconds: 90),
-  }) : _providers = providers,
-       _ask = request ?? _request;
+  }) : _ask = request ?? _request;
 
   final ModelProviders? _providers;
   final QuickAskRequester _ask;
