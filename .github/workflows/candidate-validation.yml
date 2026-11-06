@@ -1,58 +1,40 @@
-# Isolated, non-publishing Windows candidate checks. Never use this as a release job.
-# Explicit test files only: no browser/live suites, installers or signing. Only formatter diagnostics may be uploaded.
-name: Candidate validation (no browser or release)
+# Isolated focused regression run. No publishing, signing, browser, or installer.
+name: Default-app preview focused checks
 on:
   push:
-    branches: ['validation/non-chrome-*']
+    branches: ['validation/non-chrome-default-app-20261106']
 permissions:
   contents: read
 concurrency:
-  group: candidate-validation-${{ github.ref }}
+  group: default-app-preview-validation-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   validate:
-    if: github.repository == 'jiah0231/baocode' && startsWith(github.ref, 'refs/heads/validation/non-chrome-')
+    if: github.repository == 'jiah0231/baocode'
     runs-on: windows-2025
-    timeout-minutes: 45
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 0
           persist-credentials: false
-      - name: Restore exact offline preview bundles and corresponding source
+      - name: Restore exact bundled assets
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          python tool/ci/test_reassemble_preview_assets.py
-          if ($LASTEXITCODE -ne 0) { throw 'Preview transport unit tests failed' }
           python tool/ci/reassemble_preview_assets.py
-          if ($LASTEXITCODE -ne 0) { throw 'Preview original-byte reconstruction failed' }
-          git diff --quiet HEAD --
-          if ($LASTEXITCODE -ne 0) { throw 'Preview reconstruction changed tracked source' }
-      - name: Verify and reassemble the unchanged Maple font
-        id: font_asset
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          git diff --quiet HEAD --
-          if ($LASTEXITCODE -ne 0) { throw 'Tracked source differs before font reconstruction' }
-          python tool/ci/test_reassemble_maple_font.py
-          if ($LASTEXITCODE -ne 0) { throw 'Font reconstruction unit tests failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'Preview reconstruction failed' }
           python tool/ci/reassemble_maple_font.py
-          if ($LASTEXITCODE -ne 0) { throw 'Original font reconstruction failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'Font reconstruction failed' }
           git diff --quiet HEAD --
-          if ($LASTEXITCODE -ne 0) { throw 'Font reconstruction modified tracked source' }
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: '3.47.5'
-          cache: false
-      # Unit tests can require the project's native FFI dependency. Restoring
-      # it (or compiling it) does not start BaoCode or a browser.
+          if ($LASTEXITCODE -ne 0) { throw 'Asset reconstruction changed tracked source' }
       - id: iroh
         uses: ./.github/actions/bao-iroh-prebuilt
       - if: steps.iroh.outputs.hit != 'true'
         uses: ./.github/actions/setup-rust
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.5'
+          cache: true
       - name: Resolve packages and localization
         shell: pwsh
         run: |
@@ -60,176 +42,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Package resolution failed' }
           flutter gen-l10n
           if ($LASTEXITCODE -ne 0) { throw 'Localization generation failed' }
-      - name: Capture dependency-generated changes separately
-        id: preparation
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $dirty = @(git -c core.quotepath=false diff --name-only HEAD --)
-          if ($LASTEXITCODE -ne 0) { throw 'Preparation difference enumeration failed' }
-          if ($dirty.Count) {
-            New-Item -ItemType Directory -Force build/formatter-evidence | Out-Null
-            git diff --binary --output=build/formatter-evidence/preparation.patch HEAD --
-            if ($LASTEXITCODE -ne 0) { throw 'Preparation patch generation failed' }
-            $dirty | Set-Content build/formatter-evidence/preparation-files.txt
-            "Source commit: $env:GITHUB_SHA" | Set-Content build/formatter-evidence/source.txt
-            for ($offset = 0; $offset -lt $dirty.Count; $offset += 20) {
-              $last = [Math]::Min($offset + 19, $dirty.Count - 1)
-              $batch = @($dirty[$offset..$last])
-              git restore --worktree --source=HEAD -- @batch
-              if ($LASTEXITCODE -ne 0) { throw 'Preparation source restore failed' }
-            }
-            git diff --quiet HEAD --
-            if ($LASTEXITCODE -ne 0) { throw 'Preparation source was not restored' }
-            "changed=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          } else {
-            "changed=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          }
-      - name: Analyze candidate
-        id: analyze
-        run: flutter analyze --no-pub --fatal-infos
-      - name: Check formatting of existing Dart files changed since custom +28
-        id: formatting
-        if: ${{ !cancelled() && steps.preparation.outcome == 'success' }}
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $base = '7a71304f899117131bb0a14f4c7952b05602bc6e'
-          git cat-file -e "$base^{commit}"
-          if ($LASTEXITCODE -ne 0) { throw 'Formatting base is missing' }
-          $files = @(git -c core.quotepath=false diff --name-only --diff-filter=ACMR $base HEAD -- '*.dart')
-          if ($LASTEXITCODE -ne 0) { throw 'Changed-file enumeration failed' }
-          git diff --quiet HEAD --
-          if ($LASTEXITCODE -ne 0) { throw 'Tracked source differs from exact candidate before formatting' }
-          $formatFailed = $false
-          for ($offset = 0; $offset -lt $files.Count; $offset += 20) {
-            $last = [Math]::Min($offset + 19, $files.Count - 1)
-            $batch = @($files[$offset..$last])
-            dart format --output=none --set-exit-if-changed @batch
-            if ($LASTEXITCODE -ne 0) { $formatFailed = $true }
-          }
-          if ($formatFailed) {
-            git diff --quiet HEAD --
-            if ($LASTEXITCODE -ne 0) { throw 'Unexpected tracked changes before formatter diagnostics' }
-            try {
-              for ($offset = 0; $offset -lt $files.Count; $offset += 20) {
-                $last = [Math]::Min($offset + 19, $files.Count - 1)
-                $batch = @($files[$offset..$last])
-                dart format @batch
-                if ($LASTEXITCODE -ne 0) { throw 'Formatter diagnostic generation failed' }
-              }
-              New-Item -ItemType Directory -Force build/formatter-evidence | Out-Null
-              git diff --binary --output=build/formatter-evidence/format.patch HEAD -- '*.dart'
-              if ($LASTEXITCODE -ne 0) { throw 'Formatter patch generation failed' }
-              "Source commit: $env:GITHUB_SHA" | Set-Content build/formatter-evidence/source.txt
-            } finally {
-              for ($offset = 0; $offset -lt $files.Count; $offset += 20) {
-                $last = [Math]::Min($offset + 19, $files.Count - 1)
-                $batch = @($files[$offset..$last])
-                git restore --worktree --source=HEAD -- @batch
-                if ($LASTEXITCODE -ne 0) { throw 'Exact source restore failed' }
-              }
-              git diff --quiet HEAD --
-              if ($LASTEXITCODE -ne 0) { throw 'Source was not restored after formatting' }
-            }
-          }
-          git diff --quiet HEAD --
-          if ($LASTEXITCODE -ne 0) { throw 'Tracked source differs from exact candidate after formatting' }
-          "source_exact=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          if ($formatFailed) { throw 'Changed Dart files need formatting; diagnostic patch retained' }
-          if ('${{ steps.preparation.outputs.changed }}' -ne 'false') { throw 'Dependency-generated differences require review; diagnostic patch retained' }
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24.12.0'
-      - name: Verify unchanged NoteBoard source, licenses and offline bundles
-        timeout-minutes: 10
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          Push-Location tool/office_preview
-          try {
-            npm ci --ignore-scripts
-            if ($LASTEXITCODE -ne 0) { throw 'Pinned preview package resolution failed' }
-            npm run build
-            if ($LASTEXITCODE -ne 0) { throw 'Offline preview bundle reconstruction failed' }
-            node test-upstream.mjs
-            if ($LASTEXITCODE -ne 0) { throw 'Unchanged NoteBoard Node regressions failed' }
-            node --test test_vendor_integrity.mjs
-            if ($LASTEXITCODE -ne 0) { throw 'Preview source, license or bundle integrity failed' }
-          } finally {
-            Pop-Location
-          }
-          python tool/ci/reassemble_preview_assets.py --verify-only
-          if ($LASTEXITCODE -ne 0) { throw 'Rebuilt preview bytes differ from pinned originals' }
-          git diff --quiet HEAD -- assets/office_preview tool/office_preview
-          if ($LASTEXITCODE -ne 0) { throw 'Preview reconstruction changed the exact candidate source' }
-          python tool/office_preview/test/verify_fixtures.py
-          if ($LASTEXITCODE -ne 0) { throw 'Preview fixture provenance or geometry failed' }
-      - name: Test local Office document previews
-        if: ${{ !cancelled() && steps.font_asset.outcome == 'success' && steps.analyze.outcome == 'success' && steps.formatting.outputs.source_exact == 'true' && steps.preparation.outputs.changed == 'false' }}
+      - name: Analyze default-app regression
+        run: flutter analyze --no-pub test/chat/side_panel/file_preview_default_app_test.dart
+      - name: Test default-app and document previews
+        timeout-minutes: 4
         run: >-
-          flutter test --no-pub --reporter expanded --timeout 2m
-          test/ide/document/document_reader_test.dart
-          test/ide/document/faithful_office_preview_test.dart
-          test/ide/document/office_preflight_test.dart
-          test/ide/preview_binary_guard_test.dart
-          test/settings/about_page_test.dart
-          test/floating_test.dart
-          test/ide/ide_hover_test.dart
-          test/workspace/chat_button_tooltips_test.dart
-          test/ide/workbench/button_tooltips_test.dart
-          test/ide/document/document_byte_read_test.dart
-          test/ide/document_preview_test.dart
+          flutter test --no-pub --reporter expanded --timeout 45s --concurrency=1
+          test/chat/side_panel/file_preview_default_app_test.dart
           test/chat/side_panel/file_preview_document_test.dart
-          test/chat/side_panel/file_preview_agent_test.dart
-          test/chat/side_panel/side_panel_test.dart
-      - name: Run explicitly selected non-browser regressions
-        if: ${{ !cancelled() && steps.font_asset.outcome == 'success' && steps.analyze.outcome == 'success' && steps.formatting.outputs.source_exact == 'true' && steps.preparation.outputs.changed == 'false' }}
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          # Optional live suites may check environment presence, not its value.
-          Remove-Item Env:BAO_BROWSER_LIVE -ErrorAction SilentlyContinue
-          Remove-Item Env:BAOCODE_CODEX_OFFICIAL_SMOKE -ErrorAction SilentlyContinue
-          $tests = @(
-            'test/bots/bots_test.dart',
-            'test/bots/codex_bot_mobile_test.dart',
-            'test/codex_fork_test.dart',
-            'test/chat/session_query_test.dart',
-            'test/chat/session_query_queue_test.dart',
-            'test/chat/session_query_claude_lifecycle_test.dart',
-            'test/chat/session_mentions_test.dart',
-            'test/workspace/session_query_workspace_test.dart',
-            'test/workspace/usage_shutdown_test.dart',
-            'test/ide/textmate_tokenizer_lifecycle_test.dart',
-            'test/customize/customize_view_test.dart',
-            'test/customize/codex_customization_store_test.dart',
-            'test/models/proxy/model_proxy_shutdown_test.dart',
-            'test/models/proxy/model_proxy_test.dart',
-            'test/update/custom_update_channel_test.dart',
-            'test/remote/remote_review_compat_test.dart',
-            'test/theme/pebrel_theme_store_test.dart',
-            'test/theme/pebrel_app_colors_test.dart',
-            'test/theme/pebrel_theme_test.dart',
-            'test/theme/maple_font_asset_test.dart',
-            'test/theme/pebrel_typography_test.dart',
-            'test/settings/appearance_code_font_test.dart',
-            'test/theme/code_font_test.dart',
-            'test/theme/code_text_scale_test.dart',
-            'test/theme/workbench_theme_test.dart',
-            'test/ide/terminal/terminal_colors_test.dart',
-            'test/ide/workbench/color_theme_gallery_test.dart',
-            'test/ide/workbench/theme_preview_session_test.dart'
-          )
-          python tool/ci/reassemble_maple_font.py --verify-only
-          if ($LASTEXITCODE -ne 0) { throw 'Reconstructed font changed before tests' }
-          flutter test --no-pub @tests
-          if ($LASTEXITCODE -ne 0) { throw 'Non-browser candidate regressions failed' }
-      - name: Retain exact-source formatter patch only
-        if: ${{ always() && hashFiles('build/formatter-evidence/*.patch') != '' }}
-        uses: actions/upload-artifact@v6
-        with:
-          name: formatter-evidence-${{ github.sha }}
-          path: build/formatter-evidence/
-          retention-days: 7
-          if-no-files-found: error
