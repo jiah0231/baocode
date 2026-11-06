@@ -1356,7 +1356,9 @@ void main() {
     test('Ultra reaches an Anthropic-compatible upstream unchanged', () async {
       chat = chat.copyWith(
         protocol: ProviderProtocol.anthropic,
-        models: const [ProviderModel(id: 'gpt-5', efforts: ['low', 'ultra'])],
+        models: const [
+          ProviderModel(id: 'gpt-5', efforts: ['low', 'ultra']),
+        ],
       );
       final answer = await post(
         await on('gw'),
