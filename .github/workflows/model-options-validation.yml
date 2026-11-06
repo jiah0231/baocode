@@ -94,6 +94,7 @@ jobs:
           test/models/models_test.dart
           test/models/codex_test.dart
           test/models/proxy/model_proxy_test.dart
+          test/models/proxy/translate/claude_from_responses_request_test.dart
       - name: Run existing Codex adapter regressions
         if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
         run: >-

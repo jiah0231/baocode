@@ -1354,7 +1354,10 @@ void main() {
     }
 
     test('Ultra reaches an Anthropic-compatible upstream unchanged', () async {
-      chat = chat.copyWith(protocol: ProviderProtocol.anthropic);
+      chat = chat.copyWith(
+        protocol: ProviderProtocol.anthropic,
+        models: const [ProviderModel(id: 'gpt-5', efforts: ['low', 'ultra'])],
+      );
       final answer = await post(
         await on('gw'),
         {
@@ -1368,6 +1371,7 @@ void main() {
       expect(answer.status, 200);
       final sent = relay.requests.single.body! as Map;
       expect(sent['model'], 'gpt-5');
+      expect(sent['thinking'], {'type': 'adaptive'});
       expect((sent['output_config'] as Map)['effort'], 'ultra');
     });
 

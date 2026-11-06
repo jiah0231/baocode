@@ -4,6 +4,17 @@ import 'package:baocode/models/proxy/translate/claude_from_responses_request.dar
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('Ultra stays a named adaptive effort, never a guessed budget', () {
+    final claude = convertResponsesRequestToClaude(
+      {'input': 'hi'},
+      model: 'gpt-6.1-sol',
+      thinkingEffort: 'ultra',
+      maxTokens: 32000,
+    );
+    expect(claude['thinking'], {'type': 'adaptive'});
+    expect(claude['output_config'], {'effort': 'ultra'});
+  });
+
   test('instructions and the conversation as Anthropic\'s messages', () {
     final claude = convertResponsesRequestToClaude({
       'model': 'gpt-5',
@@ -188,6 +199,7 @@ void main() {
 
     expect(thinking('low'), {'type': 'enabled', 'budget_tokens': 2048});
     expect(thinking('high'), {'type': 'enabled', 'budget_tokens': 16000});
+    expect(thinking('xhigh'), {'type': 'enabled', 'budget_tokens': 24000});
     // Less than the reply may be.
     expect(thinking('high', maxTokens: 4000), {
       'type': 'enabled',
