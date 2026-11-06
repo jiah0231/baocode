@@ -367,13 +367,13 @@ jobs:
         shell: pwsh
         run: |
           # Public versioned URL + verified hash and size; no expiring Actions artifact.
-          # Source: 2b437301ece2ddb9796bdc5305470dabbee2e617, release custom-v1.9.0+34.
+          # Source: de8dae9545254ec9b5dc16d7a9dce772c4be1b00, release custom-v1.9.0+35.
           $baseline = Join-Path $env:RUNNER_TEMP 'baseline-installer'
           New-Item -ItemType Directory -Force $baseline | Out-Null
           $setup = Join-Path $baseline 'BaoCode-1.9.0-setup.exe'
-          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.9.0%2B34/BaoCode-1.9.0-setup.exe' -OutFile $setup
-          if ((Get-Item $setup).Length -ne 36680198) { throw 'Pinned release Setup size mismatch' }
-          if ((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() -ne '164999a4e733c0b95bccf79eb8c4e13ca384144f163eaff08e3f169dec8d940b') { throw 'Pinned release Setup checksum mismatch' }
+          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.9.0%2B35/BaoCode-1.9.0-setup.exe' -OutFile $setup
+          if ((Get-Item $setup).Length -ne 36799046) { throw 'Pinned release Setup size mismatch' }
+          if ((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() -ne '2ca55a2c394f726fbbc997099d37146a832959123ae1d6e601e9b4e8f1c7d4ca') { throw 'Pinned release Setup checksum mismatch' }
       - name: Install pinned release then replace in isolated per-user directory
         shell: pwsh
         run: |
@@ -381,7 +381,7 @@ jobs:
           $new = @(Get-ChildItem build/installers -Filter '*-setup.exe')
           if ($new.Count -ne 1) { throw 'Expected one new Setup' }
           $version = (Select-String -Path pubspec.yaml -Pattern '^version: (.+)$').Matches[0].Groups[1].Value
-          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.9.0+34
+          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.9.0+35
       - uses: actions/upload-artifact@v6
         with:
           name: custom-installer
