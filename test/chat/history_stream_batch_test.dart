@@ -111,7 +111,9 @@ void main() {
     await tester.pump();
     think('Latest thought');
     await tester.pump(const Duration(milliseconds: 250));
-    final thought = tester.widget<ThinkingSection>(find.byType(ThinkingSection));
+    final thought = tester.widget<ThinkingSection>(
+      find.byType(ThinkingSection),
+    );
     expect(thought.text, contains('First thought'));
     expect(thought.text, contains('Latest thought'));
     expect(thought.text, isNot(contains('Immediate thought')));

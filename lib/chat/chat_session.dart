@@ -1003,7 +1003,8 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
     }
 
     return switch (event) {
-      ItemUpserted(:final id, :final item) => item is ToolCallItem || wasTool(id),
+      ItemUpserted(:final id, :final item) =>
+        item is ToolCallItem || wasTool(id),
       ItemCompleted(:final id, :final item) =>
         item != null && (item is ToolCallItem || wasTool(id)),
       ItemRemoved() ||
