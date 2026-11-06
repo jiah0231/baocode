@@ -16,7 +16,13 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: custom-update-release
+  # Ordinary branch creation must not occupy (or replace a pending run in)
+  # the real release queue. The jobs below apply the same release gate.
+  group: >-
+    ${{ (github.event_name == 'workflow_dispatch' ||
+         (github.event.ref_type == 'branch' && startsWith(github.event.ref, 'custom-publish/v') &&
+          endsWith(github.event.ref, format('/{0}', github.sha)))) &&
+        'custom-update-release' || format('custom-update-noop-{0}', github.run_id) }}
   cancel-in-progress: false
 jobs:
   build:
