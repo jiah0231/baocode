@@ -11,7 +11,6 @@ import '../../customize/codex_prompts.dart';
 import '../../remote/remote_customization_disk.dart';
 import '../../remote/ssh_host.dart';
 import '../../chat/review/unpatch.dart';
-import '../../icons/brand_logos.dart';
 import '../../models/launch_environment.dart'
     show ProxyEndpoint, fastModelSuffix;
 import '../../models/model_icons.dart';
@@ -1230,41 +1229,42 @@ class CodexKernel
     if (emit) emitInfoChanged();
   }
 
+  /// Native sessions keep their exact current model, but not a second
+  /// catalog beside BaoCode's managed providers. The ungrouped row keeps
+  /// the selected model and its settings honest without changing its route.
+  KernelOption _nativeOption(String id) =>
+      _models.where((option) => option.id == id).firstOrNull ??
+      KernelOption(
+        id,
+        id == 'default' ? 'Default' : id,
+        Icons.bolt_rounded,
+        '',
+        iconBuilder: _modelIcon(_builtinProvider, id),
+      );
+
   void _syncModelOptions() {
+    final providers = _providers.enabled;
+    final native = parseModelRef(_modelId) == null ? _modelId : null;
     _modelOptions
       ..clear()
       ..addAll([
-        // Keep native choices for native conversations and as a fallback
-        // without managed models, not as a duplicate group in managed chats.
-        if (_providers.enabled.isEmpty ||
-            (_modelId != null && parseModelRef(_modelId) == null) ||
+        if (providers.isEmpty) ...[
+          // Without a managed provider, native models remain usable. They
+          // no longer create a separate Codex heading in the picker.
+          ..._models,
+          if (_models.isEmpty ||
+              (native != null &&
+                  native != 'default' &&
+                  !_models.any((option) => option.id == native)))
+            _nativeOption(native ?? 'default'),
+        ] else if (native != null ||
             (_context.resume != null && _modelId == null))
-          ...(_models.isNotEmpty
-              ? _models
-              : [
-                  if (_modelId case final id?
-                      when id != 'default' && parseModelRef(id) == null)
-                    KernelOption(
-                      id,
-                      id,
-                      Icons.bolt_rounded,
-                      '',
-                      group: _builtinGroup,
-                      iconBuilder: _modelIcon(_builtinProvider, id),
-                    )
-                  else
-                    KernelOption(
-                      'default',
-                      'Default',
-                      Icons.bolt_rounded,
-                      '',
-                      group: _builtinGroup,
-                      iconBuilder: _modelIcon(_builtinProvider, 'default'),
-                    ),
-                ]),
+          // A cold native resume may not have reported its model yet.
+          // Keep Default until it does, rather than choosing a managed row.
+          _nativeOption(native ?? 'default'),
         // BaoCode's own: the same models Claude Code runs, each in its
         // provider's group.
-        for (final provider in _providers.enabled)
+        for (final provider in providers)
           for (final info in provider.enabledModels)
             KernelOption(
               modelRef(provider.id, info.id),
@@ -1285,15 +1285,8 @@ class CodexKernel
       ]);
   }
 
-  /// The server's own models' heading, and the id their icons are drawn
-  /// for.
+  /// The provider id used to draw the server's own model icons.
   static const _builtinProvider = 'codex';
-
-  static final _builtinGroup = KernelOptionGroup(
-    _builtinProvider,
-    'Codex',
-    iconBuilder: (size, color) => BrandLogo('openai', size: size, color: color),
-  );
 
   /// Provider [id]'s icon, as its models' heading shows it.
   static Widget Function(double, Color) _providerIcon(String id) =>
@@ -1381,7 +1374,6 @@ class CodexKernel
           raw['displayName'] as String? ?? id,
           Icons.bolt_rounded,
           raw['description'] as String? ?? '',
-          group: _builtinGroup,
           iconBuilder: _modelIcon(_builtinProvider, id),
         ),
       );

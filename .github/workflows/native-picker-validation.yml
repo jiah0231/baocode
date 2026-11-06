@@ -1,0 +1,71 @@
+# Isolated model-picker checks. This workflow never publishes or installs BaoCode.
+name: Validate native picker removal
+on:
+  create:
+permissions:
+  contents: read
+jobs:
+  check:
+    if: >-
+      github.repository == 'jiah0231/baocode' &&
+      github.event.ref_type == 'branch' &&
+      startsWith(github.event.ref, 'validation/native-picker-')
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Reconstruct checked assets
+        shell: pwsh
+        run: |
+          python tool/ci/reassemble_preview_assets.py
+          if ($LASTEXITCODE -ne 0) { throw 'Preview reconstruction failed' }
+          python tool/ci/reassemble_maple_font.py
+          if ($LASTEXITCODE -ne 0) { throw 'Font reconstruction failed' }
+      - uses: ./.github/actions/bao-iroh-prebuilt
+      - uses: ./.github/actions/setup-rust
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.5'
+          cache: true
+      - name: Prepare dependencies
+        shell: pwsh
+        run: |
+          flutter pub get
+          if ($LASTEXITCODE -ne 0) { throw 'Package resolution failed' }
+          flutter gen-l10n
+          if ($LASTEXITCODE -ne 0) { throw 'Localization generation failed' }
+      - name: Analyze exact candidate
+        id: analyze
+        run: flutter analyze --no-pub --fatal-infos
+      - name: Check changed Dart formatting
+        id: format
+        shell: pwsh
+        run: |
+          $files = @('lib/kernel/codex/codex_kernel.dart', 'test/kernel/codex_model_picker_test.dart')
+          dart format --output=none --set-exit-if-changed @files
+          if ($LASTEXITCODE -ne 0) {
+            dart format @files
+            New-Item -ItemType Directory -Force build/formatter-evidence | Out-Null
+            git diff --binary --output=build/formatter-evidence/format.patch HEAD -- @files
+            git restore --source=HEAD -- @files
+            throw 'Changed Dart files need formatting; diagnostic patch retained'
+          }
+      - name: Test model choices, menu and conversation routing
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
+        run: >-
+          flutter test --no-pub --reporter expanded --timeout 2m
+          test/kernel/codex_model_picker_test.dart
+          test/kernel/codex_provider_route_test.dart
+          test/chat/model_picker_test.dart
+          test/kernel_test.dart
+      - name: Preserve formatter diagnostics
+        if: ${{ always() && hashFiles('build/formatter-evidence/*.patch') != '' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: native-picker-format
+          path: build/formatter-evidence/format.patch
+          retention-days: 2
