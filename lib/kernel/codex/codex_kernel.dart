@@ -1240,28 +1240,28 @@ class CodexKernel
             (_modelId != null && parseModelRef(_modelId) == null) ||
             (_context.resume != null && _modelId == null))
           ...(_models.isNotEmpty
-            ? _models
-            : [
-                if (_modelId case final id?
-                    when id != 'default' && parseModelRef(id) == null)
-                  KernelOption(
-                    id,
-                    id,
-                    Icons.bolt_rounded,
-                    '',
-                    group: _builtinGroup,
-                    iconBuilder: _modelIcon(_builtinProvider, id),
-                  )
-                else
-                  KernelOption(
-                    'default',
-                    'Default',
-                    Icons.bolt_rounded,
-                    '',
-                    group: _builtinGroup,
-                    iconBuilder: _modelIcon(_builtinProvider, 'default'),
-                  ),
-              ]),
+              ? _models
+              : [
+                  if (_modelId case final id?
+                      when id != 'default' && parseModelRef(id) == null)
+                    KernelOption(
+                      id,
+                      id,
+                      Icons.bolt_rounded,
+                      '',
+                      group: _builtinGroup,
+                      iconBuilder: _modelIcon(_builtinProvider, id),
+                    )
+                  else
+                    KernelOption(
+                      'default',
+                      'Default',
+                      Icons.bolt_rounded,
+                      '',
+                      group: _builtinGroup,
+                      iconBuilder: _modelIcon(_builtinProvider, 'default'),
+                    ),
+                ]),
         // BaoCode's own: the same models Claude Code runs, each in its
         // provider's group.
         for (final provider in _providers.enabled)
@@ -1613,7 +1613,7 @@ class CodexKernel
     if (selected == null) return;
     _modelId = selected.model;
     _syncModelOptions();
-    if (_custom != null) _settleSettings(_modelId!);
+    if (_modelId case final id?) _settleSettings(id);
     _effort = selected.effort;
     _fast = selected.fast;
     (model as LocalChoice).reported = _modelId;

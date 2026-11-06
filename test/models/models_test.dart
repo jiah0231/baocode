@@ -984,51 +984,54 @@ void main() {
       expect(parseModelList('nope'), isEmpty);
     });
 
-    test('advertised reasoning levels include Ultra without guessing support', () {
-      final models = parseModelList({
-        'data': [
-          {
-            'id': 'codex/gpt-6.1-sol',
-            'supported_reasoning_levels': [
-              {'effort': 'low'},
-              {'effort': 'ultra'},
-              {'effort': 'ultra'},
-              {'effort': ' '},
-            ],
-          },
-          {'id': 'names', 'reasoning_levels': ['high', 'ultra']},
-          {
-            'id': 'native-shape',
-            'supportedReasoningEfforts': [
-              {'reasoningEffort': 'high'},
-            ],
-          },
-          {'id': 'no-levels', 'supported_reasoning_levels': []},
-          {'id': 'no-thinking', 'reasoning': false},
-          {'id': 'unknown'},
-        ],
-      });
-      expect(models.map((m) => m.efforts), [
-        ['low', 'ultra'],
-        ['high', 'ultra'],
-        ['high'],
-        <String>[],
-        <String>[],
-        null,
-      ]);
-      final merged = mergeModelList(
-        const [
+    test(
+      'advertised reasoning levels include Ultra without guessing support',
+      () {
+        final models = parseModelList({
+          'data': [
+            {
+              'id': 'codex/gpt-6.1-sol',
+              'supported_reasoning_levels': [
+                {'effort': 'low'},
+                {'effort': 'ultra'},
+                {'effort': 'ultra'},
+                {'effort': ' '},
+              ],
+            },
+            {
+              'id': 'names',
+              'reasoning_levels': ['high', 'ultra'],
+            },
+            {
+              'id': 'native-shape',
+              'supportedReasoningEfforts': [
+                {'reasoningEffort': 'high'},
+              ],
+            },
+            {'id': 'no-levels', 'supported_reasoning_levels': []},
+            {'id': 'no-thinking', 'reasoning': false},
+            {'id': 'unknown'},
+          ],
+        });
+        expect(models.map((m) => m.efforts), [
+          ['low', 'ultra'],
+          ['high', 'ultra'],
+          ['high'],
+          <String>[],
+          <String>[],
+          null,
+        ]);
+        final merged = mergeModelList(const [
           ProviderModel(id: 'codex/gpt-6.1-sol'),
           ProviderModel(id: 'names', efforts: ['high']),
-        ],
-        models,
-      );
-      expect(merged.first.effortLevels, ['low', 'ultra']);
-      // A user restriction is not overwritten or widened by a refresh.
-      expect(merged[1].effortLevels, ['high']);
-      expect(merged[3].effortLevels, isEmpty);
-      expect(merged.last.effortLevels, isNot(contains('ultra')));
-    });
+        ], models);
+        expect(merged.first.effortLevels, ['low', 'ultra']);
+        // A user restriction is not overwritten or widened by a refresh.
+        expect(merged[1].effortLevels, ['high']);
+        expect(merged[3].effortLevels, isEmpty);
+        expect(merged.last.effortLevels, isNot(contains('ultra')));
+      },
+    );
 
     test('a list merged in adds, marks what went, and keeps the rest', () {
       final merged = mergeModelList(

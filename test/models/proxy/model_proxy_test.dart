@@ -1353,6 +1353,24 @@ void main() {
       });
     }
 
+    test('Ultra reaches an Anthropic-compatible upstream unchanged', () async {
+      chat = chat.copyWith(protocol: ProviderProtocol.anthropic);
+      final answer = await post(
+        await on('gw'),
+        {
+          'model': '@gw/gpt-5(ultra)',
+          'stream': true,
+          'input': 'hi',
+          'reasoning': {'effort': 'ultra'},
+        },
+        headers: {'authorization': 'Bearer tok'},
+      );
+      expect(answer.status, 200);
+      final sent = relay.requests.single.body! as Map;
+      expect(sent['model'], 'gpt-5');
+      expect((sent['output_config'] as Map)['effort'], 'ultra');
+    });
+
     test('what went wrong is said as OpenAI\'s error', () async {
       relay.reply = (_) =>
           (429, const ['{"error":{"message":"Out of quota"}}']);
