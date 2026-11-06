@@ -373,13 +373,15 @@ void main() {
     CodexKernel.modelCache = storage;
   }
 
-  test('cached native models never reintroduce a catalog in managed chats',
-      () async {
-    await cacheNativeModels();
-    final value = kernel();
-    expect(value.model.selected, _managed);
-    expect(value.model.options.map((option) => option.id), [_managed]);
-  });
+  test(
+    'cached native models never reintroduce a catalog in managed chats',
+    () async {
+      await cacheNativeModels();
+      final value = kernel();
+      expect(value.model.selected, _managed);
+      expect(value.model.options.map((option) => option.id), [_managed]);
+    },
+  );
 
   for (final cached in [false, true]) {
     for (final savedModel in [_native, 'retired-native-model', null]) {
@@ -389,7 +391,7 @@ void main() {
         server.savedModel = savedModel ?? _native;
         final value = kernel(
           context: KernelContext(
-            settings: {if (savedModel != null) 'model': savedModel},
+            settings: {'model': ?savedModel},
             resume: savedNative().resume,
           ),
         );
@@ -414,67 +416,75 @@ void main() {
     }
   }
 
-  test('enabling a provider keeps an existing native route without its catalog',
-      () async {
-    final provider = providers.providers.single;
-    await providers.save(provider.copyWith(enabled: false));
-    final value = kernel(context: savedNative());
-    expect(await value.prepareConversation(), true);
-    expect(value.model.options.map((option) => option.id), [
-      _native,
-      _otherNative,
-    ]);
-    await providers.save(provider);
-    expect(value.model.selected, _native);
-    expect(value.model.options.map((option) => option.id), [_native, _managed]);
-    expect(value.model.options.first.group, isNull);
-    expect(launches.single.proxy, isNull);
-    expect(value.switchRestarts(_managed), true);
-  });
+  test(
+    'enabling a provider keeps an existing native route without its catalog',
+    () async {
+      final provider = providers.providers.single;
+      await providers.save(provider.copyWith(enabled: false));
+      final value = kernel(context: savedNative());
+      expect(await value.prepareConversation(), true);
+      expect(value.model.options.map((option) => option.id), [
+        _native,
+        _otherNative,
+      ]);
+      await providers.save(provider);
+      expect(value.model.selected, _native);
+      expect(value.model.options.map((option) => option.id), [
+        _native,
+        _managed,
+      ]);
+      expect(value.model.options.first.group, isNull);
+      expect(launches.single.proxy, isNull);
+      expect(value.switchRestarts(_managed), true);
+    },
+  );
 
-  test('disabling a managed provider does not reroute an active conversation',
-      () async {
-    final value = kernel();
-    value.send(const KernelTurn(id: 'one', text: 'fixture'));
-    await pumpEventQueue(times: 40);
-    await providers.save(providers.providers.single.copyWith(enabled: false));
-    expect(value.model.selected, _managed);
-    expect(launches.single.modelProvider, 'baocode');
-    expect(server.request('turn/start')['model'], '$_managed(low)');
-    expect(server.written.any((m) => m['method'] == 'thread/fork'), false);
-  });
+  test(
+    'disabling a managed provider does not reroute an active conversation',
+    () async {
+      final value = kernel();
+      value.send(const KernelTurn(id: 'one', text: 'fixture'));
+      await pumpEventQueue(times: 40);
+      await providers.save(providers.providers.single.copyWith(enabled: false));
+      expect(value.model.selected, _managed);
+      expect(launches.single.modelProvider, 'baocode');
+      expect(server.request('turn/start')['model'], '$_managed(low)');
+      expect(server.written.any((m) => m['method'] == 'thread/fork'), false);
+    },
+  );
 
-  testWidgets('reopening a saved native picker shows no Codex group or catalog',
-      (tester) async {
-    final value = kernel(context: savedNative());
-    await tester.runAsync(() => value.prepareConversation());
-    final pickerKey = GlobalKey<ComposerPickerState>();
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildAppTheme(),
-        home: Scaffold(
-          body: ComposerPicker(
-            key: pickerKey,
-            options: value.model.options,
-            selected: value.model.options.first,
-            onSelected: (option) => value.model.select(option.id),
+  testWidgets(
+    'reopening a saved native picker shows no Codex group or catalog',
+    (tester) async {
+      final value = kernel(context: savedNative());
+      await tester.runAsync(() => value.prepareConversation());
+      final pickerKey = GlobalKey<ComposerPickerState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildAppTheme(),
+          home: Scaffold(
+            body: ComposerPicker(
+              key: pickerKey,
+              options: value.model.options,
+              selected: value.model.options.first,
+              onSelected: (option) => value.model.select(option.id),
+            ),
           ),
         ),
-      ),
-    );
-    for (var attempt = 0; attempt < 2; attempt++) {
-      pickerKey.currentState!.toggle();
-      await tester.pumpAndSettle();
-      expect(find.text('Codex'), findsNothing);
-      expect(find.text('GPT-6-Astra'), findsNothing);
-      expect(find.text('GPT-6.1-Sol'), findsWidgets);
-      expect(find.text('magpie'), findsOneWidget);
-      expect(value.model.selected, _native);
-      pickerKey.currentState!.toggle();
-      await tester.pumpAndSettle();
-    }
-    expect(value.sessionId, 'old-native');
-    expect(server.written.any((m) => m['method'] == 'thread/fork'), false);
-  });
-
+      );
+      for (var attempt = 0; attempt < 2; attempt++) {
+        pickerKey.currentState!.toggle();
+        await tester.pumpAndSettle();
+        expect(find.text('Codex'), findsNothing);
+        expect(find.text('GPT-6-Astra'), findsNothing);
+        expect(find.text('GPT-6.1-Sol'), findsWidgets);
+        expect(find.text('magpie'), findsOneWidget);
+        expect(value.model.selected, _native);
+        pickerKey.currentState!.toggle();
+        await tester.pumpAndSettle();
+      }
+      expect(value.sessionId, 'old-native');
+      expect(server.written.any((m) => m['method'] == 'thread/fork'), false);
+    },
+  );
 }
