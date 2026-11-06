@@ -35,16 +35,26 @@ void main() {
   late IdeFileService files;
   const actionKey = ValueKey('document-open-default-app');
 
-  setUp(() {
+  void documentTest(
+    String description,
+    Future<void> Function(WidgetTester) body,
+  ) {
     // Keep native NoteBoard hosting out of these toolbar/launcher tests.
-    debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+    // The variant restores the platform before Flutter checks invariants.
+    testWidgets(
+      description,
+      body,
+      variant: TargetPlatformVariant.only(TargetPlatform.linux),
+    );
+  }
+
+  setUp(() {
     directory = Directory.systemTemp.createTempSync('baocode-default-app-');
     files = IdeFileService(directory.path);
   });
 
   tearDown(() {
     directory.deleteSync(recursive: true);
-    debugDefaultTargetPlatformOverride = null;
   });
 
   String localFile([String name = 'report.doc']) {
@@ -80,7 +90,7 @@ void main() {
     });
   }
 
-  testWidgets('document toolbar omits its filename and opens the exact file', (
+  documentTest('document toolbar omits its filename and opens the exact file', (
     tester,
   ) async {
     final path = localFile('20261014_TaskQ_时序检索与流形校准实验报告 copy.docx');
@@ -105,7 +115,7 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('remote paths never open the same-spelled local file', (
+  documentTest('remote paths never open the same-spelled local file', (
     tester,
   ) async {
     final path = localFile();
@@ -130,7 +140,7 @@ void main() {
     expect(opened, isEmpty);
   });
 
-  testWidgets('all historical request forms disable default-app opening', (
+  documentTest('all historical request forms disable default-app opening', (
     tester,
   ) async {
     final path = localFile();
@@ -150,7 +160,7 @@ void main() {
     }
   });
 
-  testWidgets('missing files and directories report failure without launching', (
+  documentTest('missing files and directories report failure without launching', (
     tester,
   ) async {
     final opened = <String>[];
@@ -172,7 +182,7 @@ void main() {
     }
   });
 
-  testWidgets('launcher false and thrown errors are visible and retryable', (
+  documentTest('launcher false and thrown errors are visible and retryable', (
     tester,
   ) async {
     final path = localFile();
@@ -200,7 +210,7 @@ void main() {
     expect(calls, 3);
   });
 
-  testWidgets('repeated presses only launch once while an open is pending', (
+  documentTest('repeated presses only launch once while an open is pending', (
     tester,
   ) async {
     late Completer<void> started;
@@ -233,7 +243,7 @@ void main() {
     expect(button(tester).onPressed, isNotNull);
   });
 
-  testWidgets('a late launcher failure does not appear on another file', (
+  documentTest('a late launcher failure does not appear on another file', (
     tester,
   ) async {
     late Completer<void> started;
@@ -264,7 +274,7 @@ void main() {
     expect(button(tester).onPressed, isNotNull);
   });
 
-  testWidgets('ordinary text keeps its filename', (
+  documentTest('ordinary text keeps its filename', (
     tester,
   ) async {
     final path = localFile('notes.txt');
@@ -274,7 +284,7 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('relative paths and URLs cannot become local launch targets', (
+  documentTest('relative paths and URLs cannot become local launch targets', (
     tester,
   ) async {
     for (final path in ['report.doc', 'https://example.com/report.doc']) {
