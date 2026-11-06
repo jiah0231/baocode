@@ -220,7 +220,9 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
       notifyListeners();
       return;
     }
+    final filesChanged = _changesFilesSeen(event);
     if (event is KernelInfoChanged || _transcript.apply(event)) {
+      if (filesChanged) _filesSeenDirty = true;
       _cache.clear();
       _timeQuiet();
       _reviewEvent(event);
@@ -966,7 +968,10 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   ///
   /// The same list while they stay the same, as the reply streams: what
   /// looks a path up in it indexes each list once (FileOpenScope).
-  List<String> get filesSeen => _cached(#filesSeen, () {
+  List<String> get filesSeen {
+    if (!_filesSeenDirty && identical(_filesSeenTranscript, _transcript)) {
+      return _filesSeen;
+    }
     final files = {
       for (var i = 0; i < _transcript.length; i++)
         if (_transcript.itemAt(i) case ToolCallItem(
@@ -979,10 +984,50 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
         ],
       for (final edit in _transcript.edits) _absolute(edit.change.path),
     }.toList();
+    _filesSeenDirty = false;
+    _filesSeenTranscript = _transcript;
     if (listEquals(files, _filesSeen)) return _filesSeen;
     return _filesSeen = files;
-  });
+  }
+
   List<String> _filesSeen = const [];
+  Transcript? _filesSeenTranscript;
+  bool _filesSeenDirty = true;
+
+  /// Text and status updates cannot change file links. Keep their cache
+  /// separate so each streamed word does not walk the entire history.
+  bool _changesFilesSeen(KernelEvent event) {
+    bool wasTool(String id) {
+      final index = _transcript.indexOf(id);
+      return index != null && _transcript.itemAt(index) is ToolCallItem;
+    }
+
+    return switch (event) {
+      ItemUpserted(:final id, :final item) => item is ToolCallItem || wasTool(id),
+      ItemCompleted(:final id, :final item) =>
+        item != null && (item is ToolCallItem || wasTool(id)),
+      ItemRemoved() ||
+      HistoryPrepended() ||
+      Rewound() ||
+      FileEdited() ||
+      QueueReordered() => true,
+      TextDelta() ||
+      TurnStarted() ||
+      TurnEnded() ||
+      ActivityReported() ||
+      InteractionRequested() ||
+      InteractionResolved() ||
+      PlanWritten() ||
+      SessionRenamed() ||
+      ChangesReverted() ||
+      OutputReported() ||
+      UsageReported() ||
+      TasksReported() ||
+      GoalReported() ||
+      StatsReported() ||
+      KernelInfoChanged() => false,
+    };
+  }
 
   /// [path] absolute, on the project's host (a remote project's paths are
   /// its host's).

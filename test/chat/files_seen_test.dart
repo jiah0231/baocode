@@ -21,6 +21,19 @@ class _Kernel implements AgentKernel {
   dynamic noSuchMethod(Invocation invocation) => null;
 }
 
+/// Counts history visits without adding a production-only test hook.
+class _CountedRead extends ToolCallItem {
+  const _CountedRead(this.onRead) : super(kind: ToolKind.read, target: 'a');
+
+  final VoidCallback onRead;
+
+  @override
+  String get path {
+    onRead();
+    return 'a.dart';
+  }
+}
+
 /// A session in /p fed [events], as they come.
 ChatSession _session(Stream<KernelEvent> events) {
   late final KernelDescriptor descriptor;
@@ -69,6 +82,82 @@ void main() {
       const FileEdited(5, FileChange(path: 'b.dart', added: 1, removed: 0)),
     );
     expect(session.filesSeen, ['/p/a.dart', '/p/b.dart']);
+  });
+
+  test('streaming text does not rescan previously seen tools', () {
+    final live = StreamController<KernelEvent>.broadcast(sync: true);
+    addTearDown(live.close);
+    final session = _session(live.stream);
+    var reads = 0;
+    var seq = 0;
+    for (var i = 0; i < 128; i++) {
+      live.add(ItemUpserted(++seq, 'tool$i', _CountedRead(() => reads++)));
+    }
+    live.add(ItemUpserted(++seq, 'say', const AssistantTextItem('a')));
+    final files = session.filesSeen;
+    final before = reads;
+    expect(before, greaterThanOrEqualTo(128));
+    for (var i = 0; i < 20; i++) {
+      live.add(TextDelta(++seq, 'say', i + 1, 'b'));
+      expect(session.filesSeen, same(files));
+    }
+    live.add(ItemUpserted(++seq, 'say', const AssistantTextItem('done')));
+    expect(session.filesSeen, same(files));
+    live.add(ItemCompleted(++seq, 'say', item: const AssistantTextItem('end')));
+    expect(session.filesSeen, same(files));
+    live.add(ActivityReported(++seq, null));
+    expect(session.filesSeen, same(files));
+    expect(reads, before);
+  });
+
+  test('file sources update on replacement, completion, history and rewind', () {
+    final live = StreamController<KernelEvent>.broadcast(sync: true);
+    addTearDown(live.close);
+    final session = _session(live.stream);
+    live.add(
+      const ItemUpserted(
+        1,
+        'tool',
+        ToolCallItem(kind: ToolKind.read, target: 'a', path: 'a.dart'),
+      ),
+    );
+    expect(session.filesSeen, ['/p/a.dart']);
+    live.add(
+      const ItemCompleted(
+        2,
+        'tool',
+        item: ToolCallItem(
+          kind: ToolKind.read,
+          target: 'b',
+          path: 'b.dart',
+          imageFiles: ['image.png'],
+        ),
+      ),
+    );
+    expect(session.filesSeen, ['/p/b.dart', '/p/image.png']);
+    live.add(const ItemUpserted(3, 'tool', AssistantTextItem('replaced')));
+    expect(session.filesSeen, isEmpty);
+    live.add(
+      const HistoryPrepended(4, [
+        (
+          'old',
+          ToolCallItem(kind: ToolKind.read, target: 'old', path: 'old.dart'),
+        ),
+      ]),
+    );
+    expect(session.filesSeen, ['/p/old.dart']);
+    live.add(const ItemRemoved(5, 'old'));
+    expect(session.filesSeen, isEmpty);
+    live.add(
+      const ItemUpserted(
+        6,
+        'tool',
+        ToolCallItem(kind: ToolKind.read, target: 'new', path: 'new.dart'),
+      ),
+    );
+    expect(session.filesSeen, ['/p/new.dart']);
+    live.add(const Rewound(7, itemId: 'tool'));
+    expect(session.filesSeen, isEmpty);
   });
 
   test("each change pending with its turn and what the turn was asked", () {
