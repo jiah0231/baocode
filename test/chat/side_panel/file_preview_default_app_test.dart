@@ -74,7 +74,10 @@ void main() {
       tester.widget<IdeActionButton>(find.byKey(actionKey));
 
   Future<void> press(WidgetTester tester) async {
-    await tester.runAsync(button(tester).onPressed! as Future<void> Function());
+    await tester.runAsync(() async {
+      final open = button(tester).onPressed! as Future<void> Function();
+      await open().timeout(const Duration(seconds: 10));
+    });
   }
 
   testWidgets('document toolbar omits its filename and opens the exact file', (
@@ -200,8 +203,8 @@ void main() {
   testWidgets('repeated presses only launch once while an open is pending', (
     tester,
   ) async {
-    final started = Completer<void>();
-    final result = Completer<bool>();
+    late Completer<void> started;
+    late Completer<bool> result;
     var calls = 0;
     await tester.pumpWidget(
       view(
@@ -215,12 +218,16 @@ void main() {
     );
     final open = button(tester).onPressed! as Future<void> Function();
     await tester.runAsync(() async {
+      // Futures created in the fake-clock zone cannot be awaited here:
+      // runAsync does not pump that zone's microtasks.
+      started = Completer<void>();
+      result = Completer<bool>();
       final first = open();
-      await started.future;
-      await open();
+      await started.future.timeout(const Duration(seconds: 10));
+      await open().timeout(const Duration(seconds: 10));
       expect(calls, 1);
       result.complete(true);
-      await first;
+      await first.timeout(const Duration(seconds: 10));
     });
     await tester.pump();
     expect(button(tester).onPressed, isNotNull);
@@ -229,8 +236,8 @@ void main() {
   testWidgets('a late launcher failure does not appear on another file', (
     tester,
   ) async {
-    final started = Completer<void>();
-    final result = Completer<bool>();
+    late Completer<void> started;
+    late Completer<bool> result;
     await tester.pumpWidget(
       view(
         FileOpenRequest(localFile('first.doc')),
@@ -242,12 +249,16 @@ void main() {
     );
     late Future<void> pending;
     await tester.runAsync(() async {
+      started = Completer<void>();
+      result = Completer<bool>();
       pending = (button(tester).onPressed! as Future<void> Function())();
-      await started.future;
+      await started.future.timeout(const Duration(seconds: 10));
     });
     await tester.pumpWidget(view(FileOpenRequest(localFile('second.doc'))));
-    result.complete(false);
-    await tester.runAsync(() => pending);
+    await tester.runAsync(() async {
+      result.complete(false);
+      await pending.timeout(const Duration(seconds: 10));
+    });
     await tester.pump();
     expect(find.textContaining('Could not open this file'), findsNothing);
     expect(button(tester).onPressed, isNotNull);
