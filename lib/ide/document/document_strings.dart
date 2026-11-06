@@ -22,6 +22,18 @@ class DocumentStrings {
   String get reload => zh ? '重新加载' : 'Reload';
   String get retry => zh ? '重试' : 'Try again';
   String get openExternal => zh ? '用系统应用打开' : 'Open in default app';
+  String get openRemote => zh
+      ? '请先将远程文档另存为本地副本，再用系统应用打开。'
+      : 'Save a local copy of this remote document before opening it in the default app.';
+  String get openHistorical => zh
+      ? '不能用当前文件代替历史版本打开。请先打开当前文件或保存所需版本。'
+      : 'The current file cannot stand in for this historical version. Open the current file or save the required version first.';
+  String get openDesktopOnly => zh
+      ? '请在桌面应用中用系统默认应用打开。'
+      : 'Opening in the default app is available in the desktop app.';
+  String get openFailed => zh
+      ? '无法用系统默认应用打开。请检查文件是否存在及其访问权限，并确认已设置此文件类型的默认应用。'
+      : 'Could not open this file in its default app. Check that the file exists, its permissions, and the default application for this file type.';
   String get original => zh ? '原始颜色' : 'Original colors';
   String get themed => zh ? '主题颜色' : 'Theme colors';
   String get layout => zh ? '幻灯片布局' : 'Slide layout';

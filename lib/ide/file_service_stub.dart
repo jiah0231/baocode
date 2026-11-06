@@ -2,6 +2,8 @@ import 'dart:typed_data';
 
 import 'file_service.dart';
 
+Future<bool> localFileExists(String path) async => false;
+
 class LocalIdeFileService implements IdeFileService {
   LocalIdeFileService(this.root);
 

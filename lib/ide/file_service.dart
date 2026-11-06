@@ -50,6 +50,11 @@ abstract interface class IdeFileService {
   Future<void> writeBytes(String path, Uint8List bytes);
 }
 
+/// Whether paths belong to this machine, rather than a remote or custom
+/// transport. Use this before handing a file to a local system application.
+bool isLocalFileService(IdeFileService files) =>
+    files is platform.LocalIdeFileService;
+
 /// A file service of files on another machine (a remote project's host):
 /// what the IDE does on the disk besides reading and writing text, it does
 /// through it too.
@@ -112,6 +117,10 @@ String localizedFileError(
 /// editor's binary and size checks. Throws [IdeFileNotFoundException] when
 /// there is no such file.
 Future<Uint8List> readFileBytes(String path) => platform.readFileBytes(path);
+
+/// Whether [path] is an existing regular file on this machine. Directories,
+/// missing paths and unavailable local storage do not count as files.
+Future<bool> localFileExists(String path) => platform.localFileExists(path);
 
 /// How many bytes [path] takes, a file of this machine's.
 Future<int> fileByteSize(String path) => platform.fileByteSize(path);

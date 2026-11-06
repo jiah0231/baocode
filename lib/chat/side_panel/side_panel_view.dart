@@ -10,6 +10,7 @@ import '../../base/shown_when_ready.dart';
 import '../../browser/browser_bridge.dart';
 import '../../browser/browser_mirror.dart';
 import '../../ide/file_service.dart';
+import '../../ide/document/document_format.dart';
 import '../../ide/git/git_model.dart';
 import '../../ide/git/commit_message.dart';
 import '../../ide/git/git_repository.dart';
@@ -1341,7 +1342,8 @@ class AgentSidePanelView extends StatelessWidget {
           maxPickerWidth: 180,
           padding: const EdgeInsets.only(left: 6),
         )
-      else if (onOpenInIde case final open?)
+      else if (onOpenInIde case final open?
+          when !ideIsDocumentPath(tab.path))
         IdeActionButton(
           icon: Codicons.goToFile,
           tooltip: context.l10n.sidePanelOpenInIde,

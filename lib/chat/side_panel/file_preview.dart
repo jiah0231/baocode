@@ -17,6 +17,7 @@ import '../../base/smooth_scroll.dart';
 import '../../ide/editor_word_wrap.dart';
 import '../../ide/file_service.dart';
 import '../../ide/document/document_format.dart';
+import '../../ide/document/document_strings.dart';
 import '../../ide/ide_document_preview.dart';
 import '../../ide/ide_agent_edits.dart';
 import '../../ide/ide_code_diff.dart';
@@ -56,8 +57,9 @@ import '../../ide/host_paths.dart';
 /// the agent's change pending in it ([agentEdit]) shown as the IDE shows it,
 /// each part to keep or undo; its changes against the text before the
 /// agent changed it, read only; a markdown file rendered (or its text); an
-/// image. A bar over it names it, with [actions] (Open in Fast Ide) at its
-/// end, after the agent's change's own (see [IdeAgentEditActions]).
+/// image. A bar over it names it, with [actions] at its end, after the
+/// agent's change's own (see [IdeAgentEditActions]). Documents omit the
+/// repeated filename and open in the system default app, not Fast Ide.
 class FilePreview extends StatefulWidget {
   const FilePreview({
     super.key,
@@ -79,9 +81,14 @@ class FilePreview extends StatefulWidget {
     this.onOpenAgentChange,
     this.diffScroll,
     this.onDiffScrolled,
+    this.openInDefaultApp = openExternal,
   });
 
   final FileOpenRequest request;
+
+  /// The system launcher, replaceable by tests. Called only for a verified
+  /// local document, never for a remote path or a historical version.
+  final Future<bool> Function(String path) openInDefaultApp;
 
   /// The agent's change pending in the file, shown in its text where it is
   /// edited here.
@@ -181,6 +188,9 @@ final class _Failed extends _Loaded {
 
 class _FilePreviewState extends State<FilePreview> {
   _Loaded? _loaded;
+  bool _openingDocument = false;
+  bool _documentOpenFailed = false;
+  int _openGeneration = 0;
 
   /// By line (or row, for a diff), in the editor's colors once colored.
   List<List<TextSpan>?> _colors = const [];
@@ -218,6 +228,46 @@ class _FilePreviewState extends State<FilePreview> {
   bool get _image => ideIsImagePath(_request.path);
 
   bool get _document => ideIsDocumentPath(_request.path);
+
+  bool get _historicalDocument =>
+      _request.diff || _request.modified != null || _request.original != null;
+
+  bool get _canOpenDocument =>
+      _document &&
+      !_historicalDocument &&
+      isLocalFileService(widget.files) &&
+      WindowControls.canOpenInDefaultApp &&
+      p.isAbsolute(_request.path) &&
+      !_request.path.contains('\u0000');
+
+  Future<void> _openDocument() async {
+    if (!_canOpenDocument || _openingDocument) return;
+    final path = _request.path;
+    final generation = ++_openGeneration;
+    final open = widget.openInDefaultApp;
+    bool current() => mounted && generation == _openGeneration;
+    setState(() {
+      _openingDocument = true;
+      _documentOpenFailed = false;
+    });
+    var opened = false;
+    try {
+      // Check the actual local file, not a host's same-spelled path. Missing
+      // files and directories must not be sent to the system launcher.
+      if (!await localFileExists(path)) return;
+      if (!current() || !_canOpenDocument) return;
+      opened = await open(path);
+    } catch (_) {
+      opened = false;
+    } finally {
+      if (current()) {
+        setState(() {
+          _openingDocument = false;
+          _documentOpenFailed = !opened;
+        });
+      }
+    }
+  }
 
   /// A markdown file rendered: its changes too, as the file is after them
   /// (its changes a click away), unless it was deleted.
@@ -279,6 +329,17 @@ class _FilePreviewState extends State<FilePreview> {
   void didUpdateWidget(FilePreview oldWidget) {
     super.didUpdateWidget(oldWidget);
     final old = oldWidget.request;
+    if (old.path != _request.path ||
+        old.diff != _request.diff ||
+        old.original != _request.original ||
+        old.modified != _request.modified ||
+        oldWidget.files != widget.files ||
+        oldWidget.readBytes != widget.readBytes ||
+        oldWidget.reveal != widget.reveal) {
+      _openGeneration++;
+      _openingDocument = false;
+      _documentOpenFailed = false;
+    }
     if (old.path != _request.path ||
         old.diff != _request.diff ||
         old.original != _request.original ||
@@ -544,32 +605,36 @@ class _FilePreviewState extends State<FilePreview> {
       ),
       child: Row(
         children: [
-          FileIcon(path, size: 14),
-          const SizedBox(width: 6),
-          Expanded(
-            // The whole path, which the bar may cut short.
-            child: IdeHover(
-              message: path,
-              followMouse: true,
-              child: Text.rich(
-                TextSpan(
-                  children: [
-                    TextSpan(text: shown),
-                    if (range != null &&
-                        !_request.diff &&
-                        !_request.agentChange)
-                      TextSpan(
-                        text: '  ${range.label}',
-                        style: TextStyle(color: AppColors.textFaint),
-                      ),
-                  ],
+          if (_document)
+            const Spacer()
+          else ...[
+            FileIcon(path, size: 14),
+            const SizedBox(width: 6),
+            Expanded(
+              // The whole path, which the bar may cut short.
+              child: IdeHover(
+                message: path,
+                followMouse: true,
+                child: Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(text: shown),
+                      if (range != null &&
+                          !_request.diff &&
+                          !_request.agentChange)
+                        TextSpan(
+                          text: '  ${range.label}',
+                          style: TextStyle(color: AppColors.textFaint),
+                        ),
+                    ],
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 12),
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
             ),
-          ),
+          ],
           if (!_image && !_document && widget.language)
             _TextButton(
               label: IdeLanguageNames.forPath(path),
@@ -598,6 +663,21 @@ class _FilePreviewState extends State<FilePreview> {
               onPressed: EditorWordWrap.toggle,
             ),
           ...widget.actions,
+          if (_document)
+            IdeActionButton(
+              key: const ValueKey('document-open-default-app'),
+              icon: Codicons.goToFile,
+              tooltip: _historicalDocument
+                  ? DocumentStrings(context).openHistorical
+                  : !isLocalFileService(widget.files)
+                  ? DocumentStrings(context).openRemote
+                  : !WindowControls.canOpenInDefaultApp
+                  ? DocumentStrings(context).openDesktopOnly
+                  : DocumentStrings(context).openExternal,
+              onPressed: _canOpenDocument && !_openingDocument
+                  ? _openDocument
+                  : null,
+            ),
         ],
       ),
     );
@@ -606,6 +686,8 @@ class _FilePreviewState extends State<FilePreview> {
   Widget? _notice(BuildContext context) {
     final l10n = context.l10n;
     final text = switch (_loaded) {
+      _ when _document && _documentOpenFailed =>
+        DocumentStrings(context).openFailed,
       _ when _edit?.error != null => localizedFileError(l10n, _edit!.error!),
       _Text(noOriginal: true) => l10n.sidePanelNoOriginal,
       _Diff(deleted: true) => l10n.sidePanelDeleted,
@@ -635,12 +717,9 @@ class _FilePreviewState extends State<FilePreview> {
             ? null
             : widget.readBytes,
         revision: widget.reveal,
-        historical: _request.diff || _request.modified != null,
-        onOpenInDefaultApp:
-            widget.files is! IdeHostFiles &&
-                WindowControls.canOpenInDefaultApp &&
-                _request.modified == null
-            ? () => unawaited(openExternal(_request.path))
+        historical: _historicalDocument,
+        onOpenInDefaultApp: _canOpenDocument && !_openingDocument
+            ? _openDocument
             : null,
       );
     }
