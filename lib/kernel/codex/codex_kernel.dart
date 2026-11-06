@@ -1311,6 +1311,13 @@ class CodexKernel
   /// provider is gone falling back to what is offered.
   void _providersChanged() {
     if (_disposed) return;
+    // The first provider can be enabled after this empty chat was created.
+    // Keep the runtime's route aligned with the managed option now shown.
+    if (_modelId == null && !_conversationStarted) {
+      _modelId = _providers.firstModel;
+      if (_modelId case final id?) _settleSettings(id);
+      (model as LocalChoice).reported = _modelId;
+    }
     _syncModelOptions();
     final picked = _modelId;
     if (picked != null &&

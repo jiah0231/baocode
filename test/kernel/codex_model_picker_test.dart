@@ -19,6 +19,7 @@ class _Server implements CodexTransport {
   final written = <Map<String, Object?>>[];
   String savedModel = _native;
   String savedProvider = 'openai';
+  bool listNativeModels = true;
 
   @override
   Stream<Map<String, Object?>> get messages => output.stream;
@@ -43,6 +44,7 @@ class _Server implements CodexTransport {
     final params = message['params'] as Map? ?? const {};
     final result = switch (message['method']) {
       'initialize' => {'userAgent': 'codex/0.166.0 (fixture)'},
+      'model/list' when !listNativeModels => <String, Object?>{},
       'model/list' => {
         'data': [
           {
@@ -166,6 +168,23 @@ void main() {
       expect(value.model.options.map((o) => o.group?.label), ['magpie']);
       expect(value.model.selected, _managed);
       expect(launches.single.modelProvider, 'baocode');
+    },
+  );
+
+  test(
+    'enabling the first provider aligns the displayed and runtime model',
+    () async {
+      final provider = providers.providers.single;
+      await providers.save(provider.copyWith(enabled: false));
+      final value = kernel();
+      await providers.save(provider);
+      server.listNativeModels = false;
+      expect(value.model.selected, _managed);
+      expect(value.model.options.map((o) => o.id), [_managed]);
+      value.send(const KernelTurn(id: 'one', text: 'fixture'));
+      await pumpEventQueue(times: 40);
+      expect(launches.single.modelProvider, 'baocode');
+      expect(server.request('turn/start')['model'], '$_managed(low)');
     },
   );
 
