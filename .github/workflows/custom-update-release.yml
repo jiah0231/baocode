@@ -77,6 +77,40 @@ jobs:
       - run: flutter gen-l10n
       - run: flutter analyze --no-pub
         id: analyze
+      - name: Check formatting of combined lag and model fixes
+        run: >-
+          dart format --output=none --set-exit-if-changed
+          lib/chat/chat_history_view.dart
+          lib/chat/chat_session.dart
+          lib/kernel/codex/codex_kernel.dart
+          lib/models/proxy/translate/claude_from_responses_request.dart
+          lib/models/upstream.dart
+          lib/update/version.dart
+          test/chat/files_seen_test.dart
+          test/chat/history_stream_batch_test.dart
+          test/kernel/codex_model_picker_test.dart
+          test/kernel_test.dart
+          test/models/models_test.dart
+          test/models/proxy/model_proxy_test.dart
+          test/models/proxy/translate/claude_from_responses_request_test.dart
+      - name: Test combined lag, model picker and Ultra regressions
+        run: >-
+          flutter test --no-pub --reporter expanded --timeout 2m
+          test/chat/chat_history_rebuild_test.dart
+          test/chat/history_stream_batch_test.dart
+          test/chat/history_paging_test.dart
+          test/chat/history_scroll_test.dart
+          test/chat/history_selection_test.dart
+          test/chat/streamed_words_test.dart
+          test/chat/step_folds_test.dart
+          test/chat/fold_view_test.dart
+          test/chat/files_seen_test.dart
+          test/kernel/codex_model_picker_test.dart
+          test/kernel/codex_provider_route_test.dart
+          test/models/models_test.dart
+          test/models/codex_test.dart
+          test/models/proxy/model_proxy_test.dart
+          test/models/proxy/translate/claude_from_responses_request_test.dart
       - uses: actions/setup-node@v4
         with:
           node-version: '24.12.0'
@@ -368,13 +402,13 @@ jobs:
         shell: pwsh
         run: |
           # Public versioned URL + verified hash and size; no expiring Actions artifact.
-          # Source: 34f0fda58d768af20eb6e878a97a407b546b5e5b, release custom-v1.9.0+36.
+          # Source: e96f2988cad960b22f3f98b54c5e0337edcc9fcf, release custom-v1.9.0+37.
           $baseline = Join-Path $env:RUNNER_TEMP 'baseline-installer'
           New-Item -ItemType Directory -Force $baseline | Out-Null
           $setup = Join-Path $baseline 'BaoCode-1.9.0-setup.exe'
-          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.9.0%2B36/BaoCode-1.9.0-setup.exe' -OutFile $setup
-          if ((Get-Item $setup).Length -ne 36805750) { throw 'Pinned release Setup size mismatch' }
-          if ((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() -ne 'f503cfcd7175cb87212ad307691200a5b5afaad94e3f7683dc03b687479dc72f') { throw 'Pinned release Setup checksum mismatch' }
+          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.9.0%2B37/BaoCode-1.9.0-setup.exe' -OutFile $setup
+          if ((Get-Item $setup).Length -ne 36807824) { throw 'Pinned release Setup size mismatch' }
+          if ((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() -ne 'ecf14cdc1a046513dfcc407e7efbbdff9616d13031636f7623bb5c780c7c022c') { throw 'Pinned release Setup checksum mismatch' }
       - name: Install pinned release then replace in isolated per-user directory
         shell: pwsh
         run: |
@@ -382,7 +416,7 @@ jobs:
           $new = @(Get-ChildItem build/installers -Filter '*-setup.exe')
           if ($new.Count -ne 1) { throw 'Expected one new Setup' }
           $version = (Select-String -Path pubspec.yaml -Pattern '^version: (.+)$').Matches[0].Groups[1].Value
-          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.9.0+36
+          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.9.0+37
       - uses: actions/upload-artifact@v6
         with:
           name: custom-installer

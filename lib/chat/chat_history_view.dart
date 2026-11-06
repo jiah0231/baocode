@@ -500,6 +500,9 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
       _wordsWaiting = true;
       return;
     }
+    // Recompute folds only for words that will be shown. A burst of
+    // deltas during the cooldown must not rescan the whole history.
+    _refold();
     setState(() {});
     _wordsCooldown = Timer(
       _watched ? _wordsGap : _wordsGapUnwatched,
@@ -1592,7 +1595,16 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     // A turn the agent took up on its own (a background task's report)
     // leaves the user reading where they are, the turns they read open.
     final sent = _feed.isStreaming && !_feed.isUnprompted;
-    _refold();
+    final count = _feed.itemCount;
+    final wordsOnly =
+        _feed.isStreaming &&
+        !startedStreaming &&
+        moved == 0 &&
+        count == _itemCountSeen &&
+        _statusShowing == _statusShown;
+    // Structural changes need their folds now (including scroll anchoring
+    // below). Word-only changes refold when the throttle shows them.
+    if (!wordsOnly) _refold();
     // Once folded: what of them is hidden takes no room.
     if (moved > 0) {
       if (_keepAbove(moved)) {
@@ -1623,13 +1635,6 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
       _toReplyStart = true;
     }
     if (ended) _toReplyStart = false;
-    final count = _feed.itemCount;
-    final wordsOnly =
-        _feed.isStreaming &&
-        !startedStreaming &&
-        moved == 0 &&
-        count == _itemCountSeen &&
-        _statusShowing == _statusShown;
     _itemCountSeen = count;
     _itemsCame();
     _scheduleStickyUpdate();

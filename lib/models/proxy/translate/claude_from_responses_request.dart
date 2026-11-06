@@ -199,7 +199,12 @@ Map<String, Object?> convertResponsesRequestToClaude(
     }
   }
 
-  if (thinkingEffort != null && thinkingEffort != 'none') {
+  if (thinkingEffort == 'ultra') {
+    // Gateways can advertise Ultra, which has no faithful token-budget
+    // equivalent. Preserve its name instead of silently lowering it.
+    out['thinking'] = {'type': 'adaptive'};
+    out['output_config'] = {'effort': thinkingEffort};
+  } else if (thinkingEffort != null && thinkingEffort != 'none') {
     out['thinking'] = {
       'type': 'enabled',
       'budget_tokens': _thinkingBudget(thinkingEffort, maxTokens),

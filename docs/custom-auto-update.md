@@ -42,4 +42,4 @@ CI：`flutter test test/update`；另以 custom dart-defines 运行 `test/update
 
 发布中断后的安全恢复：当前脚本拒绝覆盖任何已有版本 Release。若已创建 draft/版本 Release 但 stable 尚未成功发布，先检查该 Release 的提交和资产 SHA256，再经授权补传相应已签清单；不要删除重建/替换版本包或盲目 rerun。也可增加版本号发布修复版本。
 
-CI 还安装校验过 SHA256 的固定基线 Setup，再在 runner 临时用户级目录安装候选 Setup，验证 Windows 资源中的四段数字 ProductVersion、exe/AOT 文件哈希、保留测试数据和升级后启动。安装使用 silent/current-user 模式，不触发默认安装后自动启动；不测试用户机 UAC、交互重启或完整线上下载链。首次发布已通过旧 build 23→24 升级。后续基线固定为公开 `custom-v1.7.3+24` Release 的 Setup，SHA256 `853a407a383d8629dc51170f65817df0dbc200aeb54b54b1c59e393e910a79f2`，不依赖会过期的 Actions artifact 或 GitHub token。每次先核固定哈希再运行；基线被删除或替换时明确失败，不跳过安全校验。当前版本等于基线时验证同版本替换，后续 build 25+ 验证从 build 24 升级。
+CI 还安装校验过 SHA256 的固定基线 Setup，再在 runner 临时用户级目录安装候选 Setup，验证 Windows 资源中的四段数字 ProductVersion、exe/AOT 文件哈希、保留测试数据和升级后启动。安装使用 silent/current-user 模式，不触发默认安装后自动启动；不测试用户机 UAC、交互重启或完整线上下载链。首次发布已通过旧 build 23→24 升级。本轮基线为公开 `custom-v1.9.0+37` Release 的 Setup，大小 36,807,824 字节，SHA256 `ecf14cdc1a046513dfcc407e7efbbdff9616d13031636f7623bb5c780c7c022c`，不依赖会过期的 Actions artifact 或 GitHub token。每次先核固定大小和哈希再运行；基线被删除或替换时明确失败，不跳过安全校验。build 38 验证从 build 37 升级。

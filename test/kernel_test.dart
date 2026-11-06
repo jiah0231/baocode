@@ -7016,10 +7016,10 @@ exec /usr/bin/env "\$@"
         addTearDown(kernel.dispose);
 
         final options = kernel.model.options;
-        expect(options.map((option) => option.id), ['default', '@od/gpt-5']);
+        expect(options.map((option) => option.id), ['@od/gpt-5']);
         expect(options.last.label, 'GPT-5 Pro');
         expect(options.last.group?.label, 'Open Design');
-        expect(options.first.group?.label, 'Codex');
+        expect(kernel.model.selected, '@od/gpt-5');
 
         kernel.model.select('@od/gpt-5');
         expect(kernel.effort.optionsFor('@od/gpt-5').map((o) => o.id), [
