@@ -20,6 +20,7 @@ String localizedCommandLabel(AppLocalizations l10n, String id, String english) {
     if (index != null) return l10n.cmdOpenEditorAtIndex(index);
   }
   return switch (id) {
+    WindowCommandIds.quickAsk => l10n.quickAskTitle,
     'workbench.action.showCommands' => l10n.cmdShowAllCommands,
     'workbench.action.quickOpen' => l10n.cmdQuickOpen,
     'workbench.action.gotoLine' => l10n.cmdGotoLine,

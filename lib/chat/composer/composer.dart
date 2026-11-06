@@ -12,6 +12,7 @@ import '../../kernel/agent_kernel.dart';
 import '../../kernel/kernel_types.dart';
 import '../../keybindings/chat_keybindings.dart';
 import '../../l10n/l10n.dart';
+import '../../quick_ask/quick_ask_context.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/workbench_theme.dart' show WorkbenchColors, themeColors;
 import '../chat_keys.dart';
@@ -134,7 +135,7 @@ class ChatComposer extends StatefulWidget {
 }
 
 class ChatComposerState extends State<ChatComposer>
-    with ChatKeyTarget
+    with ChatKeyTarget, QuickAskTarget
     implements FileDropDelegate {
   static const _fontSize = 13.5;
   static TextStyle get _textStyle => TextStyle(
@@ -158,6 +159,79 @@ class ChatComposerState extends State<ChatComposer>
   final GlobalKey _boxKey = GlobalKey();
   final GlobalKey<ComposerPickerState> _modePickerKey = GlobalKey();
   final GlobalKey<ComposerPickerState> _modelPickerKey = GlobalKey();
+
+  int _quickAskGeneration = 0;
+
+  @override
+  String? get quickAskSessionModel => widget.session.models?.selected.id;
+
+  @override
+  QuickAskContext? captureQuickAskContext() {
+    if (!_focusNode.hasFocus) return null;
+    final session = widget.session;
+    final generation = _quickAskGeneration;
+    final text = _controller.text;
+    final version = _controller.textVersion;
+    if (text.isEmpty) {
+      final messages = <String>[];
+      var remaining = QuickAskContext.maxContextLength;
+      for (
+        var index = session.itemCount - 1;
+        index >= math.max(0, session.itemCount - 6) && messages.length < 2;
+        index--
+      ) {
+        final message = switch (session.itemAt(index)) {
+          UserMessageItem(:final text) => text,
+          AssistantTextItem(:final text) => text,
+          _ => '',
+        };
+        if (message.isEmpty || remaining <= 1) continue;
+        final excerpt = QuickAskContext.suffix(message, remaining - 1);
+        messages.insert(0, excerpt);
+        remaining -= excerpt.length + 1;
+      }
+      return QuickAskContext(
+        sourceLabel: 'Chat',
+        sessionModel: quickAskSessionModel,
+        contextText: messages.join('\n'),
+      );
+    }
+    final selected = _controller.selection;
+    final valid = selected.isValid && selected.end <= text.length;
+    final start = valid ? selected.start : text.length;
+    final end = valid ? selected.end : text.length;
+    final hasEmbed = _controller.embeds.any(
+      (run) => run.start < end && run.end > start,
+    );
+    var used = false;
+    // Atoms contain internal metadata. Send only the text the composer shows,
+    // and never replace an attachment or mention with generated plain text.
+    return QuickAskContext.fromText(
+      text: _controller.plainText,
+      selection: TextSelection(
+        baseOffset: composerPlainText(text.substring(0, start)).length,
+        extentOffset: composerPlainText(text.substring(0, end)).length,
+      ),
+      sourceLabel: 'Chat draft',
+      sessionModel: quickAskSessionModel,
+      applyReplacement: hasEmbed
+          ? null
+          : (replacement) {
+              if (used ||
+                  !mounted ||
+                  generation != _quickAskGeneration ||
+                  !identical(widget.session, session) ||
+                  _controller.textVersion != version) {
+                return false;
+              }
+              used = true;
+              _controller.breakUndo();
+              _controller.replace(start, end, replacement);
+              _controller.breakUndo();
+              return true;
+            },
+    );
+  }
 
   bool _hasContent = false;
 
@@ -358,6 +432,10 @@ class ChatComposerState extends State<ChatComposer>
   @override
   void didUpdateWidget(covariant ChatComposer oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.session, widget.session) ||
+        !identical(oldWidget.draft, widget.draft)) {
+      _quickAskGeneration++;
+    }
     if (!identical(oldWidget.draft, widget.draft)) {
       oldWidget.draft?.removeListener(_handleDraftChanged);
       widget.draft?.addListener(_handleDraftChanged);

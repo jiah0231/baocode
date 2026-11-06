@@ -15,6 +15,7 @@ import '../diagnostics/frame_watch.dart';
 import '../ide/ide_find_widget.dart';
 import '../ide/ide_hover.dart';
 import '../l10n/l10n.dart';
+import '../quick_ask/quick_ask_context.dart';
 import '../theme/app_theme.dart';
 import '../theme/workbench_theme.dart' show themeColors;
 import 'chat_column.dart';
@@ -128,7 +129,7 @@ final Expando<_LeftAt> _leftAt = Expando('chat history left at');
 final Expando<bool> _longFeeds = Expando('chat history long');
 
 class _ChatHistoryViewState extends State<ChatHistoryView>
-    with TickerProviderStateMixin, ChatKeyTarget {
+    with TickerProviderStateMixin, ChatKeyTarget, QuickAskTarget {
   final _BottomAnchoredScrollController _scrollController =
       _BottomAnchoredScrollController();
   final FocusNode _selectionFocusNode = FocusNode(
@@ -608,6 +609,71 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     onDragEdge: _autoScrollToward,
     pressHeld: () => _pressFocused && !_selectionFocusNode.hasFocus,
   );
+  @override
+  String? get quickAskSessionModel => switch (_feed) {
+    ChatSession(:final models) => models?.selected.id,
+    SubagentFeed(:final session) => session.models?.selected.id,
+    _ => null,
+  };
+
+  @override
+  QuickAskContext? captureQuickAskContext() {
+    if (!_selectionFocusNode.hasFocus) return null;
+    final selected = _selectionDelegate.quickAskSelection();
+    final count = _feed.itemCount;
+    if (count == 0) {
+      return QuickAskContext(
+        sourceLabel: 'Chat',
+        sessionModel: quickAskSessionModel,
+      );
+    }
+    final first =
+        (selected.first ?? _listController.visibleRange?.$2 ?? count - 1).clamp(
+          0,
+          count - 1,
+        );
+    final last = (selected.last ?? first).clamp(first, count - 1);
+    // For a selection within one message, prefer that message's neighboring
+    // text. Only the immediately adjacent messages can fill any remaining room.
+    var nearby = '';
+    if (first == last) {
+      final text = _plainTextOf(first);
+      final offset = selected.text.isEmpty
+          ? text.length
+          : text.indexOf(selected.text);
+      if (offset >= 0) {
+        nearby = QuickAskContext.fromText(
+          text: text,
+          selection: TextSelection(
+            baseOffset: offset,
+            extentOffset: offset + selected.text.length,
+          ),
+          sourceLabel: 'Chat',
+        ).contextText;
+      }
+    }
+    var remaining = QuickAskContext.maxContextLength - nearby.length;
+    if (remaining > 1 && first > 0) {
+      final before = QuickAskContext.suffix(
+        _plainTextOf(first - 1),
+        math.min(remaining - 1, QuickAskContext.maxContextLength ~/ 2),
+      );
+      nearby = '$before\n$nearby';
+    }
+    remaining = QuickAskContext.maxContextLength - nearby.length;
+    if (remaining > 1 && last + 1 < count) {
+      nearby +=
+          '\n${QuickAskContext.prefix(_plainTextOf(last + 1), remaining - 1)}';
+    }
+    return QuickAskContext(
+      sourceLabel: 'Chat',
+      sessionModel: quickAskSessionModel,
+      selectedText: selected.text,
+      contextText: nearby,
+      truncated: selected.truncated,
+    );
+  }
+
   bool _reselectScheduled = false;
   Timer? _reselectTimer;
   EdgeDraggingAutoScroller? _autoScroller;
@@ -770,6 +836,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   void didUpdateWidget(ChatHistoryView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.feed != widget.feed) {
+      _selectionDelegate.dispatchSelectionEvent(const ClearSelectionEvent());
       _long = _longFeeds[widget.feed] ?? false;
       _noteLeft(oldWidget.feed);
       _shownFirst = null;
@@ -3494,7 +3561,7 @@ class _ChatSelectionDelegate extends StaticSelectionContainerDelegate
 
   /// The selected text of item [index] as shown, or null if not built.
   /// Text blocks on the same row are joined by a space, rows by a newline.
-  String? _builtText(int index) {
+  String? _builtText(int index, {int? limit}) {
     String? text;
     Rect? previous;
     for (final selectable in selectables) {
@@ -3518,7 +3585,12 @@ class _ChatSelectionDelegate extends StaticSelectionContainerDelegate
             content.startsWith(' ');
         text += !sameRow ? '\n' : (spaced ? '' : ' ');
       }
-      text += content;
+      text += limit == null
+          ? content
+          : content.substring(0, math.min(content.length, limit));
+      if (limit != null && text.length >= limit) {
+        return text.substring(0, limit);
+      }
       previous = box;
     }
     return text;
@@ -3530,6 +3602,64 @@ class _ChatSelectionDelegate extends StaticSelectionContainerDelegate
     for (final index in ends) {
       if (_builtText(index) case final text?) _endText[index] = text;
     }
+  }
+
+  /// Unlike Copy, quick ask must stop reading at its budget, even for Select
+  /// All over a virtualized conversation. Never construct the whole history.
+  ({String text, bool truncated, int? first, int? last}) quickAskSelection() {
+    final start = _start?.point.index;
+    final end = _end?.point.index;
+    if ((start != null && (start < 0 || start >= itemCount())) ||
+        (end != null && (end < 0 || end >= itemCount()))) {
+      return (text: '', truncated: false, first: null, last: null);
+    }
+    final first = start == null || end == null ? null : math.min(start, end);
+    final last = start == null || end == null ? null : math.max(start, end);
+    const budget = QuickAskContext.maxSelectionLength;
+    final buffer = StringBuffer();
+    var inspected = 0;
+    var stopped = false;
+    Iterable<String?> pieces() sync* {
+      if (first == null || last == null) {
+        for (final selectable in selectables) {
+          yield selectable.getSelectedContent()?.plainText;
+        }
+      } else {
+        yield _builtText(first, limit: budget + 1) ??
+            _endText[first] ??
+            (_all ? plainTextOf(first) : null);
+        for (var index = first + 1; index < last; index++) {
+          yield plainTextOf(index);
+        }
+        if (last != first) {
+          yield _builtText(last, limit: budget + 1) ??
+              _endText[last] ??
+              (_all ? plainTextOf(last) : null);
+        }
+      }
+    }
+
+    for (final piece in pieces()) {
+      if (++inspected > 80) {
+        stopped = true;
+        break;
+      }
+      if (piece == null || piece.isEmpty) continue;
+      if (buffer.isNotEmpty) buffer.write('\n');
+      buffer.write(
+        piece.substring(0, math.min(piece.length, budget + 1 - buffer.length)),
+      );
+      if (buffer.length > budget) {
+        stopped = true;
+        break;
+      }
+    }
+    return (
+      text: QuickAskContext.prefix(buffer.toString(), budget),
+      truncated: stopped,
+      first: first,
+      last: last,
+    );
   }
 
   @override

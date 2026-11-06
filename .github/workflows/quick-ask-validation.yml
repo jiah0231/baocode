@@ -1,0 +1,63 @@
+# Isolated feature validation. No releases, installers, deployments or live APIs.
+name: Quick Ask validation
+on:
+  push:
+    branches: ['feat/global-quick-ask-*']
+permissions:
+  contents: read
+concurrency:
+  group: quick-ask-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    if: github.repository == 'jiah0231/baocode'
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Restore unchanged bundled assets
+        shell: pwsh
+        run: |
+          python tool/ci/reassemble_preview_assets.py
+          if ($LASTEXITCODE -ne 0) { throw 'Preview asset reconstruction failed' }
+          python tool/ci/reassemble_maple_font.py
+          if ($LASTEXITCODE -ne 0) { throw 'Font asset reconstruction failed' }
+          git diff --exit-code HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Asset reconstruction changed tracked source' }
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.5'
+          cache: true
+      - id: iroh
+        uses: ./.github/actions/bao-iroh-prebuilt
+      - if: steps.iroh.outputs.hit != 'true'
+        uses: ./.github/actions/setup-rust
+      - name: Resolve packages and localization
+        shell: pwsh
+        run: |
+          flutter pub get
+          if ($LASTEXITCODE -ne 0) { throw 'Package resolution failed' }
+          flutter gen-l10n
+          if ($LASTEXITCODE -ne 0) { throw 'Localization generation failed' }
+          git diff --exit-code HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Generated source differs from candidate' }
+      - name: Analyze exact candidate
+        run: flutter analyze --no-pub --fatal-infos
+      - name: Check changed Dart formatting
+        shell: pwsh
+        run: |
+          $files = @(git diff --name-only --diff-filter=ACMR 2763b65b844bb95b3f214e3a1254a9e47a0cb50b HEAD -- '*.dart')
+          if ($LASTEXITCODE -ne 0) { throw 'Changed-file enumeration failed' }
+          dart format --output=none --set-exit-if-changed @files
+          if ($LASTEXITCODE -ne 0) { throw 'Feature source needs formatting' }
+      - name: Test quick ask and related regressions
+        shell: pwsh
+        run: |
+          Remove-Item Env:BAO_BROWSER_LIVE -ErrorAction SilentlyContinue
+          Remove-Item Env:BAOCODE_CODEX_OFFICIAL_SMOKE -ErrorAction SilentlyContinue
+          flutter test --no-pub --reporter expanded --timeout 2m test/quick_ask test/keybindings/window_keybindings_test.dart test/models/models_test.dart test/settings/models_page_test.dart test/chat/history_selection_test.dart test/chat/history_stream_batch_test.dart test/composer_test.dart test/update/version_test.dart
+          if ($LASTEXITCODE -ne 0) { throw 'Quick Ask regressions failed' }

@@ -6918,6 +6918,12 @@ class AppLocalizationsZh extends AppLocalizations {
       '用于一些辅助性的工作，比如生成对话标题、提交信息等。自动：使用会话的模型（提交信息使用新会话默认模型），属于上游时取该上游的 Haiku 档位。';
 
   @override
+  String get modelsQuickAsk => '快捷提问模型';
+
+  @override
+  String get modelsQuickAskDescription => '仅用于快捷提问和选区修改小窗，默认跟随辅助模型，不影响对话使用的模型。';
+
+  @override
   String get modelsAuxiliaryAuto => '自动';
 
   @override
@@ -13127,4 +13133,94 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get browserShowInPanel => '在侧边栏查看';
+
+  @override
+  String get quickAskTitle => '快捷提问 / 修改';
+
+  @override
+  String get quickAskAsk => '提问';
+
+  @override
+  String get quickAskEdit => '修改选中内容';
+
+  @override
+  String get quickAskNoSelection => '选中代码或对话文字，可针对所选内容快速提问。';
+
+  @override
+  String get quickAskPrivacy => '仅将选中片段和少量附近上下文发送给此模型，不调用工具，不发送完整历史。';
+
+  @override
+  String get quickAskTruncated => '选中片段过长，已截短。请缩小选区后再修改。';
+
+  @override
+  String get quickAskShowContext => '查看上下文';
+
+  @override
+  String get quickAskHideContext => '收起上下文';
+
+  @override
+  String get quickAskContextOn => '附近上下文：开启';
+
+  @override
+  String get quickAskContextOff => '附近上下文：关闭';
+
+  @override
+  String get quickAskSelection => '选中片段';
+
+  @override
+  String get quickAskNearby => '附近上下文';
+
+  @override
+  String get quickAskQuestionHint => '输入问题（最多 4,000 字符）';
+
+  @override
+  String get quickAskEditHint => '描述要如何修改选中的内容';
+
+  @override
+  String get quickAskTimeout => '请求超时，请重试或选择其他模型。';
+
+  @override
+  String get quickAskFailed => '未能获取回答。请检查所选模型及连接后重试。';
+
+  @override
+  String get quickAskSourceChanged => '原文已变化或关闭，请重新选中后再应用。仍可复制当前修改建议。';
+
+  @override
+  String get quickAskCopyFailed => '复制失败，请选中文字后手动复制。';
+
+  @override
+  String get quickAskOriginal => '原始选中内容';
+
+  @override
+  String get quickAskProposed => '修改预览（可编辑）';
+
+  @override
+  String get quickAskApplyHint => '应用后仅替换原选区，可一次撤销；仍遵循正常保存设置。';
+
+  @override
+  String get quickAskCopyHint => '此来源在这里只读，可复制修改结果使用。';
+
+  @override
+  String get quickAskAnswer => '回答';
+
+  @override
+  String get quickAskCopied => '已复制';
+
+  @override
+  String get quickAskCopy => '复制';
+
+  @override
+  String get quickAskApplied => '已应用';
+
+  @override
+  String get quickAskApply => '应用替换';
+
+  @override
+  String get quickAskSendHint => 'Ctrl/⌘ + Enter 发送 · Esc 关闭';
+
+  @override
+  String get quickAskStop => '停止';
+
+  @override
+  String get quickAskSend => '发送';
 }

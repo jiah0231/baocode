@@ -48,9 +48,49 @@ jobs:
         run: flutter pub get
       - name: Generate localization bindings
         run: flutter gen-l10n
+      - name: Verify generated source matches reviewed commit
+        shell: pwsh
+        run: |
+          git diff --quiet HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Generated source differs from reviewed commit' }
       - name: Analyze
         id: analyze
         run: flutter analyze --no-pub
+      - name: Check Quick Ask source formatting
+        run: >-
+          dart format --output=none --set-exit-if-changed
+          lib/chat/chat_history_view.dart
+          lib/chat/composer/composer.dart
+          lib/ide/ide_code_editor.dart
+          lib/ide/ide_editor.dart
+          lib/keybindings/window_keybindings.dart
+          lib/l10n/app_localizations.dart
+          lib/l10n/app_localizations_en.dart
+          lib/l10n/app_localizations_zh.dart
+          lib/l10n/command_titles.dart
+          lib/models/auxiliary_model_menu.dart
+          lib/models/model_providers.dart
+          lib/quick_ask
+          lib/settings/pages/models_page.dart
+          lib/workbench.dart
+          lib/update/version.dart
+          test/chat/history_selection_test.dart
+          test/composer_test.dart
+          test/keybindings/window_keybindings_test.dart
+          test/models/models_test.dart
+          test/quick_ask
+          test/settings/models_page_test.dart
+      - name: Test global Quick Ask context, routing and safe editing
+        run: >-
+          flutter test --no-pub --reporter expanded --timeout 2m
+          test/quick_ask
+          test/keybindings/window_keybindings_test.dart
+          test/models/models_test.dart
+          test/settings/models_page_test.dart
+          test/chat/history_selection_test.dart
+          test/chat/history_stream_batch_test.dart
+          test/composer_test.dart
+          test/update/version_test.dart
       - name: Check formatting of combined lag and model fixes
         run: >-
           dart format --output=none --set-exit-if-changed

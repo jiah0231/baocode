@@ -34,6 +34,32 @@ void main() {
     }
   });
 
+  test('Quick Ask is one configurable command in code and agent layouts', () {
+    for (final platform in KeybindingPlatform.values) {
+      final service = KeybindingService()..debugPlatform = platform;
+      for (final chat in [true, false]) {
+        final result = service.resolver().resolve(
+          service.withPlatformKeys(
+            (key) => {'chatMode': chat, 'ideMode': !chat}[key],
+          ),
+          const [],
+          KeyChord.parse(
+            platform == KeybindingPlatform.mac ? 'cmd+alt+k' : 'ctrl+alt+k',
+          )!,
+          canRun: (item) => service.isSupported(item.command),
+        );
+        expect(
+          result,
+          isA<KeybindingFound>().having(
+            (found) => found.command,
+            'command',
+            WindowCommandIds.quickAsk,
+          ),
+        );
+      }
+    }
+  });
+
   group('Close Pane\'s keys (⌘W / Ctrl+W) in the chat\'s window', () {
     final service = KeybindingService()..debugPlatform = KeybindingPlatform.mac;
 

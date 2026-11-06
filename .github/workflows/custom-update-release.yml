@@ -75,8 +75,48 @@ jobs:
           fi
       - run: flutter pub get
       - run: flutter gen-l10n
+      - name: Verify generated source matches reviewed commit
+        shell: pwsh
+        run: |
+          git diff --quiet HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Generated source differs from reviewed commit' }
       - run: flutter analyze --no-pub
         id: analyze
+      - name: Check Quick Ask source formatting
+        run: >-
+          dart format --output=none --set-exit-if-changed
+          lib/chat/chat_history_view.dart
+          lib/chat/composer/composer.dart
+          lib/ide/ide_code_editor.dart
+          lib/ide/ide_editor.dart
+          lib/keybindings/window_keybindings.dart
+          lib/l10n/app_localizations.dart
+          lib/l10n/app_localizations_en.dart
+          lib/l10n/app_localizations_zh.dart
+          lib/l10n/command_titles.dart
+          lib/models/auxiliary_model_menu.dart
+          lib/models/model_providers.dart
+          lib/quick_ask
+          lib/settings/pages/models_page.dart
+          lib/workbench.dart
+          lib/update/version.dart
+          test/chat/history_selection_test.dart
+          test/composer_test.dart
+          test/keybindings/window_keybindings_test.dart
+          test/models/models_test.dart
+          test/quick_ask
+          test/settings/models_page_test.dart
+      - name: Test global Quick Ask context, routing and safe editing
+        run: >-
+          flutter test --no-pub --reporter expanded --timeout 2m
+          test/quick_ask
+          test/keybindings/window_keybindings_test.dart
+          test/models/models_test.dart
+          test/settings/models_page_test.dart
+          test/chat/history_selection_test.dart
+          test/chat/history_stream_batch_test.dart
+          test/composer_test.dart
+          test/update/version_test.dart
       - name: Check formatting of combined lag and model fixes
         run: >-
           dart format --output=none --set-exit-if-changed
@@ -528,6 +568,12 @@ jobs:
           if gh release view "$tag" >/dev/null 2>&1; then
             echo 'Version already published; increment both app version files.' >&2; exit 1
           fi
+          # --target does not replace a pre-existing tag. Refuse one so the
+          # versioned release cannot silently name a different source commit.
+          existing_tag=$(git ls-remote --tags origin "refs/tags/$tag")
+          if [ -n "$existing_tag" ]; then
+            echo 'Version tag already exists; inspect it and use a new version.' >&2; exit 1
+          fi
           installers=(build/installers/*-setup.exe)
           test "${#installers[@]}" -eq 1
           previous=()
@@ -539,6 +585,8 @@ jobs:
           dart run tool/custom_release_manifest.dart "$version" "${installers[0]}" build/installers/latest.json "${previous[@]}"
           gh release create "$tag" "${installers[0]}" --target "$GITHUB_SHA" --draft --title "Custom BaoCode $version" --notes "Tested source: $GITHUB_SHA. Signed Windows x64 custom update."
           gh release edit "$tag" --draft=false --latest=false
+          git fetch --no-tags origin "refs/tags/$tag"
+          test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$GITHUB_SHA"
           # custom-stable is only a manifest pointer; versioned Setup is live first.
           if ! gh release view custom-stable >/dev/null 2>&1; then
             gh release create custom-stable --target "$GITHUB_SHA" --title 'Custom stable update channel' --notes 'Signed update manifest for custom Windows installations.' --latest=false

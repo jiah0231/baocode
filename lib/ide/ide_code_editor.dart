@@ -1,4 +1,5 @@
 import 'dart:async';
+
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -20,6 +21,7 @@ import 'package:bao_editor/textmate/textmate_syntax.dart';
 import '../keybindings/keybinding_service.dart';
 import '../l10n/command_titles.dart';
 import '../l10n/l10n.dart';
+import '../quick_ask/quick_ask_context.dart';
 import '../theme/app_theme.dart';
 import '../theme/workbench_theme.dart' hide ColorScheme;
 import 'builtin_formatting.dart';
@@ -181,7 +183,28 @@ class IdeCodeEditor extends StatefulWidget {
   State<IdeCodeEditor> createState() => IdeCodeEditorState();
 }
 
-class IdeCodeEditorState extends State<IdeCodeEditor> {
+class IdeCodeEditorState extends State<IdeCodeEditor> with QuickAskTarget {
+  int _quickAskGeneration = 0;
+
+  @override
+  QuickAskContext? captureQuickAskContext() {
+    if (!_focusNode.hasFocus) return null;
+    final controller = widget.controller;
+    final path = widget.path;
+    final generation = _quickAskGeneration;
+    return QuickAskContext.fromEditor(
+      controller: controller,
+      sourceLabel: path,
+      readOnly: widget.readOnly,
+      isCurrent: () =>
+          mounted &&
+          generation == _quickAskGeneration &&
+          identical(widget.controller, controller) &&
+          widget.path == path &&
+          !widget.readOnly,
+    );
+  }
+
   final GlobalKey _surfaceKey = GlobalKey();
   final WorkbenchThemeService _themes = WorkbenchThemeService.instance;
   TextMateSyntax? _ownTextMate;
@@ -239,6 +262,11 @@ class IdeCodeEditorState extends State<IdeCodeEditor> {
   @override
   void didUpdateWidget(IdeCodeEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.controller, widget.controller) ||
+        oldWidget.path != widget.path ||
+        oldWidget.readOnly != widget.readOnly) {
+      _quickAskGeneration++;
+    }
     _find
       ..controller = widget.controller
       ..readOnly = widget.readOnly;

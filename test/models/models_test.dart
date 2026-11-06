@@ -601,12 +601,43 @@ void main() {
       expect(providers.auxiliaryModel, isNull);
     });
 
+    test(
+      'quick questions have their own model and auxiliary default',
+      () async {
+        final providers = ModelProviders.memory(providers: [_gateway]);
+        await providers.setDefaultModel('@gw/gpt-5');
+        await providers.setActionsModel('@gw/gpt-5');
+        expect(providers.quickAskModel, isNull);
+        expect(providers.quickAsk(null), (model: '@gw/gpt-5', exact: false));
+        expect(providers.quickAsk('@gw/mini'), (
+          model: '@gw/mini',
+          exact: false,
+        ));
+        await providers.setAuxiliaryModel('@gw/mini');
+        expect(providers.quickAsk('@gw/gpt-5'), (
+          model: '@gw/mini',
+          exact: true,
+        ));
+        await providers.setQuickAskModel('@gw/gpt-5');
+        expect(providers.quickAsk(null), (model: '@gw/gpt-5', exact: true));
+        expect(providers.defaultModel, '@gw/gpt-5');
+        expect(providers.actionsModel, '@gw/gpt-5');
+        expect(providers.auxiliaryModel, '@gw/mini');
+        await providers.setQuickAskModel(ModelProviders.followAuxiliary);
+        expect(providers.quickAsk(null), (model: '@gw/mini', exact: true));
+        await providers.setQuickAskModel('@gw/mini');
+        await providers.remove('gw');
+        expect(providers.quickAskModel, isNull);
+      },
+    );
+
     test('BaoCode\'s own core has no Claude Code of the machine\'s: its '
         'models and Haiku, picked on the CLI, stand for none', () async {
       final providers = ModelProviders.memory(providers: [_gateway]);
       await providers.setDefaultModel('opus');
       await providers.setAuxiliaryModel(builtinProviderId);
       await providers.setActionsModel(builtinProviderId);
+      await providers.setQuickAskModel(builtinProviderId);
       expect(providers.builtinOffered, isTrue);
       expect(providers.defaultModel, 'opus');
       expect(providers.auxiliary(null), (model: null, exact: true));
@@ -621,6 +652,10 @@ void main() {
         exact: false,
       ));
       expect(providers.actions, (model: null, exact: false));
+      expect(providers.quickAsk('@gw/gpt-5'), (
+        model: '@gw/gpt-5',
+        exact: false,
+      ));
       expect(providers.firstModel, '@gw/gpt-5');
       await providers.setDefaultModel('@gw/gpt-5');
       expect(providers.defaultModel, '@gw/gpt-5');

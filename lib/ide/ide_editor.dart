@@ -12,6 +12,7 @@ import '../keybindings/key_chord.dart';
 import '../keybindings/keybinding_service.dart';
 import '../l10n/command_titles.dart';
 import '../l10n/l10n.dart';
+import '../quick_ask/quick_ask_context.dart';
 import '../theme/app_theme.dart';
 import '../theme/workbench_theme.dart' hide ColorScheme;
 
@@ -200,11 +201,73 @@ class IdeEditor extends StatefulWidget {
   State<IdeEditor> createState() => IdeEditorState();
 }
 
-class IdeEditorState extends State<IdeEditor> {
+class IdeEditorState extends State<IdeEditor> with QuickAskTarget {
+  int _quickAskGeneration = 0;
+
+  @override
+  QuickAskContext? captureQuickAskContext() {
+    if (_originalFocusNode.hasFocus) {
+      final original = _diffs[widget.active]?.controller;
+      if (original == null) return null;
+      return QuickAskContext.fromEditor(
+        controller: original,
+        sourceLabel: '${widget.active.path} (original)',
+        readOnly: true,
+        isCurrent: () => false,
+      );
+    }
+    if (!_focusNode.hasFocus) return null;
+    final document = widget.active;
+    final workspace = widget.workspace;
+    final generation = _quickAskGeneration;
+    bool current() =>
+        mounted &&
+        generation == _quickAskGeneration &&
+        identical(widget.active, document) &&
+        identical(widget.workspace, workspace) &&
+        identical(workspace.active, document) &&
+        !document.readOnly;
+    if (_nativeController case final controller?
+        when widget.nativeEditorEnabled) {
+      return QuickAskContext.fromEditor(
+        controller: controller,
+        sourceLabel: document.path,
+        readOnly: document.readOnly,
+        isCurrent: () => current() && identical(_nativeController, controller),
+      );
+    }
+    final value = _controller.value;
+    final version = document.model.version;
+    var used = false;
+    return QuickAskContext.fromText(
+      text: value.text,
+      selection: value.selection,
+      sourceLabel: document.path,
+      applyReplacement: document.readOnly
+          ? null
+          : (replacement) {
+              if (used ||
+                  !current() ||
+                  widget.nativeEditorEnabled ||
+                  document.model.version != version ||
+                  _controller.text != value.text) {
+                return false;
+              }
+              used = true;
+              // TextField's UndoHistory records the controller change; _changed
+              // mirrors it into the workspace, without saving the file.
+              _controller.value = value.replaced(value.selection, replacement);
+              _changed(_controller.text);
+              return true;
+            },
+    );
+  }
+
   late final TextEditingController _controller = TextEditingController(
     text: widget.active.text,
   );
   late final FocusNode _focusNode = FocusNode(debugLabel: 'ide editor');
+  final FocusNode _originalFocusNode = FocusNode(debugLabel: 'ide original');
   // The surface's state implements EditorViewHost, which editor commands use.
   final GlobalKey _surfaceKey = GlobalKey();
   late final ScrollController _scrollController = ScrollController();
@@ -1912,6 +1975,11 @@ class IdeEditorState extends State<IdeEditor> {
   @override
   void didUpdateWidget(IdeEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.active, widget.active) ||
+        !identical(oldWidget.workspace, widget.workspace) ||
+        oldWidget.nativeEditorEnabled != widget.nativeEditorEnabled) {
+      _quickAskGeneration++;
+    }
     if (oldWidget.debug != widget.debug) _listenToDebug();
     if (!identical(oldWidget.agentEdits, widget.agentEdits)) {
       oldWidget.agentEdits?.removeListener(_rebuildSoon);
@@ -1977,6 +2045,7 @@ class IdeEditorState extends State<IdeEditor> {
     _replaceFocusNode.dispose();
     _controller.dispose();
     _focusNode.dispose();
+    _originalFocusNode.dispose();
     _areaFocusNode.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -2928,6 +2997,7 @@ class IdeEditorState extends State<IdeEditor> {
         return EditorSurface(
           key: ObjectKey(controller),
           controller: controller,
+          focusNode: _originalFocusNode,
           readOnly: true,
           backgroundColor: colors['editor.background'],
           selectionColor: colors['editor.selectionBackground'],

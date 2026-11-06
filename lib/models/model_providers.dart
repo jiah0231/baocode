@@ -66,9 +66,10 @@ class ModelProviders extends ChangeNotifier {
   static const defaultKey = 'models.default';
   static const auxiliaryKey = 'models.auxiliary';
   static const actionsKey = 'models.actions';
+  static const quickAskKey = 'models.quickAsk';
   static const imageKey = 'models.image';
 
-  /// [actionsModel]'s value for the auxiliary model, whatever it is.
+  /// [actionsModel] and [quickAskModel]'s value for the auxiliary model.
   static const followAuxiliary = 'auxiliary';
 
   final Object? Function(String key) _read;
@@ -200,6 +201,26 @@ class ModelProviders extends ChangeNotifier {
 
   Future<void> setActionsModel(String? model) => _write(actionsKey, model);
 
+  /// The small question window's own model, independent of conversations
+  /// and AI actions; null or [followAuxiliary] follows the auxiliary model.
+  String? get quickAskModel => switch (_read(quickAskKey)) {
+    final String model when model.isNotEmpty => model,
+    _ => null,
+  };
+
+  /// Uses the current conversation's [model] only when following an
+  /// automatic auxiliary model; elsewhere, new conversations' default.
+  ({String? model, bool exact}) quickAsk(String? model) =>
+      switch (quickAskModel) {
+        builtinProviderId when builtinAvailable => (model: null, exact: true),
+        null ||
+        followAuxiliary ||
+        builtinProviderId => auxiliary(model ?? defaultModel),
+        final String picked => (model: picked, exact: true),
+      };
+
+  Future<void> setQuickAskModel(String? model) => _write(quickAskKey, model);
+
   /// The image model the agents make pictures with unless they name
   /// another (a [modelRef]); null for the first turned on.
   String? get imageModel => switch (_read(imageKey)) {
@@ -288,6 +309,9 @@ class ModelProviders extends ChangeNotifier {
     }
     if (parseModelRef(actionsModel)?.provider == id) {
       await setActionsModel(null);
+    }
+    if (parseModelRef(quickAskModel)?.provider == id) {
+      await setQuickAskModel(null);
     }
     if (parseModelRef(imageModel)?.provider == id) {
       await setImageModel(null);
