@@ -65,12 +65,16 @@ class QuickAskAction extends StatefulWidget {
     required this.onPressed,
     this.selected = false,
     this.primary = false,
+    this.showLabel = false,
+    this.help,
   });
   final String label;
   final IconData icon;
   final VoidCallback? onPressed;
   final bool selected;
   final bool primary;
+  final bool showLabel;
+  final String? help;
 
   @override
   State<QuickAskAction> createState() => _QuickAskActionState();
@@ -89,7 +93,7 @@ class _QuickAskActionState extends State<QuickAskAction> {
     onTap: widget.onPressed,
     excludeSemantics: true,
     child: IdeHover(
-      message: widget.label,
+      message: widget.help ?? widget.label,
       excludeFromSemantics: true,
       child: FocusableActionDetector(
         enabled: widget.onPressed != null,
@@ -114,7 +118,10 @@ class _QuickAskActionState extends State<QuickAskAction> {
           behavior: HitTestBehavior.opaque,
           onTap: widget.onPressed,
           child: Container(
-            width: 30,
+            constraints: const BoxConstraints(minWidth: 30),
+            padding: widget.showLabel
+                ? const EdgeInsets.symmetric(horizontal: 8)
+                : EdgeInsets.zero,
             height: 30,
             alignment: Alignment.center,
             decoration: BoxDecoration(
@@ -130,14 +137,29 @@ class _QuickAskActionState extends State<QuickAskAction> {
                   : null,
               borderRadius: BorderRadius.circular(6),
             ),
-            child: Icon(
-              widget.icon,
-              size: 15,
-              color: widget.onPressed == null
-                  ? themeColors['disabledForeground']
-                  : widget.primary
-                  ? themeColors['button.foreground']
-                  : themeColors['editorWidget.foreground'],
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.showLabel) ...[
+                  Text(
+                    widget.label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: themeColors['editorWidget.foreground'],
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                ],
+                Icon(
+                  widget.icon,
+                  size: 15,
+                  color: widget.onPressed == null
+                      ? themeColors['disabledForeground']
+                      : widget.primary
+                      ? themeColors['button.foreground']
+                      : themeColors['editorWidget.foreground'],
+                ),
+              ],
             ),
           ),
         ),

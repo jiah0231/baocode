@@ -50,8 +50,8 @@ jobs:
       - name: Check changed Dart formatting
         shell: pwsh
         run: |
-          # +43 refines verified +42; format only this release's changes.
-          $files = @(git diff --name-only --diff-filter=ACMR 470e651edca224042acdb24c9b638ef47e657932 HEAD -- '*.dart')
+          # +44 refines verified +43; format only this release's changes.
+          $files = @(git diff --name-only --diff-filter=ACMR 4effd73a HEAD -- '*.dart')
           if ($LASTEXITCODE -ne 0) { throw 'Changed-file enumeration failed' }
           dart format --output=none --set-exit-if-changed @files
           if ($LASTEXITCODE -ne 0) { throw 'Feature source needs formatting' }
@@ -69,5 +69,5 @@ jobs:
         run: |
           Remove-Item Env:BAO_BROWSER_LIVE -ErrorAction SilentlyContinue
           Remove-Item Env:BAOCODE_CODEX_OFFICIAL_SMOKE -ErrorAction SilentlyContinue
-          flutter test --no-pub --reporter expanded --timeout 2m test/quick_ask test/claude_haiku_test.dart test/kernel/claude_haiku_test.dart test/models/proxy/quick_ask_streaming_test.dart packages/bao_agent/test/engine/turns_test.dart test/keybindings/window_keybindings_test.dart test/models/models_test.dart test/settings/models_page_test.dart test/chat/history_selection_test.dart test/chat/history_stream_batch_test.dart test/composer_test.dart test/update/version_test.dart packages/bao_editor/test/monaco/flutter/editor_surface_view_test.dart packages/bao_markdown/test/md_editor_test.dart
+          flutter test --no-pub --reporter expanded --timeout 2m test/quick_ask test/claude_haiku_test.dart test/kernel/claude_haiku_test.dart test/models/proxy/quick_ask_streaming_test.dart packages/bao_agent/test/engine/turns_test.dart test/kernel/codex_model_picker_test.dart test/keybindings/window_keybindings_test.dart test/models/models_test.dart test/settings/models_page_test.dart test/chat/history_selection_test.dart test/chat/history_stream_batch_test.dart test/composer_test.dart test/update/version_test.dart packages/bao_editor/test/monaco/flutter/editor_surface_view_test.dart packages/bao_markdown/test/md_editor_test.dart
           if ($LASTEXITCODE -ne 0) { throw 'Quick Ask regressions failed' }

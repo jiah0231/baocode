@@ -164,6 +164,32 @@ void main() {
     return value;
   }
 
+  test('fresh captured native route bypasses the managed default', () async {
+    final value = kernel(
+      context: const KernelContext(
+        cwd: '/fixture',
+        preserveModel: true,
+        settings: {'model': _native, 'permission': 'read-only'},
+      ),
+    );
+    expect(value.model.selected, _native);
+    expect(value.permission.selected, 'read-only');
+    value.send(
+      const KernelTurn(id: 'captured-selection', text: 'Selected text'),
+    );
+    await pumpEventQueue(times: 80);
+
+    expect(value.model.selected, _native);
+    expect(launches.single.modelProvider, isNot('baocode'));
+    expect(server.request('thread/start')['model'], _native);
+    expect(server.request('turn/start')['model'], _native);
+    expect(
+      server.written.where((m) => m['method'] == 'thread/resume'),
+      isEmpty,
+    );
+    expect(server.written.where((m) => m['method'] == 'thread/fork'), isEmpty);
+  });
+
   test(
     'managed chats omit the native group before and after discovery',
     () async {

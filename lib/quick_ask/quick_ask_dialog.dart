@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/semantics.dart' show CustomSemanticsAction;
 
 import '../chat/chat_keys.dart';
 import '../chat/widgets/markdown_view.dart';
@@ -23,6 +24,8 @@ Future<void> showQuickAsk(
   BuildContext context, {
   QuickAskContext? source,
   QuickAskService? service,
+  FutureOr<bool> Function(String prompt)? onAgentSubmit,
+  String? agentLabel,
 }) {
   final done = Completer<void>();
   final previousFocus = FocusManager.instance.primaryFocus;
@@ -52,6 +55,8 @@ Future<void> showQuickAsk(
     child: QuickAskDialog(
       source: source,
       service: service,
+      onAgentSubmit: onAgentSubmit,
+      agentLabel: agentLabel,
       fallbackAnchor: fallback,
       initialAnchor: source?.selectionAnchor?.call(),
       overlayContext: overlay.context,
@@ -78,6 +83,8 @@ class QuickAskDialog extends StatefulWidget {
     super.key,
     this.source,
     this.service,
+    this.onAgentSubmit,
+    this.agentLabel,
     this.fallbackAnchor,
     this.initialAnchor,
     required this.overlayContext,
@@ -88,6 +95,8 @@ class QuickAskDialog extends StatefulWidget {
 
   final QuickAskContext? source;
   final QuickAskService? service;
+  final FutureOr<bool> Function(String prompt)? onAgentSubmit;
+  final String? agentLabel;
   final Rect? fallbackAnchor;
   final Rect? initialAnchor;
   final BuildContext overlayContext;
@@ -107,17 +116,21 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
   late final _service = widget.service ?? QuickAskService();
   late final _providers = ModelProviders.current;
   QuickAskMode _mode = QuickAskMode.ask;
+  bool _agent = false;
+  bool _handingOff = false;
   Completer<void>? _cancel;
   int _generation = 0;
   String? _answer;
   String? _error;
   bool _includeContext = true;
+  bool _includeSelection = true;
   bool _showContext = false;
   bool _applying = false;
   bool _applied = false;
   bool _complete = false;
   bool _copied = false;
-  bool _pickingModel = false;
+  bool _pickingMenu = false;
+  final _frameKey = GlobalKey();
   Rect? _lastAnchor;
   final _anchorPosition = ValueNotifier<Rect?>(null);
 
@@ -133,7 +146,7 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
   void _trackAnchor(Duration _) {
     if (!mounted) return;
     if (widget.ownerContext?.mounted == false ||
-        (!_pickingModel && widget.ownerRoute?.isCurrent == false)) {
+        (!_pickingMenu && widget.ownerRoute?.isCurrent == false)) {
       widget.onClose(false);
       return;
     }
@@ -155,8 +168,9 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
     );
   }
 
-  bool get _busy => _cancel != null;
+  bool get _busy => _cancel != null || _handingOff;
   bool get _canEdit =>
+      _includeSelection &&
       widget.source?.selectedText.isNotEmpty == true &&
       widget.source?.truncated != true;
 
@@ -192,11 +206,52 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
   }
 
   Future<void> _send() async {
-    if (_busy || _applying || ChatKeys.isComposing) return;
+    if (_busy ||
+        _applying ||
+        ChatKeys.isComposing ||
+        !_question.value.composing.isCollapsed) {
+      return;
+    }
     final l10n = context.l10n;
     final question = _question.text.trim();
     if (question.isEmpty || question.length > quickAskQuestionLimit) {
       setState(() => _error = l10n.quickAskQuestionHint);
+      return;
+    }
+    if (_agent) {
+      final submit = widget.onAgentSubmit;
+      if (submit == null) return;
+      setState(() {
+        _handingOff = true;
+        _error = null;
+      });
+      try {
+        final accepted = await submit(
+          buildQuickAskAgentPrompt(
+            question: question,
+            selectedText: _includeSelection
+                ? widget.source?.selectedText ?? ''
+                : '',
+            selectionTruncated:
+                _includeSelection && (widget.source?.truncated ?? false),
+            surroundingText: _includeContext
+                ? widget.source?.contextText ?? ''
+                : '',
+            source: widget.source?.sourceLabel,
+          ),
+        );
+        if (!mounted) return;
+        if (accepted) {
+          widget.onClose(false);
+          return;
+        }
+        setState(() => _error = l10n.quickAskAgentFailed);
+      } on Object {
+        // A send may have reached its kernel before throwing. Do not retry it.
+        if (mounted) setState(() => _error = l10n.quickAskAgentFailed);
+      } finally {
+        if (mounted) setState(() => _handingOff = false);
+      }
       return;
     }
     final cancel = Completer<void>();
@@ -213,8 +268,11 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
     try {
       final answer = await _service.ask(
         question: question,
-        selectedText: widget.source?.selectedText ?? '',
-        selectionTruncated: widget.source?.truncated ?? false,
+        selectedText: _includeSelection
+            ? widget.source?.selectedText ?? ''
+            : '',
+        selectionTruncated:
+            _includeSelection && (widget.source?.truncated ?? false),
         surroundingText: _includeContext
             ? widget.source?.contextText ?? ''
             : '',
@@ -308,23 +366,141 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
     _focus.requestFocus();
   }
 
-  Future<void> _pickModel(Rect anchor) async {
-    _pickingModel = true;
+  void _setAgent(bool agent) {
+    if (_busy || _applying || (agent && widget.onAgentSubmit == null)) return;
+    setState(() {
+      _agent = agent;
+      _mode = QuickAskMode.ask;
+      _answer = null;
+      _error = null;
+      _complete = false;
+      _applied = false;
+      _copied = false;
+    });
+    _focus.requestFocus();
+  }
+
+  Future<void> _menu({bool modes = false, Offset? position}) async {
+    if (_pickingMenu) return;
+    final anchor = anchorOf(_frameKey.currentContext!);
+    if (anchor == null) return;
+    final l10n = context.l10n;
+    _pickingMenu = true;
     try {
       await showIdeMenu(
         context,
-        anchor: anchor,
-        entries: auxiliaryModelEntries(
-          context.l10n,
-          _providers,
-          current: _providers.quickAskModel ?? ModelProviders.followAuxiliary,
-          auto: ModelProviders.followAuxiliary,
-          autoLabel: context.l10n.aiModelAuxiliary,
-          onPick: (model) => unawaited(_providers.setQuickAskModel(model)),
-        ),
+        anchor: position == null ? anchor : null,
+        position: position,
+        entries: modes
+            ? [
+                IdeMenuAction(
+                  'Chat',
+                  checked: !_agent,
+                  enabled: !_busy && !_applying,
+                  onSelected: () => _setAgent(false),
+                ),
+                IdeMenuAction(
+                  'Agent',
+                  checked: _agent,
+                  enabled: !_busy && !_applying && widget.onAgentSubmit != null,
+                  onSelected: () => _setAgent(true),
+                ),
+              ]
+            : [
+                IdeMenuAction(
+                  _busy ? l10n.quickAskStop : l10n.quickAskSend,
+                  keybinding: _busy ? null : 'Enter',
+                  enabled: !_applying && !_handingOff,
+                  onSelected: () =>
+                      _busy ? setState(_stop) : unawaited(_send()),
+                ),
+                if (!_agent) ...[
+                  IdeMenuAction(
+                    l10n.quickAskAsk,
+                    checked: _mode == QuickAskMode.ask,
+                    enabled: !_busy && !_applying,
+                    onSelected: () => _setMode(QuickAskMode.ask),
+                  ),
+                  IdeMenuAction(
+                    l10n.quickAskEdit,
+                    checked: _mode == QuickAskMode.edit,
+                    enabled: !_busy && !_applying && _canEdit,
+                    onSelected: () => _setMode(QuickAskMode.edit),
+                  ),
+                ],
+                const IdeMenuSeparator(),
+                if (widget.source != null) ...[
+                  IdeMenuAction(
+                    _showContext
+                        ? l10n.quickAskHideContext
+                        : l10n.quickAskShowContext,
+                    onSelected: () =>
+                        setState(() => _showContext = !_showContext),
+                  ),
+                  if (widget.source!.selectedText.isNotEmpty)
+                    IdeMenuAction(
+                      l10n.quickAskSelection,
+                      checked: _includeSelection,
+                      enabled: !_busy && !_applying,
+                      onSelected: () => setState(() {
+                        _includeSelection = !_includeSelection;
+                        if (!_includeSelection) _mode = QuickAskMode.ask;
+                        _answer = null;
+                        _complete = false;
+                      }),
+                    ),
+                  if (widget.source!.contextText.isNotEmpty)
+                    IdeMenuAction(
+                      _includeContext
+                          ? l10n.quickAskContextOn
+                          : l10n.quickAskContextOff,
+                      checked: _includeContext,
+                      enabled: !_busy && !_applying,
+                      onSelected: () =>
+                          setState(() => _includeContext = !_includeContext),
+                    ),
+                ],
+                if (!_agent)
+                  IdeMenuAction(
+                    quickAskModelName(l10n, _providers),
+                    enabled: !_busy && !_applying,
+                    submenu: auxiliaryModelEntries(
+                      l10n,
+                      _providers,
+                      current:
+                          _providers.quickAskModel ??
+                          ModelProviders.followAuxiliary,
+                      auto: ModelProviders.followAuxiliary,
+                      autoLabel: l10n.aiModelAuxiliary,
+                      onPick: (model) =>
+                          unawaited(_providers.setQuickAskModel(model)),
+                    ),
+                  ),
+                if (_answer != null) ...[
+                  const IdeMenuSeparator(),
+                  IdeMenuAction(
+                    _copied ? l10n.quickAskCopied : l10n.quickAskCopy,
+                    onSelected: () => unawaited(_copy()),
+                  ),
+                  if (_mode == QuickAskMode.edit &&
+                      widget.source?.canApply == true)
+                    IdeMenuAction(
+                      _applied ? l10n.quickAskApplied : l10n.quickAskApply,
+                      enabled: _complete && !_busy && !_applied && !_applying,
+                      onSelected: () => unawaited(_apply()),
+                    ),
+                ],
+                const IdeMenuSeparator(),
+                IdeMenuAction(
+                  l10n.dialogCloseDialog,
+                  keybinding: 'Esc',
+                  enabled: !_applying && !_handingOff,
+                  onSelected: () => widget.onClose(true),
+                ),
+              ],
       );
     } finally {
-      _pickingModel = false;
+      _pickingMenu = false;
       if (mounted) _focus.requestFocus();
     }
   }
@@ -360,8 +536,14 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
     );
     return CallbackShortcuts(
       bindings: {
+        const SingleActivator(LogicalKeyboardKey.f10, shift: true): () =>
+            unawaited(_menu()),
+        const SingleActivator(LogicalKeyboardKey.contextMenu): () =>
+            unawaited(_menu()),
         const SingleActivator(LogicalKeyboardKey.escape): () {
-          if (!ChatKeys.isComposing && !_applying) widget.onClose(true);
+          if (!ChatKeys.isComposing && !_applying && !_handingOff) {
+            widget.onClose(true);
+          }
         },
       },
       child: FocusScope(
@@ -375,285 +557,223 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
           ),
           child: TapRegion(
             onTapOutside: (_) {
-              if (!_pickingModel && !_applying) widget.onClose(false);
+              if (!_pickingMenu && !_applying && !_handingOff) {
+                widget.onClose(false);
+              }
             },
-            child: Material(
-              type: MaterialType.transparency,
-              child: Container(
-                key: const ValueKey('quick-ask-frame'),
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: colors['editorWidget.background'],
-                  border: Border.all(
-                    color:
-                        colors.get('widget.border') ??
-                        colors['editorWidget.foreground'].withValues(
-                          alpha: 0.18,
-                        ),
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: colors['widget.shadow'].withValues(alpha: 0.18),
-                      blurRadius: 24,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: DefaultTextStyle(
-                  style: textStyle,
-                  child: SingleChildScrollView(
-                    key: const ValueKey('quick-ask-scroll'),
-                    controller: _scroll,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        IdeInputBox(
-                          key: const ValueKey('quick-ask-question'),
-                          controller: _question,
-                          focusNode: _focus,
-                          autofocus: true,
-                          minLines: 1,
-                          maxLines: 4,
-                          radius: 7,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 8,
+            child: GestureDetector(
+              key: _frameKey,
+              onSecondaryTapUp: (details) =>
+                  unawaited(_menu(position: details.globalPosition)),
+              child: Semantics(
+                customSemanticsActions: {
+                  CustomSemanticsAction(label: l10n.quickAskShowContext): () =>
+                      unawaited(_menu()),
+                  if (!_busy && !_applying)
+                    CustomSemanticsAction(label: l10n.quickAskSend): () =>
+                        unawaited(_send()),
+                  if (_cancel != null)
+                    CustomSemanticsAction(label: l10n.quickAskStop): () =>
+                        setState(_stop),
+                },
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: Container(
+                    key: const ValueKey('quick-ask-frame'),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: colors['editorWidget.background'],
+                      border: Border.all(
+                        color:
+                            colors.get('widget.border') ??
+                            colors['editorWidget.foreground'].withValues(
+                              alpha: 0.18,
+                            ),
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: colors['widget.shadow'].withValues(
+                            alpha: 0.18,
                           ),
-                          semanticsLabel: edit
-                              ? l10n.quickAskEditHint
-                              : l10n.quickAskQuestionHint,
-                          shortcuts: {
-                            const SingleActivator(
-                              LogicalKeyboardKey.enter,
-                              control: true,
-                            ): () =>
-                                unawaited(_send()),
-                            const SingleActivator(
-                              LogicalKeyboardKey.enter,
-                              meta: true,
-                            ): () =>
-                                unawaited(_send()),
-                          },
+                          blurRadius: 24,
+                          offset: const Offset(0, 8),
                         ),
-                        const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 4,
-                          runSpacing: 4,
-                          alignment: WrapAlignment.spaceBetween,
+                      ],
+                    ),
+                    child: DefaultTextStyle(
+                      style: textStyle,
+                      child: SingleChildScrollView(
+                        key: const ValueKey('quick-ask-scroll'),
+                        controller: _scroll,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Container(
-                              decoration: BoxDecoration(
-                                color: colors['editorWidget.foreground']
-                                    .withValues(alpha: 0.045),
-                                borderRadius: BorderRadius.circular(7),
+                            IdeInputBox(
+                              key: const ValueKey('quick-ask-question'),
+                              controller: _question,
+                              focusNode: _focus,
+                              autofocus: true,
+                              minLines: 1,
+                              maxLines: 4,
+                              radius: 7,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 8,
                               ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  QuickAskAction(
-                                    label: l10n.quickAskAsk,
-                                    icon: Codicons.comment,
-                                    selected: !edit,
-                                    onPressed: _busy || _applying
-                                        ? null
-                                        : () => _setMode(QuickAskMode.ask),
-                                  ),
-                                  QuickAskAction(
-                                    label: l10n.quickAskEdit,
-                                    icon: Codicons.edit,
-                                    selected: edit,
-                                    onPressed: _busy || _applying || !_canEdit
-                                        ? null
-                                        : () => _setMode(QuickAskMode.edit),
-                                  ),
-                                ],
-                              ),
+                              semanticsLabel: edit
+                                  ? l10n.quickAskEditHint
+                                  : l10n.quickAskQuestionHint,
+                              shortcuts: {
+                                const SingleActivator(
+                                  LogicalKeyboardKey.enter,
+                                  includeRepeats: false,
+                                ): () =>
+                                    unawaited(_send()),
+                                const SingleActivator(
+                                  LogicalKeyboardKey.enter,
+                                  includeRepeats: false,
+                                  control: true,
+                                ): () =>
+                                    unawaited(_send()),
+                                const SingleActivator(
+                                  LogicalKeyboardKey.enter,
+                                  includeRepeats: false,
+                                  meta: true,
+                                ): () =>
+                                    unawaited(_send()),
+                              },
                             ),
-                            Builder(
-                              builder: (context) => QuickAskAction(
-                                label: quickAskModelName(l10n, _providers),
-                                icon: Codicons.chip,
+                            const SizedBox(height: 8),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: QuickAskAction(
+                                key: const ValueKey('quick-ask-mode'),
+                                label: _agent ? 'Agent' : 'Chat',
+                                help: _agent
+                                    ? '${l10n.quickAskAgentHint}${widget.agentLabel == null ? '' : '\n${widget.agentLabel}'}'
+                                    : '${l10n.quickAskChatHint}\n${quickAskModelName(l10n, _providers)}',
+                                icon: Codicons.chevronDown,
+                                showLabel: true,
                                 onPressed: _busy || _applying
                                     ? null
-                                    : () {
-                                        final anchor = anchorOf(context);
-                                        if (anchor != null) {
-                                          unawaited(_pickModel(anchor));
-                                        }
-                                      },
+                                    : () => unawaited(_menu(modes: true)),
                               ),
                             ),
-                            if (source != null)
-                              QuickAskAction(
-                                label: _showContext
-                                    ? l10n.quickAskHideContext
-                                    : l10n.quickAskShowContext,
-                                icon: Codicons.eye,
-                                selected: _showContext,
-                                onPressed: () => setState(
-                                  () => _showContext = !_showContext,
-                                ),
-                              ),
-                            if (hasContext)
-                              QuickAskAction(
-                                label: _includeContext
-                                    ? l10n.quickAskContextOn
-                                    : l10n.quickAskContextOff,
-                                icon: Codicons.attach,
-                                selected: _includeContext,
-                                onPressed: _busy || _applying
-                                    ? null
-                                    : () => setState(
-                                        () =>
-                                            _includeContext = !_includeContext,
-                                      ),
-                              ),
-                            if (source?.truncated == true)
+                            if (_busy)
                               Semantics(
-                                label: l10n.quickAskTruncated,
-                                child: Icon(
-                                  Codicons.warning,
-                                  size: 16,
-                                  color: colors['editorWarning.foreground'],
+                                label: l10n.langLoading,
+                                liveRegion: true,
+                                child: Padding(
+                                  padding: const EdgeInsets.only(top: 8),
+                                  child: Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Container(
+                                      key: const ValueKey('quick-ask-progress'),
+                                      width: 32,
+                                      height: 2,
+                                      decoration: BoxDecoration(
+                                        color: colors['button.background'],
+                                        borderRadius: BorderRadius.circular(1),
+                                      ),
+                                    ),
+                                  ),
                                 ),
                               ),
-                            QuickAskAction(
-                              label: l10n.dialogCloseDialog,
-                              icon: Codicons.close,
-                              onPressed: _applying
-                                  ? null
-                                  : () => widget.onClose(true),
-                            ),
-                            QuickAskAction(
-                              primary: true,
-                              label: _busy
-                                  ? l10n.quickAskStop
-                                  : l10n.quickAskSend,
-                              icon: _busy ? Codicons.debugStop : Codicons.send,
-                              onPressed: _applying
-                                  ? null
-                                  : () {
-                                      if (_busy) {
-                                        setState(_stop);
-                                      } else {
-                                        unawaited(_send());
+                            if (_showContext && source != null) ...[
+                              const SizedBox(height: 6),
+                              SelectableText(
+                                _agent
+                                    ? l10n.quickAskAgentHint
+                                    : l10n.quickAskPrivacy,
+                                style: textStyle,
+                              ),
+                              if (source.truncated && _includeSelection)
+                                Text(
+                                  l10n.quickAskTruncated,
+                                  style: TextStyle(
+                                    color: colors['editorWarning.foreground'],
+                                  ),
+                                ),
+                              if (_includeSelection &&
+                                  source.selectedText.isNotEmpty) ...[
+                                const SizedBox(height: 6),
+                                preview(
+                                  l10n.quickAskSelection,
+                                  source.selectedText,
+                                ),
+                              ],
+                              if (hasContext && _includeContext) ...[
+                                const SizedBox(height: 6),
+                                preview(
+                                  l10n.quickAskNearby,
+                                  source.contextText,
+                                ),
+                              ],
+                            ],
+                            if (_error case final error?) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                error,
+                                style: TextStyle(
+                                  color: colors['errorForeground'],
+                                ),
+                              ),
+                            ],
+                            if (_answer case final answer?) ...[
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 10,
+                                ),
+                                child: Container(
+                                  height: 1,
+                                  color: colors['editorWidget.foreground']
+                                      .withValues(alpha: 0.08),
+                                ),
+                              ),
+                              if (edit) ...[
+                                preview(
+                                  l10n.quickAskOriginal,
+                                  source!.selectedText,
+                                ),
+                                const SizedBox(height: 6),
+                                if (!_complete)
+                                  SelectableText(answer, style: textStyle)
+                                else if (_applied || _applying)
+                                  SelectableText(
+                                    _replacement.text,
+                                    style: textStyle,
+                                  )
+                                else
+                                  IdeInputBox(
+                                    key: const ValueKey(
+                                      'quick-ask-replacement',
+                                    ),
+                                    controller: _replacement,
+                                    minLines: 1,
+                                    maxLines: 8,
+                                    semanticsLabel: l10n.quickAskProposed,
+                                    onChanged: (_) {
+                                      if (_copied) {
+                                        setState(() => _copied = false);
                                       }
                                     },
-                            ),
-                          ],
-                        ),
-                        if (_busy)
-                          Semantics(
-                            label: l10n.langLoading,
-                            liveRegion: true,
-                            child: Padding(
-                              padding: const EdgeInsets.only(top: 8),
-                              child: Align(
-                                alignment: Alignment.centerLeft,
-                                child: Container(
-                                  key: const ValueKey('quick-ask-progress'),
-                                  width: 32,
-                                  height: 2,
-                                  decoration: BoxDecoration(
-                                    color: colors['button.background'],
-                                    borderRadius: BorderRadius.circular(1),
+                                  ),
+                              ] else
+                                Semantics(
+                                  label: l10n.quickAskAnswer,
+                                  child: SelectionArea(
+                                    child: MarkdownView(
+                                      answer,
+                                      style: textStyle,
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ),
-                          ),
-                        if (_showContext && source != null) ...[
-                          if (source.selectedText.isNotEmpty) ...[
-                            const SizedBox(height: 6),
-                            preview(
-                              l10n.quickAskSelection,
-                              source.selectedText,
-                            ),
-                          ],
-                          if (hasContext && _includeContext) ...[
-                            const SizedBox(height: 6),
-                            preview(l10n.quickAskNearby, source.contextText),
-                          ],
-                        ],
-                        if (_error case final error?) ...[
-                          const SizedBox(height: 6),
-                          Text(
-                            error,
-                            style: TextStyle(color: colors['errorForeground']),
-                          ),
-                        ],
-                        if (_answer case final answer?) ...[
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 10),
-                            child: Container(
-                              height: 1,
-                              color: colors['editorWidget.foreground']
-                                  .withValues(alpha: 0.08),
-                            ),
-                          ),
-                          if (edit) ...[
-                            preview(
-                              l10n.quickAskOriginal,
-                              source!.selectedText,
-                            ),
-                            const SizedBox(height: 6),
-                            if (!_complete)
-                              SelectableText(answer, style: textStyle)
-                            else if (_applied || _applying)
-                              SelectableText(
-                                _replacement.text,
-                                style: textStyle,
-                              )
-                            else
-                              IdeInputBox(
-                                key: const ValueKey('quick-ask-replacement'),
-                                controller: _replacement,
-                                minLines: 1,
-                                maxLines: 8,
-                                semanticsLabel: l10n.quickAskProposed,
-                                onChanged: (_) {
-                                  if (_copied) setState(() => _copied = false);
-                                },
-                              ),
-                          ] else
-                            Semantics(
-                              label: l10n.quickAskAnswer,
-                              child: SelectionArea(
-                                child: MarkdownView(answer, style: textStyle),
-                              ),
-                            ),
-                          const SizedBox(height: 4),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              QuickAskAction(
-                                label: _copied
-                                    ? l10n.quickAskCopied
-                                    : l10n.quickAskCopy,
-                                icon: _copied ? Codicons.check : Codicons.copy,
-                                onPressed: () => unawaited(_copy()),
-                              ),
-                              if (edit && source!.canApply)
-                                QuickAskAction(
-                                  label: _applied
-                                      ? l10n.quickAskApplied
-                                      : l10n.quickAskApply,
-                                  icon: Codicons.checkAll,
-                                  selected: _applied,
-                                  onPressed:
-                                      !_complete ||
-                                          _busy ||
-                                          _applied ||
-                                          _applying
-                                      ? null
-                                      : () => unawaited(_apply()),
-                                ),
                             ],
-                          ),
-                        ],
-                      ],
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),

@@ -130,8 +130,11 @@ class AgentThread {
     this.pinned = false,
     this.archived = false,
     bool unread = false,
+    this._restoreDraft = true,
   }) : _seenSeq = unread ? -1 : 0,
        _wantsTitle = record == null && _title.isEmpty;
+
+  final bool _restoreDraft;
 
   /// Its project: replaced by one of the new name when a workspace is
   /// renamed.
@@ -2571,10 +2574,15 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     final draft = thread.session.draft;
     final id = thread.id;
     final key = id ?? '$_newDraft${thread.project.path}';
-    if (id != null || _newDrafts.remove(thread.project.path)) {
+    if (thread._restoreDraft &&
+        (id != null || _newDrafts.remove(thread.project.path))) {
       if (_drafts[key] case final kept?) _decodeDraft(kept, draft);
     }
-    draft.onSaved = () => _draftChanged(thread);
+    draft.onSaved = () {
+      // A separate selection agent must not erase the project's unsent draft
+      // while its first turn is still waiting for a session ID.
+      if (thread._restoreDraft || thread.id != null) _draftChanged(thread);
+    };
   }
 
   void _draftChanged(AgentThread thread) {
@@ -3549,30 +3557,65 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     return thread;
   }
 
+  /// An explicit selection submission starts separately from [source], with
+  /// its captured routing. Never reuses or takes over an existing draft.
+  AgentThread? startFreshAgent(
+    AgentThread source, {
+    required KernelDescriptor kernel,
+    required Map<String, String> settings,
+  }) {
+    if (_disposed ||
+        !_threads.contains(source) ||
+        source.archived ||
+        !kernels.contains(kernel) ||
+        isAppFolder(source.project.path)) {
+      return null;
+    }
+    final thread = _newThread(
+      source.project,
+      kernel: kernel,
+      settings: Map.unmodifiable(settings),
+      restoreDraft: false,
+      preserveModel: true,
+    );
+    notifyListeners();
+    return thread;
+  }
+
   /// A new, empty agent in [project], listed here but not shown.
-  AgentThread _newThread(Project project) {
-    final kernel =
+  AgentThread _newThread(
+    Project project, {
+    KernelDescriptor? kernel,
+    Map<String, String>? settings,
+    bool restoreDraft = true,
+    bool preserveModel = false,
+  }) {
+    kernel ??=
         switch (agentSetup?.call(project.path)?.kernel) {
           final id? => kernels.where((k) => k.id == id).firstOrNull,
           null => null,
         } ??
         _preferredKernel;
-    final settings = _setUp(project.path, {
-      ..._preferredSettings,
-      // Settings → Models' pick, if any, over the last one.
-      KernelChoiceKind.model.name: ?ModelProviders.current.defaultModel,
-    });
+    final initialSettings =
+        settings ??
+        _setUp(project.path, {
+          ..._preferredSettings,
+          // Settings → Models' pick, if any, over the last one.
+          KernelChoiceKind.model.name: ?ModelProviders.current.defaultModel,
+        });
     final cwd = project.path;
     final thread = AgentThread._(
       project: project,
       kernel: kernel,
       updatedAt: DateTime.now(),
+      restoreDraft: restoreDraft,
       open: () => ChatSession(
         kernel: kernel,
         kernels: kernels,
         kernelContext: KernelContext(
           cwd: cwd,
-          settings: settings,
+          settings: initialSettings,
+          preserveModel: preserveModel,
           workspace: () => _kernelWorkspace(cwd),
         ),
         historyCount: 0,

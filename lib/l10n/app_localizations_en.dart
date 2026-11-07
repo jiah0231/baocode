@@ -7361,7 +7361,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get modelsQuickAskDescription =>
-      'Used only for the quick question and selection edit window. Follows the auxiliary model by default; does not change conversation models.';
+      'Used for Chat and selection edit previews in Quick Ask. Follows Auxiliary by default. Agent uses its project conversation model.';
 
   @override
   String get modelsAuxiliaryAuto => 'Automatic';
@@ -13989,4 +13989,16 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get quickAskSend => 'Send';
+
+  @override
+  String get quickAskChatHint =>
+      'Read-only Chat · Enter to send · Shift+Enter for a new line · Right-click or Shift+F10 for context, model, edit preview and other actions';
+
+  @override
+  String get quickAskAgentHint =>
+      'Send to a new project Agent using its normal model, project context, tools and permissions. Review progress, approvals and changes in the Agent conversation.';
+
+  @override
+  String get quickAskAgentFailed =>
+      'Could not hand off to Agent. Check the Agent conversation before retrying; it may already have received the request.';
 }

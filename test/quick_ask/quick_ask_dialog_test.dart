@@ -99,6 +99,8 @@ void main() {
     WidgetTester tester, {
     QuickAskContext? source,
     Locale? locale,
+    FutureOr<bool> Function(String prompt)? onAgentSubmit,
+    String? agentLabel,
   }) async {
     await tester.pumpWidget(
       RepaintBoundary(
@@ -112,7 +114,13 @@ void main() {
               child: IdeButton(
                 label: 'open',
                 onPressed: () => unawaited(
-                  showQuickAsk(context, source: source, service: service),
+                  showQuickAsk(
+                    context,
+                    source: source,
+                    service: service,
+                    onAgentSubmit: onAgentSubmit,
+                    agentLabel: agentLabel,
+                  ),
                 ),
               ),
             ),
@@ -129,12 +137,432 @@ void main() {
     matching: find.byType(EditableText),
   );
 
-  Future<void> send(WidgetTester tester) async {
-    await tester.enterText(question(), 'Explain this');
-    await tester.ensureVisible(find.bySemanticsLabel('Send'));
-    await tester.tap(find.bySemanticsLabel('Send'));
+  Future<void> submit(WidgetTester tester) async {
+    tester.widget<EditableText>(question()).focusNode.requestFocus();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
   }
+
+  Future<void> send(WidgetTester tester) async {
+    await tester.enterText(question(), 'Explain this');
+    await submit(tester);
+  }
+
+  Future<void> menu(WidgetTester tester) async {
+    tester.widget<EditableText>(question()).focusNode.requestFocus();
+    await tester.pump();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.f10);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pumpAndSettle();
+    expect(find.byType(QuickAskDialog), findsOneWidget);
+  }
+
+  Finder menuEntry(String label) => find.byWidgetPredicate(
+    (widget) => widget is Semantics && widget.properties.label == label,
+  );
+
+  bool menuEnabled(WidgetTester tester, String label) =>
+      tester.widget<Semantics>(menuEntry(label).last).properties.enabled!;
+
+  Future<void> dismissMenu(WidgetTester tester) async {
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byType(QuickAskDialog), findsOneWidget);
+  }
+
+  Future<void> choose(WidgetTester tester, String label) async {
+    await menu(tester);
+    await tester.ensureVisible(menuEntry(label).last);
+    await tester.tap(menuEntry(label).last);
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> mode(WidgetTester tester, String label) async {
+    await tester.ensureVisible(find.byKey(const ValueKey('quick-ask-mode')));
+    await tester.tap(find.byKey(const ValueKey('quick-ask-mode')));
+    await tester.pumpAndSettle();
+    await tester.tap(menuEntry(label).last);
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+    'one visible mode dropdown opens without sending or showing context',
+    (tester) async {
+      var handoffs = 0;
+      await open(
+        tester,
+        source: const QuickAskContext(
+          sourceLabel: 'private/source.dart',
+          selectedText: 'private selection',
+          contextText: 'private surroundings',
+        ),
+        onAgentSubmit: (_) {
+          handoffs++;
+          return true;
+        },
+      );
+      expect(find.byType(QuickAskAction), findsOneWidget);
+      expect(find.byKey(const ValueKey('quick-ask-mode')), findsOneWidget);
+      expect(find.text('Chat'), findsOneWidget);
+      for (final hidden in [
+        'Send',
+        'Stop',
+        'Ask',
+        'Edit selection',
+        'Review context',
+        'private/source.dart',
+        'private selection',
+        'private surroundings',
+      ]) {
+        expect(find.text(hidden), findsNothing);
+      }
+      await mode(tester, 'Agent');
+      expect(find.byType(QuickAskAction), findsOneWidget);
+      expect(find.text('Agent'), findsOneWidget);
+      expect(
+        tester.widget<EditableText>(question()).focusNode.hasFocus,
+        isTrue,
+      );
+      expect(handoffs, 0);
+      expect(request.calls, 0);
+    },
+  );
+
+  testWidgets('Agent sends bounded snapshots once and waits for acceptance', (
+    tester,
+  ) async {
+    final prompts = <String>[];
+    final accepted = Completer<bool>();
+    var applied = false;
+    await open(
+      tester,
+      source: QuickAskContext(
+        sourceLabel: 's' * 500,
+        selectedText: '${'x' * quickAskSelectionLimit}private remainder',
+        contextText: '${'y' * quickAskContextLimit}private remainder',
+        applyReplacement: (_) {
+          applied = true;
+          return true;
+        },
+      ),
+      onAgentSubmit: (prompt) {
+        prompts.add(prompt);
+        return accepted.future;
+      },
+    );
+    await mode(tester, 'Agent');
+    await tester.enterText(question(), 'q' * quickAskQuestionLimit);
+    expect(prompts, isEmpty);
+    await submit(tester);
+    expect(prompts, hasLength(1));
+    final payload =
+        jsonDecode(prompts.single.split('\n').last) as Map<String, dynamic>;
+    expect(payload['request'], 'q' * quickAskQuestionLimit);
+    expect(payload['selection'], 'x' * quickAskSelectionLimit);
+    expect(payload['context'], 'y' * quickAskContextLimit);
+    expect(payload['selectionTruncated'], isTrue);
+    expect(payload['contextTruncated'], isTrue);
+    expect((payload['source'] as String).length, 300);
+    expect(prompts.single, isNot(contains('private remainder')));
+    expect(prompts.single, contains('read its current contents'));
+    expect(find.byType(QuickAskDialog), findsOneWidget);
+    expect(find.byKey(const ValueKey('quick-ask-progress')), findsOneWidget);
+    await submit(tester);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(prompts, hasLength(1));
+    expect(find.byType(QuickAskDialog), findsOneWidget);
+    expect(request.calls, 0);
+    expect(applied, isFalse);
+    accepted.complete(true);
+    await tester.pumpAndSettle();
+    expect(find.byType(QuickAskDialog), findsNothing);
+  });
+
+  testWidgets(
+    'Agent handoff respects independent selection and nearby switches',
+    (tester) async {
+      final prompts = <Map<String, dynamic>>[];
+      await open(
+        tester,
+        source: const QuickAskContext(
+          sourceLabel: 'Chat',
+          selectedText: 'selected secret',
+          contextText: 'nearby secret',
+          truncated: true,
+        ),
+        onAgentSubmit: (prompt) {
+          prompts.add(
+            jsonDecode(prompt.split('\n').last) as Map<String, dynamic>,
+          );
+          return false;
+        },
+      );
+      await mode(tester, 'Agent');
+      await choose(tester, 'Selected excerpt');
+      await choose(tester, 'Nearby context: on');
+      await send(tester);
+      expect(prompts.single['selection'], isEmpty);
+      expect(prompts.single['context'], isEmpty);
+      expect(prompts.single['selectionTruncated'], isFalse);
+      expect(prompts.single['contextTruncated'], isFalse);
+      await choose(tester, 'Selected excerpt');
+      await submit(tester);
+      expect(prompts, hasLength(2));
+      expect(prompts.last['selection'], 'selected secret');
+      expect(prompts.last['selectionTruncated'], isTrue);
+      expect(prompts.last['context'], isEmpty);
+      expect(request.calls, 0);
+    },
+  );
+
+  testWidgets('Agent is disabled without a workspace handoff callback', (
+    tester,
+  ) async {
+    await open(tester);
+    await tester.tap(find.byKey(const ValueKey('quick-ask-mode')));
+    await tester.pumpAndSettle();
+    expect(menuEnabled(tester, 'Agent'), isFalse);
+    await tester.tap(menuEntry('Agent'));
+    await tester.pumpAndSettle();
+    expect(request.calls, 0);
+    await dismissMenu(tester);
+    expect(find.text('Chat'), findsOneWidget);
+    await send(tester);
+    expect(request.calls, 1);
+  });
+
+  for (final throws in [false, true]) {
+    testWidgets(
+      'failed Agent handoff (throws: $throws) stays open without fallback',
+      (tester) async {
+        var calls = 0;
+        await open(
+          tester,
+          onAgentSubmit: (_) {
+            calls++;
+            if (throws) throw StateError('private agent credential');
+            return false;
+          },
+        );
+        await mode(tester, 'Agent');
+        await send(tester);
+        expect(calls, 1);
+        expect(request.calls, 0);
+        expect(find.byType(QuickAskDialog), findsOneWidget);
+        expect(
+          find.textContaining('Could not hand off to Agent.'),
+          findsOneWidget,
+        );
+        expect(find.textContaining('private agent credential'), findsNothing);
+        expect(
+          tester.widget<EditableText>(question()).controller.text,
+          'Explain this',
+        );
+        await tester.pump(const Duration(seconds: 2));
+        expect(calls, 1);
+        expect(request.calls, 0);
+      },
+    );
+  }
+
+  testWidgets('invalid Agent questions do not call either backend', (
+    tester,
+  ) async {
+    var calls = 0;
+    await open(
+      tester,
+      onAgentSubmit: (_) {
+        calls++;
+        return true;
+      },
+    );
+    await mode(tester, 'Agent');
+    for (final value in ['   ', 'x' * (quickAskQuestionLimit + 1)]) {
+      await tester.enterText(question(), value);
+      await submit(tester);
+      expect(calls, 0);
+      expect(request.calls, 0);
+      expect(find.byType(QuickAskDialog), findsOneWidget);
+    }
+  });
+
+  for (final modifier in [
+    LogicalKeyboardKey.controlLeft,
+    LogicalKeyboardKey.metaLeft,
+  ]) {
+    testWidgets('${modifier.keyLabel}+Enter submits exactly once', (
+      tester,
+    ) async {
+      await open(tester);
+      await tester.enterText(question(), 'Explain this');
+      await tester.sendKeyDownEvent(modifier);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(modifier);
+      await tester.pumpAndSettle();
+      expect(request.calls, 1);
+      expect(
+        tester.widget<EditableText>(question()).controller.text,
+        'Explain this',
+      );
+    });
+  }
+
+  testWidgets('switching Chat and Agent clears previews and resets edit mode', (
+    tester,
+  ) async {
+    var calls = 0;
+    await open(
+      tester,
+      source: const QuickAskContext(
+        sourceLabel: 'Chat',
+        selectedText: 'original',
+      ),
+      onAgentSubmit: (_) {
+        calls++;
+        return false;
+      },
+    );
+    await choose(tester, 'Edit selection');
+    await send(tester);
+    expect(request.input!['mode'], 'edit');
+    expect(find.byKey(const ValueKey('quick-ask-replacement')), findsOneWidget);
+    await mode(tester, 'Agent');
+    expect(find.text('replacement'), findsNothing);
+    expect(find.byKey(const ValueKey('quick-ask-replacement')), findsNothing);
+    await menu(tester);
+    expect(menuEntry('Edit selection'), findsNothing);
+    expect(menuEntry('Same as Auxiliary Model'), findsNothing);
+    await dismissMenu(tester);
+    await mode(tester, 'Chat');
+    await submit(tester);
+    expect(request.input!['mode'], 'ask');
+    expect(find.byType(MarkdownView), findsOneWidget);
+    expect(calls, 0);
+  });
+
+  testWidgets(
+    'a stale Chat model fails without sending excerpts to a fallback',
+    (tester) async {
+      await providers.setQuickAskModel('@missing/model');
+      await open(
+        tester,
+        source: const QuickAskContext(
+          sourceLabel: 'file',
+          selectedText: 'private selection',
+        ),
+      );
+      await send(tester);
+      expect(request.calls, 0);
+      expect(find.textContaining('Could not get an answer.'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Shift+Enter inserts a newline; IME Enter and Escape do not submit or close',
+    (tester) async {
+      await open(tester);
+      await tester.enterText(question(), 'first');
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pump();
+      expect(
+        tester.widget<EditableText>(question()).controller.text,
+        'first\n',
+      );
+      expect(request.calls, 0);
+      tester.testTextInput.updateEditingValue(
+        const TextEditingValue(
+          text: '拼音',
+          selection: TextSelection.collapsed(offset: 2),
+          composing: TextRange(start: 0, end: 2),
+        ),
+      );
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(request.calls, 0);
+      expect(find.byType(QuickAskDialog), findsOneWidget);
+      tester.testTextInput.updateEditingValue(
+        const TextEditingValue(
+          text: '拼音',
+          selection: TextSelection.collapsed(offset: 2),
+        ),
+      );
+      await tester.pump();
+      await submit(tester);
+      expect(request.calls, 1);
+      expect(request.input!['request'], '拼音');
+    },
+  );
+
+  testWidgets(
+    'mode dropdown and secondary Send are usable with only the keyboard',
+    (tester) async {
+      var calls = 0;
+      await open(
+        tester,
+        onAgentSubmit: (_) {
+          calls++;
+          return false;
+        },
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(menuEntry('Agent'), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.home);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(find.text('Agent'), findsOneWidget);
+      expect(calls, 0);
+      await tester.enterText(question(), 'Do this');
+      await menu(tester);
+      expect(menuEntry('Send'), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.home);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(calls, 1);
+      expect(request.calls, 0);
+      expect(find.byType(QuickAskDialog), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'right-click secondary menu preserves the popup and context remains optional',
+    (tester) async {
+      await open(
+        tester,
+        source: const QuickAskContext(
+          sourceLabel: 'file',
+          selectedText: 'selected',
+        ),
+      );
+      final frame = tester.getRect(
+        find.byKey(const ValueKey('quick-ask-frame')),
+      );
+      await tester.tapAt(
+        frame.bottomRight - const Offset(5, 5),
+        buttons: kSecondaryMouseButton,
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(QuickAskDialog), findsOneWidget);
+      expect(menuEntry('Review context'), findsOneWidget);
+      expect(find.text('selected'), findsNothing);
+      await tester.tap(menuEntry('Review context'));
+      await tester.pumpAndSettle();
+      expect(find.text('selected'), findsOneWidget);
+      expect(find.byType(QuickAskDialog), findsOneWidget);
+      await menu(tester);
+      await dismissMenu(tester);
+      expect(request.calls, 0);
+    },
+  );
 
   testWidgets(
     'automatic model follows captured chat and explicit quick ask wins',
@@ -170,9 +598,10 @@ void main() {
     ) async {
       await providers.setQuickAskModel(stored);
       await open(tester);
-      await tester.tap(find.bySemanticsLabel('Same as Auxiliary Model'));
+      await menu(tester);
+      await tester.tap(menuEntry('Same as Auxiliary Model'));
       await tester.pumpAndSettle();
-      expect(find.byIcon(Codicons.menuSelection), findsOneWidget);
+      expect(find.byIcon(Codicons.menuSelection), findsNWidgets(2));
       await tester.tap(find.text('Same as Auxiliary Model').last);
       await tester.pumpAndSettle();
       expect(providers.quickAskModel, ModelProviders.followAuxiliary);
@@ -192,11 +621,11 @@ void main() {
         ),
       );
       expect(request.calls, 0);
-      await tester.tap(find.bySemanticsLabel('Review context'));
+      await choose(tester, 'Review context');
       await tester.pumpAndSettle();
       expect(find.text('selected'), findsOneWidget);
       expect(find.text('nearby'), findsOneWidget);
-      await tester.tap(find.bySemanticsLabel('Nearby context: on'));
+      await choose(tester, 'Nearby context: on');
       await tester.pumpAndSettle();
       expect(find.text('nearby'), findsNothing);
       await send(tester);
@@ -223,7 +652,7 @@ void main() {
         },
       ),
     );
-    await tester.tap(find.bySemanticsLabel('Edit selection'));
+    await choose(tester, 'Edit selection');
     await send(tester);
     expect(request.input!['mode'], 'edit');
     expect(applied, isEmpty);
@@ -233,11 +662,12 @@ void main() {
       matching: find.byType(EditableText),
     );
     await tester.enterText(replacement, 'reviewed replacement');
-    await tester.ensureVisible(find.bySemanticsLabel('Apply replacement'));
-    await tester.tap(find.bySemanticsLabel('Apply replacement'));
+    await choose(tester, 'Apply replacement');
     await tester.pumpAndSettle();
     expect(applied, ['reviewed replacement']);
-    await tester.tap(find.bySemanticsLabel('Applied'));
+    await menu(tester);
+    expect(menuEnabled(tester, 'Applied'), isFalse);
+    await dismissMenu(tester);
     await tester.pumpAndSettle();
     expect(applied, hasLength(1));
   });
@@ -253,10 +683,9 @@ void main() {
           applyReplacement: (_) => false,
         ),
       );
-      await tester.tap(find.bySemanticsLabel('Edit selection'));
+      await choose(tester, 'Edit selection');
       await send(tester);
-      await tester.ensureVisible(find.bySemanticsLabel('Apply replacement'));
-      await tester.tap(find.bySemanticsLabel('Apply replacement'));
+      await choose(tester, 'Apply replacement');
       await tester.pumpAndSettle();
       expect(
         find.textContaining('The source changed or closed.'),
@@ -280,7 +709,7 @@ void main() {
           selectedText: 'a message',
         ),
       );
-      await tester.tap(find.bySemanticsLabel('Edit selection'));
+      await choose(tester, 'Edit selection');
       await send(tester);
       expect(
         find.byKey(const ValueKey('quick-ask-replacement')),
@@ -288,7 +717,10 @@ void main() {
       );
       expect(find.bySemanticsLabel('Apply replacement'), findsNothing);
       expect(find.textContaining('This source is read-only'), findsNothing);
-      expect(find.bySemanticsLabel('Copy'), findsOneWidget);
+      await menu(tester);
+      expect(menuEntry('Copy'), findsOneWidget);
+      expect(menuEntry('Apply replacement'), findsNothing);
+      await dismissMenu(tester);
     },
   );
 
@@ -303,19 +735,17 @@ void main() {
         truncated: true,
       ),
     );
-    final edit = tester.widget<QuickAskAction>(
-      find.widgetWithIcon(QuickAskAction, Codicons.edit),
-    );
-    expect(edit.onPressed, isNull);
+    await menu(tester);
+    expect(menuEnabled(tester, 'Edit selection'), isFalse);
+    await dismissMenu(tester);
     await send(tester);
     expect(request.input!['selectionTruncated'], isTrue);
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
     await open(tester);
-    final noSelection = tester.widget<QuickAskAction>(
-      find.widgetWithIcon(QuickAskAction, Codicons.edit),
-    );
-    expect(noSelection.onPressed, isNull);
+    await menu(tester);
+    expect(menuEnabled(tester, 'Edit selection'), isFalse);
+    await dismissMenu(tester);
   });
 
   testWidgets(
@@ -334,19 +764,20 @@ void main() {
           },
         ),
       );
-      await tester.tap(find.bySemanticsLabel('Edit selection'));
+      await choose(tester, 'Edit selection');
       await send(tester);
       request.emit!('Partial replacement');
       await tester.pump();
       expect(find.text('Partial replacement'), findsOneWidget);
       expect(find.byKey(const ValueKey('quick-ask-progress')), findsOneWidget);
-      QuickAskAction apply() => tester.widget<QuickAskAction>(
-        find.widgetWithIcon(QuickAskAction, Codicons.checkAll),
-      );
-      expect(apply().onPressed, isNull);
-      await tester.tap(find.bySemanticsLabel('Stop'));
+      await menu(tester);
+      expect(menuEnabled(tester, 'Apply replacement'), isFalse);
+      await dismissMenu(tester);
+      await choose(tester, 'Stop');
       await tester.pumpAndSettle();
-      expect(apply().onPressed, isNull);
+      await menu(tester);
+      expect(menuEnabled(tester, 'Apply replacement'), isFalse);
+      await dismissMenu(tester);
       request.emit!('stale chunk');
       request.pending!.complete('stale final');
       request.pending = null;
@@ -355,7 +786,9 @@ void main() {
       expect(find.text('stale final'), findsNothing);
       expect(applications, 0);
       await send(tester);
-      expect(apply().onPressed, isNotNull);
+      await menu(tester);
+      expect(menuEnabled(tester, 'Apply replacement'), isTrue);
+      await dismissMenu(tester);
     },
   );
 
@@ -430,25 +863,20 @@ void main() {
         applyReplacement: (_) => true,
       ),
     );
-    await tester.tap(find.bySemanticsLabel('Edit selection'));
+    await choose(tester, 'Edit selection');
     await send(tester);
     request.emit!('Incomplete');
     await tester.pump();
     request.pending!.completeError(StateError('private'));
     await tester.pumpAndSettle();
-    expect(
-      tester
-          .widget<QuickAskAction>(
-            find.widgetWithIcon(QuickAskAction, Codicons.checkAll),
-          )
-          .onPressed,
-      isNull,
-    );
+    await menu(tester);
+    expect(menuEnabled(tester, 'Apply replacement'), isFalse);
+    await dismissMenu(tester);
     expect(find.textContaining('Could not get an answer.'), findsOneWidget);
     request.pending = Completer<String>();
     await send(tester);
     final emit = request.emit!;
-    await tester.tap(find.bySemanticsLabel('Close Dialog'));
+    await choose(tester, 'Close Dialog');
     await tester.pumpAndSettle();
     emit('late');
     request.pending!.complete('late');
@@ -532,7 +960,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.byType(MarkdownView), findsOneWidget);
-      expect(find.bySemanticsLabel('Stop'), findsOneWidget);
+      expect(find.byKey(const ValueKey('quick-ask-progress')), findsOneWidget);
       await capture('$theme-streaming');
       request.pending!.complete(
         '**Selection explained**\n\nA compact answer with readable spacing.\n\n- Markdown stays readable.\n- The selection stays in view.',
@@ -549,22 +977,20 @@ void main() {
     request.pending = Completer<String>();
     await open(tester);
     await tester.enterText(question(), 'Explain');
-    await tester.ensureVisible(find.bySemanticsLabel('Send'));
-    await tester.tap(find.bySemanticsLabel('Send'));
+    await submit(tester);
     await tester.pump();
     await tester.pump();
     expect(request.calls, 1);
     var cancelled = false;
     unawaited(request.cancelled!.then((_) => cancelled = true));
-    await tester.tap(find.bySemanticsLabel('Stop'));
+    await choose(tester, 'Stop');
     await tester.pumpAndSettle();
     expect(cancelled, isTrue);
     request.pending!.complete('late result');
     request.pending = null;
     await tester.pumpAndSettle();
     expect(find.text('late result'), findsNothing);
-    await tester.ensureVisible(find.bySemanticsLabel('Send'));
-    await tester.tap(find.bySemanticsLabel('Send'));
+    await submit(tester);
     await tester.pumpAndSettle();
     expect(request.calls, 2);
     expect(find.text('replacement'), findsOneWidget);
@@ -576,8 +1002,7 @@ void main() {
     request.pending = Completer<String>();
     await open(tester);
     await tester.enterText(question(), 'old draft');
-    await tester.ensureVisible(find.bySemanticsLabel('Send'));
-    await tester.tap(find.bySemanticsLabel('Send'));
+    await submit(tester);
     await tester.pump();
     await tester.pump();
     var cancelled = false;
@@ -603,8 +1028,7 @@ void main() {
       expect(find.textContaining('secret-provider-key'), findsNothing);
       expect(find.textContaining('Could not get an answer.'), findsOneWidget);
       request.error = null;
-      await tester.ensureVisible(find.bySemanticsLabel('Send'));
-      await tester.tap(find.bySemanticsLabel('Send'));
+      await submit(tester);
       await tester.pumpAndSettle();
       expect(find.text('replacement'), findsOneWidget);
     },
@@ -635,7 +1059,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(color(), isNot(dark));
     expect(find.text('快捷提问 / 修改'), findsNothing);
-    expect(find.bySemanticsLabel('发送'), findsOneWidget);
+    await menu(tester);
+    expect(menuEntry('发送'), findsOneWidget);
+    await dismissMenu(tester);
     expect(tester.takeException(), isNull);
     expect(
       tester.getSize(find.byKey(const ValueKey('quick-ask-frame'))).width,
@@ -660,6 +1086,9 @@ void main() {
           contextText: 'nearby',
         ),
       );
+      expect(find.byType(QuickAskAction), findsOneWidget);
+      expect(find.bySemanticsLabel('Chat'), findsOneWidget);
+      await menu(tester);
       for (final label in [
         'Ask',
         'Edit selection',
@@ -667,8 +1096,9 @@ void main() {
         'Send',
         'Close Dialog',
       ]) {
-        expect(find.bySemanticsLabel(label), findsOneWidget);
+        expect(menuEntry(label), findsOneWidget);
       }
+      await dismissMenu(tester);
       final frame = tester.getRect(
         find.byKey(const ValueKey('quick-ask-frame')),
       );
@@ -711,10 +1141,12 @@ void main() {
         of: find.byType(QuickAskDialog),
         matching: find.byType(Text),
       ),
-      findsNothing,
+      findsOneWidget,
     );
+    expect(find.text('Chat'), findsOneWidget);
+    expect(find.byType(QuickAskAction), findsOneWidget);
     expect(tester.widget<EditableText>(question()).focusNode.hasFocus, isTrue);
-    expect(find.bySemanticsLabel('Send'), findsOneWidget);
+    expect(find.bySemanticsLabel('Send'), findsNothing);
     expect(request.calls, 0);
   });
 
@@ -776,7 +1208,7 @@ void main() {
         before,
       );
       await tester.enterText(question(), 'Explain');
-      await tester.tap(find.bySemanticsLabel('Send'));
+      await submit(tester);
       await tester.pump();
       var cancelled = false;
       unawaited(request.cancelled!.then((_) => cancelled = true));
@@ -928,7 +1360,9 @@ void main() {
         showQuickAsk(page, service: service).then((_) => closed = true),
       );
       await tester.pumpAndSettle();
-      expect(find.bySemanticsLabel('发送'), findsOneWidget);
+      await menu(tester);
+      expect(menuEntry('发送'), findsOneWidget);
+      await dismissMenu(tester);
       await tester.pumpWidget(const SizedBox());
       await tester.pumpAndSettle();
       expect(closed, isTrue);

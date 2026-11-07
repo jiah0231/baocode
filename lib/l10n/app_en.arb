@@ -5215,7 +5215,7 @@
   "modelsAuxiliary": "Auxiliary Model",
   "modelsAuxiliaryDescription": "Used for auxiliary work, such as generating conversation titles and commit messages. Automatic: the session's model (for commit messages, new sessions' default); an upstream's by its Haiku tier.",
   "modelsQuickAsk": "Quick Ask Model",
-  "modelsQuickAskDescription": "Used only for the quick question and selection edit window. Follows the auxiliary model by default; does not change conversation models.",
+  "modelsQuickAskDescription": "Used for Chat and selection edit previews in Quick Ask. Follows Auxiliary by default. Agent uses its project conversation model.",
   "modelsAuxiliaryAuto": "Automatic",
   "modelsAuxiliaryBuiltin": "Claude Code Haiku (this machine's setup)",
   "settingsSectionUpdates": "Updates",
@@ -8872,5 +8872,8 @@
   "quickAskApply": "Apply replacement",
   "quickAskSendHint": "Ctrl/⌘ + Enter to send · Esc to close",
   "quickAskStop": "Stop",
-  "quickAskSend": "Send"
+  "quickAskSend": "Send",
+  "quickAskChatHint": "Read-only Chat · Enter to send · Shift+Enter for a new line · Right-click or Shift+F10 for context, model, edit preview and other actions",
+  "quickAskAgentHint": "Send to a new project Agent using its normal model, project context, tools and permissions. Review progress, approvals and changes in the Agent conversation.",
+  "quickAskAgentFailed": "Could not hand off to Agent. Check the Agent conversation before retrying; it may already have received the request."
 }

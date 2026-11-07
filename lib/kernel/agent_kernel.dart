@@ -57,6 +57,7 @@ class KernelContext {
     this.cwd,
     this.resume,
     this.settings = const {},
+    this.preserveModel = false,
     this.workspace,
   });
 
@@ -73,6 +74,11 @@ class KernelContext {
   /// Initial choices by [KernelChoiceKind] name, e.g. the permission mode
   /// new agents start in.
   final Map<String, String> settings;
+
+  /// Preserve an explicitly captured model instead of applying the default
+  /// for new conversations. Used when handing a request to a fresh agent on
+  /// the source conversation's route.
+  final bool preserveModel;
 }
 
 // --- Capabilities -----------------------------------------------------------

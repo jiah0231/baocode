@@ -86,6 +86,7 @@ class CodexKernel
     // New chats use BaoCode's unified providers when available. Saved
     // native chats keep their original route and can still be resumed.
     if (useManagedDefault &&
+        !_context.preserveModel &&
         _context.resume == null &&
         parseModelRef(_modelId) == null) {
       _modelId = _providers.firstModel ?? _modelId;

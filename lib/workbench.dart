@@ -88,6 +88,7 @@ import 'keybindings/key_chord.dart';
 import 'keybindings/keybinding_service.dart';
 import 'keybindings/window_keybindings.dart';
 import 'quick_ask/quick_ask_context.dart';
+import 'quick_ask/quick_ask_agent.dart';
 import 'quick_ask/quick_ask_dialog.dart';
 import 'l10n/command_titles.dart';
 import 'l10n/l10n.dart';
@@ -1154,16 +1155,68 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
   bool _quickAskOpen = false;
 
+  AgentThread? _quickAskAgentSource(BuildContext? focused) {
+    ChatSession? session;
+    focused?.visitAncestorElements((element) {
+      session = switch (element.widget) {
+        ChatScreen(:final session) => session,
+        AgentSidePanelView(:final session) => session,
+        _ => null,
+      };
+      return session == null;
+    });
+    if (session != null) {
+      return _workspace.threads
+          .where(
+            (thread) => thread.isOpen && identical(thread.session, session),
+          )
+          .firstOrNull;
+    }
+    // An editor belongs to its own folder, never an unrelated chat selected
+    // in another window. Loose files without a project have no Agent target.
+    if (_showsIde) {
+      return _ideFolder == _noFolder ? null : _workspace.ideChat(_ideFolder);
+    }
+    return _agentThread ?? _workspace.current;
+  }
+
   Future<void> _openQuickAsk() async {
     if (_quickAskOpen || ChatKeys.isComposing || !mounted) return;
     final focus = FocusManager.instance.primaryFocus;
     final source = QuickAskContext.captureFocused();
+    final thread = _quickAskAgentSource(focus?.context);
+    final agent = thread == null || _workspace.isAppFolder(thread.project.path)
+        ? null
+        : QuickAskAgentHandoff(_workspace, thread);
     _quickAskOpen = true;
     try {
-      await showQuickAsk(context, source: source);
+      await showQuickAsk(
+        context,
+        source: source,
+        agentLabel: agent?.label,
+        onAgentSubmit: agent == null
+            ? null
+            : (prompt) {
+                if (!mounted) return false;
+                final target = agent.submit(prompt);
+                if (target == null) return false;
+                if (_agentWindow) {
+                  // Preserve an unsent source draft in its own window.
+                  _windows?.showAgent(target);
+                } else if (_showsIde) {
+                  if (_ideFolder != agent.project.path) {
+                    _openIdeFolder(agent.project.path);
+                  }
+                  _openIdeChat(agent.project.path, target);
+                  _afterBuild(() => _ide?.showChat());
+                } else {
+                  _openAgent(target);
+                }
+                return true;
+              },
+      );
     } finally {
       _quickAskOpen = false;
-      if (mounted && focus?.context?.mounted == true) focus!.requestFocus();
     }
   }
 

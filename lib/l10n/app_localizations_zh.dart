@@ -6921,7 +6921,8 @@ class AppLocalizationsZh extends AppLocalizations {
   String get modelsQuickAsk => '快捷提问模型';
 
   @override
-  String get modelsQuickAskDescription => '仅用于快捷提问和选区修改小窗，默认跟随辅助模型，不影响对话使用的模型。';
+  String get modelsQuickAskDescription =>
+      '用于快捷提问中的 Chat 和选区修改预览，默认跟随辅助模型。Agent 使用项目对话模型。';
 
   @override
   String get modelsAuxiliaryAuto => '自动';
@@ -13223,4 +13224,15 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get quickAskSend => '发送';
+
+  @override
+  String get quickAskChatHint =>
+      '只读 Chat · Enter 发送 · Shift+Enter 换行 · 右键或 Shift+F10 查看上下文、模型、修改预览等操作';
+
+  @override
+  String get quickAskAgentHint =>
+      '发送到新的项目 Agent，沿用其正常模型、项目上下文、工具和权限。在 Agent 对话中查看进度、审批和修改。';
+
+  @override
+  String get quickAskAgentFailed => '未能完成 Agent 交接。重试前请先检查 Agent 对话，请求可能已经收到。';
 }
