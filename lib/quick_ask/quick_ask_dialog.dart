@@ -66,7 +66,11 @@ Future<void> showQuickAsk(
       ownerRoute: route,
       onMenuOpened: (entries) {
         if (done.isCompleted || !entry.mounted || !overlay.mounted) return;
-        overlay.rearrange([entry, ...entries], below: entry);
+        // Move only the menu. Selection handles and other linked overlays
+        // must keep their order relative to the popup that owns their anchor.
+        if (entries.isNotEmpty) {
+          overlay.rearrange(entries, below: entries.first);
+        }
       },
       onClose: close,
     ),
