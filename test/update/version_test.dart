@@ -76,9 +76,9 @@ void main() {
       expect(v('1.2.0') == v('1.2.0+0'), isTrue);
     });
 
-    test('Codex identity correction upgrades the published +45 build', () {
-      expect(currentAppVersion, v('1.9.1+46'));
-      expect(currentAppVersion > v('1.9.1+45'), isTrue);
+    test('Inline review and context upgrade the published +46 build', () {
+      expect(currentAppVersion, v('1.9.1+47'));
+      expect(currentAppVersion > v('1.9.1+46'), isTrue);
     });
 
     test("is pubspec.yaml's version", () {

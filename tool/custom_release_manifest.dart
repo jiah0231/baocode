@@ -28,16 +28,12 @@ Future<void> main(List<String> args) async {
   if (version != currentAppVersion || declared != '$version') {
     throw StateError('Manifest version must match both app version files');
   }
+  UpdateManifest? previous;
   if (args.length == 4) {
-    final previous = UpdateManifest.parse(
+    previous = UpdateManifest.parse(
       await File(args[3]).readAsString(),
       policy: const UpdateUrlPolicy(custom: true),
     );
-    if (version <= previous.version) {
-      throw StateError(
-        'New release must be newer than the custom stable channel',
-      );
-    }
   }
   final installer = File(args[1]);
   final publicKey = Platform.environment['BAOCODE_CUSTOM_UPDATE_KEY'] ?? '';
@@ -62,6 +58,12 @@ Future<void> main(List<String> args) async {
   final platform = name.endsWith('-setup-arm64.exe')
       ? 'windows-arm64'
       : 'windows-x64';
+  if (previous != null) {
+    verifyPreviousCustomRelease(previous, version, platform, publicKey);
+    stdout.writeln(
+      'Verified existing channel signature and version continuity: ${previous.version} -> $version',
+    );
+  }
   final size = await installer.length();
   final hash = '${await sha256.bind(installer.openRead()).first}';
   final payload = UpdateSignature.payload(
@@ -78,10 +80,13 @@ Future<void> main(List<String> args) async {
   )) {
     throw StateError('Signature self-check failed');
   }
+  stdout.writeln(
+    'Verified Ed25519 update signature: version=$version platform=$platform size=$size sha256=$hash',
+  );
   final manifest = {
     'version': '$version',
     'pubDate': DateTime.now().toUtc().toIso8601String(),
-    'notes': {'zh': '定制版更新：保留性能优化和 Codex 功能。确认重启后安装。'},
+    'notes': {'zh': '小窗支持逐块审查修改、按需添加文件和当前函数上下文。确认重启后安装。'},
     'platforms': {
       platform: UpdateAsset(
         url: url,
@@ -98,4 +103,36 @@ Future<void> main(List<String> args) async {
   await File(
     args[2],
   ).writeAsString('${const JsonEncoder.withIndent('  ').convert(manifest)}\n');
+}
+
+/// An established channel must retain its trusted key and advance its version.
+/// In particular, a changed repository variable must not silently rotate the
+/// authority embedded in installations that are still on the previous build.
+void verifyPreviousCustomRelease(
+  UpdateManifest previous,
+  AppVersion version,
+  String platform,
+  String publicKey,
+) {
+  final asset = previous.assetFor(platform);
+  if (asset == null ||
+      !UpdateSignature.verify(
+        payload: UpdateSignature.payload(
+          version: '${previous.version}',
+          platform: platform,
+          size: asset.size,
+          sha256: asset.sha256,
+        ),
+        signature: asset.signature,
+        publicKey: publicKey,
+      )) {
+    throw StateError(
+      'Existing channel signature does not match the app public key',
+    );
+  }
+  if (version <= previous.version) {
+    throw StateError(
+      'New release must be newer than the custom stable channel',
+    );
+  }
 }

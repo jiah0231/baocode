@@ -119,6 +119,12 @@ jobs:
         run: >-
           flutter test --no-pub --reporter expanded --timeout 2m
           test/quick_ask
+          test/ide/lsp_ui/workbench_features_test.dart
+          test/ide/ide_menu_test.dart
+          test/ide/ide_input_test.dart
+          test/claude_haiku_test.dart
+          test/kernel/claude_haiku_test.dart
+          test/models/proxy/quick_ask_streaming_test.dart
           test/keybindings/window_keybindings_test.dart
           test/models/models_test.dart
           test/settings/models_page_test.dart
@@ -505,6 +511,21 @@ jobs:
           if ($new.Count -ne 1) { throw 'Expected one new Setup' }
           $version = (Select-String -Path pubspec.yaml -Pattern '^version: (.+)$').Matches[0].Groups[1].Value
           ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.9.1+42
+      - name: Install latest pinned custom release then upgrade
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Also exercise the user's latest published build, preserving +42 coverage.
+          # Source: 04dc51dbd3bd1912161277e5ea09ade2607c4408, custom-v1.9.1+46.
+          $old = Join-Path $env:RUNNER_TEMP 'baocode-baseline-46.exe'
+          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.9.1%2B46/BaoCode-1.9.1-setup.exe' -OutFile $old
+          if ((Get-Item $old).Length -ne 36853538) { throw 'Latest pinned Setup size mismatch' }
+          if ((Get-FileHash $old -Algorithm SHA256).Hash.ToLowerInvariant() -ne '2d3133c63952bca1186fd0dafd89dc5baf5896109b2c8f87cd16ec3d49c7d39a') { throw 'Latest pinned Setup checksum mismatch' }
+          $new = @(Get-ChildItem build/installers -Filter '*-setup.exe')
+          if ($new.Count -ne 1) { throw 'Expected one new Setup' }
+          $version = (Select-String -Path pubspec.yaml -Pattern '^version: (.+)$').Matches[0].Groups[1].Value
+          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.9.1+46
       - uses: actions/upload-artifact@v6
         with:
           name: custom-installer
@@ -597,19 +618,24 @@ jobs:
           fi
           installers=(build/installers/*-setup.exe)
           test "${#installers[@]}" -eq 1
-          previous=()
-          if gh release view custom-stable >/dev/null 2>&1; then
-            mkdir -p "$RUNNER_TEMP/previous-update"
-            gh release download custom-stable --pattern latest.json --dir "$RUNNER_TEMP/previous-update"
-            previous=("$RUNNER_TEMP/previous-update/latest.json")
-          fi
+          # This established channel must be readable. A network/API failure is
+          # not permission to skip monotonic-version validation or recreate it.
+          mkdir -p "$RUNNER_TEMP/previous-update"
+          gh release download custom-stable --pattern latest.json --dir "$RUNNER_TEMP/previous-update"
+          previous=("$RUNNER_TEMP/previous-update/latest.json")
           dart run tool/custom_release_manifest.dart "$version" "${installers[0]}" build/installers/latest.json "${previous[@]}"
           gh release create "$tag" "${installers[0]}" --target "$GITHUB_SHA" --draft --title "Custom BaoCode $version" --notes "Tested source: $GITHUB_SHA. Signed Windows x64 custom update."
           gh release edit "$tag" --draft=false --latest=false
           git fetch --no-tags origin "refs/tags/$tag"
           test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$GITHUB_SHA"
+          # Confirm the public versioned download is the tested and signed payload
+          # before advertising it to installed apps. Never execute the download here.
+          verify="$RUNNER_TEMP/published-verification"
+          mkdir -p "$verify"
+          gh release download "$tag" --pattern '*-setup.exe' --dir "$verify"
+          cmp "${installers[0]}" "$verify/$(basename "${installers[0]}")"
           # custom-stable is only a manifest pointer; versioned Setup is live first.
-          if ! gh release view custom-stable >/dev/null 2>&1; then
-            gh release create custom-stable --target "$GITHUB_SHA" --title 'Custom stable update channel' --notes 'Signed update manifest for custom Windows installations.' --latest=false
-          fi
           gh release upload custom-stable build/installers/latest.json --clobber
+          gh release download custom-stable --pattern latest.json --dir "$verify"
+          cmp build/installers/latest.json "$verify/latest.json"
+          echo "Verified published installer bytes and signed update manifest for $version ($GITHUB_SHA)."
