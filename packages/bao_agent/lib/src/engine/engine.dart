@@ -943,7 +943,7 @@ class AgentEngine {
       });
       session.checkpoints.begin(queued.uuid);
     }
-    if (!_titled && typed.trim().isNotEmpty) {
+    if (options.autoTitle && !_titled && typed.trim().isNotEmpty) {
       _titled = true;
       unawaited(_nameSession(typed));
     }

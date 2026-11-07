@@ -281,6 +281,8 @@ Future<(String, int)> _runBuiltin(
     // Nothing asked: what is not allowed is refused.
     permissionMode: 'dontAsk',
     persist: false,
+    autoTitle: false,
+    promptSuggestions: false,
     flagSettings: {
       'env': ?env,
       if (env != null && model != null)

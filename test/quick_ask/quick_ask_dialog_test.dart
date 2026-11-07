@@ -64,6 +64,7 @@ void main() {
   late _Request request;
   late QuickAskService service;
   late ModelProviders providers;
+  final previewBoundary = GlobalKey();
 
   setUp(() {
     final previous = ModelProviders.current;
@@ -100,16 +101,19 @@ void main() {
     Locale? locale,
   }) async {
     await tester.pumpWidget(
-      MaterialApp(
-        locale: locale,
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: Builder(
-          builder: (context) => Center(
-            child: IdeButton(
-              label: 'open',
-              onPressed: () => unawaited(
-                showQuickAsk(context, source: source, service: service),
+      RepaintBoundary(
+        key: previewBoundary,
+        child: MaterialApp(
+          locale: locale,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Builder(
+            builder: (context) => Center(
+              child: IdeButton(
+                label: 'open',
+                onPressed: () => unawaited(
+                  showQuickAsk(context, source: source, service: service),
+                ),
               ),
             ),
           ),
@@ -494,16 +498,29 @@ void main() {
       );
       Future<void> capture(String name) async {
         if (!const bool.fromEnvironment('QUICK_ASK_PREVIEWS')) return;
-        final boundary = tester.renderObject<RenderRepaintBoundary>(
-          find.byType(RepaintBoundary).first,
+        final captured = find.byKey(previewBoundary);
+        expect(
+          find.descendant(
+            of: captured,
+            matching: find.byKey(const ValueKey('quick-ask-frame')),
+          ),
+          findsOneWidget,
         );
-        await tester.runAsync(() async {
-          final image = await boundary.toImage();
-          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-          final file = File('build/quick-ask-previews/$name.png');
-          await file.parent.create(recursive: true);
-          await file.writeAsBytes(bytes!.buffer.asUint8List());
-          image.dispose();
+        final boundary = tester.renderObject<RenderRepaintBoundary>(captured);
+        await tester.runAsync(() {
+          return (() async {
+            final image = await boundary.toImage();
+            try {
+              final bytes = await image.toByteData(
+                format: ui.ImageByteFormat.png,
+              );
+              final file = File('build/quick-ask-previews/$name.png');
+              await file.parent.create(recursive: true);
+              await file.writeAsBytes(bytes!.buffer.asUint8List());
+            } finally {
+              image.dispose();
+            }
+          })().timeout(const Duration(seconds: 15));
         });
       }
 

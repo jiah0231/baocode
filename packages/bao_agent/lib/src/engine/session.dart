@@ -48,6 +48,7 @@ class EngineOptions {
     this.sdkServers = const [],
     this.appendSystemPrompt,
     this.promptSuggestions = false,
+    this.autoTitle = true,
     this.environment = const {},
     this.configDir,
     this.productName = 'BaoCode',
@@ -74,6 +75,7 @@ class EngineOptions {
     sdkServers: [...asList(json['sdkServers']).whereType<String>()],
     appendSystemPrompt: asString(json['appendSystemPrompt']),
     promptSuggestions: json['promptSuggestions'] == true,
+    autoTitle: json['autoTitle'] != false,
     environment: {
       for (final MapEntry(:key, :value) in asMap(json['environment']).entries)
         if (value is String) key: value,
@@ -122,6 +124,10 @@ class EngineOptions {
   final String? appendSystemPrompt;
   final bool promptSuggestions;
 
+  /// Generate a background conversation title. Auxiliary one-turn queries
+  /// disable this so their prompt is sent only for the requested answer.
+  final bool autoTitle;
+
   /// The environment of the user's shell, which commands run in and the
   /// API's settings are read from.
   final Map<String, String> environment;
@@ -167,6 +173,7 @@ class EngineOptions {
     'sdkServers': sdkServers,
     'appendSystemPrompt': ?appendSystemPrompt,
     'promptSuggestions': promptSuggestions,
+    'autoTitle': autoTitle,
     'environment': environment,
     'configDir': ?configDir,
     'productName': productName,

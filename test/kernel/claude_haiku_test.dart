@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:bao_agent/testing.dart';
+import 'package:bao_agent/bao_agent.dart' show EngineOptions;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/chat/chat_models.dart';
@@ -19,6 +20,14 @@ import 'package:path/path.dart' as p;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('auxiliary title opt-out survives engine isolate serialization', () {
+    const ordinary = EngineOptions(cwd: '/tmp');
+    expect(ordinary.autoTitle, isTrue);
+    expect(EngineOptions.fromJson({'cwd': '/tmp'}).autoTitle, isTrue);
+    const auxiliary = EngineOptions(cwd: '/tmp', autoTitle: false);
+    expect(EngineOptions.fromJson(auxiliary.toJson()).autoTitle, isFalse);
+  });
+
   test('a question alone goes on stdin, its answer one JSON result', () {
     final arguments = claudeHaikuArguments('Be brief.');
     expect(arguments, isNot(contains('--input-format')));
