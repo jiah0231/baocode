@@ -368,7 +368,10 @@ class EditorSurface extends StatefulWidget {
 /// the surface's local coordinates; null before the first layout.
 abstract interface class EditorSurfaceView {
   /// The caret box at [offset] (one line tall), clipped to nothing.
-  Rect? caretRectAt(int offset);
+  Rect? caretRectAt(
+    int offset, {
+    TextAffinity affinity = TextAffinity.downstream,
+  });
 
   /// The one-based model [lineNumber]'s rows (at a hidden line, where it
   /// would be), across the text area: found without laying its text out,
@@ -1126,12 +1129,15 @@ class _EditorSurfaceState extends State<EditorSurface>
   }
 
   @override
-  Rect? caretRectAt(int offset) {
+  Rect? caretRectAt(
+    int offset, {
+    TextAffinity affinity = TextAffinity.downstream,
+  }) {
     final layout = _layout;
     final geometry = _geometry;
     if (layout == null || geometry == null) return null;
     final length = layout.snapshot.text.length;
-    final caret = layout.caretRect(offset.clamp(0, length));
+    final caret = layout.caretRect(offset.clamp(0, length), affinity: affinity);
     return Rect.fromLTWH(
       caret.left,
       caret.top,

@@ -8,8 +8,10 @@ import 'package:baocode/models/model_provider.dart';
 import 'package:baocode/quick_ask/quick_ask_context.dart';
 import 'package:baocode/quick_ask/quick_ask_dialog.dart';
 import 'package:baocode/quick_ask/quick_ask_service.dart';
+import 'package:baocode/quick_ask/quick_ask_popup.dart';
 import 'package:baocode/theme/workbench_theme.dart';
 import 'package:baocode/theme/codicons.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart' hide ColorScheme;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -103,7 +105,8 @@ void main() {
 
   Future<void> send(WidgetTester tester) async {
     await tester.enterText(question(), 'Explain this');
-    await tester.tap(find.text('Send'));
+    await tester.ensureVisible(find.bySemanticsLabel('Send'));
+    await tester.tap(find.bySemanticsLabel('Send'));
     await tester.pumpAndSettle();
   }
 
@@ -141,7 +144,7 @@ void main() {
     ) async {
       await providers.setQuickAskModel(stored);
       await open(tester);
-      await tester.tap(find.text('Same as Auxiliary Model'));
+      await tester.tap(find.bySemanticsLabel('Same as Auxiliary Model'));
       await tester.pumpAndSettle();
       expect(find.byIcon(Codicons.menuSelection), findsOneWidget);
       await tester.tap(find.text('Same as Auxiliary Model').last);
@@ -163,11 +166,11 @@ void main() {
         ),
       );
       expect(request.calls, 0);
-      await tester.tap(find.text('Review context'));
+      await tester.tap(find.bySemanticsLabel('Review context'));
       await tester.pumpAndSettle();
       expect(find.text('selected'), findsOneWidget);
       expect(find.text('nearby'), findsOneWidget);
-      await tester.tap(find.text('Nearby context: on'));
+      await tester.tap(find.bySemanticsLabel('Nearby context: on'));
       await tester.pumpAndSettle();
       expect(find.text('nearby'), findsNothing);
       await send(tester);
@@ -175,7 +178,7 @@ void main() {
       expect(request.input!['selection'], 'selected');
       expect(request.input!['context'], '');
       expect(find.text('replacement'), findsOneWidget);
-      expect(find.text('Apply replacement'), findsNothing);
+      expect(find.bySemanticsLabel('Apply replacement'), findsNothing);
     },
   );
 
@@ -194,7 +197,7 @@ void main() {
         },
       ),
     );
-    await tester.tap(find.text('Edit selection'));
+    await tester.tap(find.bySemanticsLabel('Edit selection'));
     await send(tester);
     expect(request.input!['mode'], 'edit');
     expect(applied, isEmpty);
@@ -204,11 +207,11 @@ void main() {
       matching: find.byType(EditableText),
     );
     await tester.enterText(replacement, 'reviewed replacement');
-    await tester.ensureVisible(find.text('Apply replacement'));
-    await tester.tap(find.text('Apply replacement'));
+    await tester.ensureVisible(find.bySemanticsLabel('Apply replacement'));
+    await tester.tap(find.bySemanticsLabel('Apply replacement'));
     await tester.pumpAndSettle();
     expect(applied, ['reviewed replacement']);
-    await tester.tap(find.text('Applied'));
+    await tester.tap(find.bySemanticsLabel('Applied'));
     await tester.pumpAndSettle();
     expect(applied, hasLength(1));
   });
@@ -224,10 +227,10 @@ void main() {
           applyReplacement: (_) => false,
         ),
       );
-      await tester.tap(find.text('Edit selection'));
+      await tester.tap(find.bySemanticsLabel('Edit selection'));
       await send(tester);
-      await tester.ensureVisible(find.text('Apply replacement'));
-      await tester.tap(find.text('Apply replacement'));
+      await tester.ensureVisible(find.bySemanticsLabel('Apply replacement'));
+      await tester.tap(find.bySemanticsLabel('Apply replacement'));
       await tester.pumpAndSettle();
       expect(
         find.textContaining('The source changed or closed.'),
@@ -237,7 +240,7 @@ void main() {
         find.byKey(const ValueKey('quick-ask-replacement')),
         findsOneWidget,
       );
-      expect(find.text('Applied'), findsNothing);
+      expect(find.bySemanticsLabel('Applied'), findsNothing);
     },
   );
 
@@ -251,14 +254,15 @@ void main() {
           selectedText: 'a message',
         ),
       );
-      await tester.tap(find.text('Edit selection'));
+      await tester.tap(find.bySemanticsLabel('Edit selection'));
       await send(tester);
       expect(
         find.byKey(const ValueKey('quick-ask-replacement')),
         findsOneWidget,
       );
-      expect(find.text('Apply replacement'), findsNothing);
-      expect(find.textContaining('This source is read-only'), findsOneWidget);
+      expect(find.bySemanticsLabel('Apply replacement'), findsNothing);
+      expect(find.textContaining('This source is read-only'), findsNothing);
+      expect(find.bySemanticsLabel('Copy'), findsOneWidget);
     },
   );
 
@@ -273,11 +277,8 @@ void main() {
         truncated: true,
       ),
     );
-    final edit = tester.widget<IdeButton>(
-      find.ancestor(
-        of: find.text('Edit selection'),
-        matching: find.byType(IdeButton),
-      ),
+    final edit = tester.widget<QuickAskAction>(
+      find.widgetWithIcon(QuickAskAction, Codicons.edit),
     );
     expect(edit.onPressed, isNull);
     await send(tester);
@@ -285,11 +286,8 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
     await open(tester);
-    final noSelection = tester.widget<IdeButton>(
-      find.ancestor(
-        of: find.text('Edit selection'),
-        matching: find.byType(IdeButton),
-      ),
+    final noSelection = tester.widget<QuickAskAction>(
+      find.widgetWithIcon(QuickAskAction, Codicons.edit),
     );
     expect(noSelection.onPressed, isNull);
   });
@@ -300,20 +298,22 @@ void main() {
     request.pending = Completer<String>();
     await open(tester);
     await tester.enterText(question(), 'Explain');
-    await tester.tap(find.text('Send'));
+    await tester.ensureVisible(find.bySemanticsLabel('Send'));
+    await tester.tap(find.bySemanticsLabel('Send'));
     await tester.pump();
     await tester.pump();
     expect(request.calls, 1);
     var cancelled = false;
     unawaited(request.cancelled!.then((_) => cancelled = true));
-    await tester.tap(find.text('Stop'));
+    await tester.tap(find.bySemanticsLabel('Stop'));
     await tester.pumpAndSettle();
     expect(cancelled, isTrue);
     request.pending!.complete('late result');
     request.pending = null;
     await tester.pumpAndSettle();
     expect(find.text('late result'), findsNothing);
-    await tester.tap(find.text('Send'));
+    await tester.ensureVisible(find.bySemanticsLabel('Send'));
+    await tester.tap(find.bySemanticsLabel('Send'));
     await tester.pumpAndSettle();
     expect(request.calls, 2);
     expect(find.text('replacement'), findsOneWidget);
@@ -325,7 +325,8 @@ void main() {
     request.pending = Completer<String>();
     await open(tester);
     await tester.enterText(question(), 'old draft');
-    await tester.tap(find.text('Send'));
+    await tester.ensureVisible(find.bySemanticsLabel('Send'));
+    await tester.tap(find.bySemanticsLabel('Send'));
     await tester.pump();
     await tester.pump();
     var cancelled = false;
@@ -351,7 +352,8 @@ void main() {
       expect(find.textContaining('secret-provider-key'), findsNothing);
       expect(find.textContaining('Could not get an answer.'), findsOneWidget);
       request.error = null;
-      await tester.tap(find.text('Send'));
+      await tester.ensureVisible(find.bySemanticsLabel('Send'));
+      await tester.tap(find.bySemanticsLabel('Send'));
       await tester.pumpAndSettle();
       expect(find.text('replacement'), findsOneWidget);
     },
@@ -381,11 +383,260 @@ void main() {
     await tester.runAsync(() => themes.setColorTheme('Bao Light'));
     await tester.pumpAndSettle();
     expect(color(), isNot(dark));
-    expect(find.text('快捷提问 / 修改'), findsOneWidget);
+    expect(find.text('快捷提问 / 修改'), findsNothing);
+    expect(find.bySemanticsLabel('发送'), findsOneWidget);
     expect(tester.takeException(), isNull);
     expect(
       tester.getSize(find.byKey(const ValueKey('quick-ask-frame'))).width,
       lessThan(420),
     );
   });
+
+  testWidgets('opens beside the selected end without a modal scrim or hints', (
+    tester,
+  ) async {
+    await open(
+      tester,
+      source: QuickAskContext(
+        sourceLabel: 'private/path.dart',
+        selectedText: 'selection',
+        contextText: 'nearby',
+        selectionAnchor: () => const Rect.fromLTWH(210, 120, 1, 18),
+      ),
+    );
+    final frame = tester.getRect(find.byKey(const ValueKey('quick-ask-frame')));
+    expect(frame.left, 210);
+    expect(frame.top, 144);
+    expect(frame.width, 320);
+    expect(frame.height, lessThan(90));
+    expect(find.byType(ModalBarrier), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byType(QuickAskDialog),
+        matching: find.byType(Text),
+      ),
+      findsNothing,
+    );
+    expect(tester.widget<EditableText>(question()).focusNode.hasFocus, isTrue);
+    expect(find.bySemanticsLabel('Send'), findsOneWidget);
+    expect(request.calls, 0);
+  });
+
+  testWidgets(
+    'moves with selection geometry, flips and clamps after resizing',
+    (tester) async {
+      final anchor = ValueNotifier(const Rect.fromLTWH(50, 80, 1, 18));
+      addTearDown(anchor.dispose);
+      await open(
+        tester,
+        source: QuickAskContext(
+          sourceLabel: 'editor',
+          selectionAnchor: () => anchor.value,
+          selectionAnchorListenable: anchor,
+        ),
+      );
+      Rect frame() =>
+          tester.getRect(find.byKey(const ValueKey('quick-ask-frame')));
+      expect(frame().topLeft, const Offset(50, 104));
+      anchor.value = const Rect.fromLTWH(130, 200, 1, 18);
+      await tester.pump();
+      expect(frame().topLeft, const Offset(130, 224));
+      anchor.value = const Rect.fromLTWH(790, 580, 1, 18);
+      await tester.pump();
+      expect(frame().right, lessThanOrEqualTo(792));
+      expect(frame().bottom, 574);
+      tester.view.physicalSize = const Size(240, 180);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpAndSettle();
+      expect(frame().right, lessThanOrEqualTo(232));
+      expect(frame().bottom, lessThanOrEqualTo(172));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'an unavailable source keeps the last location and cancels on outside click',
+    (tester) async {
+      final anchor = ValueNotifier<Rect?>(const Rect.fromLTWH(30, 100, 1, 18));
+      addTearDown(anchor.dispose);
+      request.pending = Completer<String>();
+      await open(
+        tester,
+        source: QuickAskContext(
+          sourceLabel: 'editor',
+          selectionAnchor: () => anchor.value,
+          selectionAnchorListenable: anchor,
+        ),
+      );
+      final before = tester.getTopLeft(
+        find.byKey(const ValueKey('quick-ask-frame')),
+      );
+      anchor.value = null;
+      await tester.pump();
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey('quick-ask-frame'))),
+        before,
+      );
+      await tester.enterText(question(), 'Explain');
+      await tester.tap(find.bySemanticsLabel('Send'));
+      await tester.pump();
+      var cancelled = false;
+      unawaited(request.cancelled!.then((_) => cancelled = true));
+      await tester.tapAt(const Offset(750, 50));
+      await tester.pumpAndSettle();
+      expect(find.byType(QuickAskDialog), findsNothing);
+      expect(cancelled, isTrue);
+      request.pending!.complete('late');
+      await tester.pumpAndSettle();
+      expect(find.text('late'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'keyboard send and Escape restore source focus without navigating',
+    (tester) async {
+      final focus = FocusNode();
+      addTearDown(focus.dispose);
+      final controller = TextEditingController(text: 'source');
+      addTearDown(controller.dispose);
+      late BuildContext page;
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Builder(
+            builder: (context) {
+              page = context;
+              return Material(
+                child: TextField(focusNode: focus, controller: controller),
+              );
+            },
+          ),
+        ),
+      );
+      focus.requestFocus();
+      await tester.pump();
+      unawaited(showQuickAsk(page, service: service));
+      await tester.pumpAndSettle();
+      await tester.enterText(question(), 'Explain');
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+      expect(request.calls, 1);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(focus.hasFocus, isTrue);
+      expect(Navigator.of(page).canPop(), isFalse);
+      expect(controller.text, 'source');
+    },
+  );
+
+  testWidgets(
+    'scrolls the source behind the popup and follows its live transform',
+    (tester) async {
+      final scroll = ScrollController();
+      addTearDown(scroll.dispose);
+      final selected = GlobalKey();
+      late BuildContext page;
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Builder(
+            builder: (context) {
+              page = context;
+              return SingleChildScrollView(
+                controller: scroll,
+                child: SizedBox(
+                  height: 1600,
+                  child: Stack(
+                    children: [
+                      Positioned(
+                        left: 100,
+                        top: 200,
+                        child: SizedBox(key: selected, width: 1, height: 18),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      Rect anchor() {
+        final box = selected.currentContext!.findRenderObject()! as RenderBox;
+        return box.localToGlobal(Offset.zero) & box.size;
+      }
+
+      unawaited(
+        showQuickAsk(
+          page,
+          service: service,
+          source: QuickAskContext(
+            sourceLabel: 'editor',
+            selectionAnchor: anchor,
+            selectionAnchorListenable: scroll,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey('quick-ask-frame'))),
+        const Offset(100, 224),
+      );
+      await tester.sendEventToBinding(
+        const PointerScrollEvent(
+          position: Offset(50, 350),
+          scrollDelta: Offset(0, 80),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(scroll.offset, 80);
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey('quick-ask-frame'))),
+        const Offset(100, 144),
+      );
+      expect(find.byType(QuickAskDialog), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'owner disposal completes pending popup and preserves overridden locale',
+    (tester) async {
+      late BuildContext page;
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Builder(
+            builder: (context) => Localizations.override(
+              context: context,
+              locale: const Locale('zh'),
+              child: Builder(
+                builder: (context) {
+                  page = context;
+                  return const SizedBox();
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      var closed = false;
+      unawaited(
+        showQuickAsk(page, service: service).then((_) => closed = true),
+      );
+      await tester.pumpAndSettle();
+      expect(find.bySemanticsLabel('发送'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+      expect(closed, isTrue);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

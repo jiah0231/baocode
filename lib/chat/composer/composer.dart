@@ -172,6 +172,34 @@ class ChatComposerState extends State<ChatComposer>
     final generation = _quickAskGeneration;
     final text = _controller.text;
     final version = _controller.textVersion;
+    final capturedSelection = _controller.selection;
+    final extent = capturedSelection.extentOffset;
+    Rect? selectionAnchor() {
+      if (!mounted ||
+          generation != _quickAskGeneration ||
+          !identical(widget.session, session) ||
+          _controller.textVersion != version) {
+        return null;
+      }
+      final editor = _editorKey.currentState;
+      final box = _editorKey.currentContext?.findRenderObject();
+      if (editor == null ||
+          box is! RenderBox ||
+          !box.attached ||
+          !box.hasSize) {
+        return null;
+      }
+      final caret = editor.caretRect(
+        extent < 0 ? text.length : extent,
+        capturedSelection.affinity,
+      );
+      final bounds = MatrixUtils.transformRect(
+        box.getTransformTo(null),
+        Offset.zero & box.size,
+      );
+      return caret != null && bounds.overlaps(caret) ? caret : null;
+    }
+
     if (text.isEmpty) {
       final messages = <String>[];
       var remaining = QuickAskContext.maxContextLength;
@@ -192,6 +220,8 @@ class ChatComposerState extends State<ChatComposer>
       }
       return QuickAskContext(
         sourceLabel: 'Chat',
+        selectionAnchor: selectionAnchor,
+        selectionAnchorListenable: _scrollController,
         sessionModel: quickAskSessionModel,
         contextText: messages.join('\n'),
       );
@@ -213,6 +243,8 @@ class ChatComposerState extends State<ChatComposer>
         extentOffset: composerPlainText(text.substring(0, end)).length,
       ),
       sourceLabel: 'Chat draft',
+      selectionAnchor: selectionAnchor,
+      selectionAnchorListenable: _scrollController,
       sessionModel: quickAskSessionModel,
       applyReplacement: hasEmbed
           ? null

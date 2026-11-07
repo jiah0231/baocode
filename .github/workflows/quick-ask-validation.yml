@@ -50,8 +50,8 @@ jobs:
       - name: Check changed Dart formatting
         shell: pwsh
         run: |
-          # +41 is integrated on verified +40; format only feature changes.
-          $files = @(git diff --name-only --diff-filter=ACMR ef3c0c0e33fba684e6d3c4c08fa6521c9e495802 HEAD -- '*.dart')
+          # +42 refines verified +41; format only this release's changes.
+          $files = @(git diff --name-only --diff-filter=ACMR 05ced17ce1ec9ff784858df91fe95bc9f415fa5e HEAD -- '*.dart')
           if ($LASTEXITCODE -ne 0) { throw 'Changed-file enumeration failed' }
           dart format --output=none --set-exit-if-changed @files
           if ($LASTEXITCODE -ne 0) { throw 'Feature source needs formatting' }

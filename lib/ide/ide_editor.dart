@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
@@ -206,42 +207,118 @@ class IdeEditorState extends State<IdeEditor> with QuickAskTarget {
 
   @override
   QuickAskContext? captureQuickAskContext() {
-    if (_originalFocusNode.hasFocus) {
-      final original = _diffs[widget.active]?.controller;
-      if (original == null) return null;
-      return QuickAskContext.fromEditor(
-        controller: original,
-        sourceLabel: '${widget.active.path} (original)',
-        readOnly: true,
-        isCurrent: () => false,
-      );
-    }
-    if (!_focusNode.hasFocus) return null;
     final document = widget.active;
     final workspace = widget.workspace;
     final generation = _quickAskGeneration;
-    bool current() =>
+    bool sourceCurrent() =>
         mounted &&
         generation == _quickAskGeneration &&
         identical(widget.active, document) &&
         identical(widget.workspace, workspace) &&
-        identical(workspace.active, document) &&
-        !document.readOnly;
+        identical(workspace.active, document);
+    Rect? Function() nativeAnchor(
+      GlobalKey key,
+      EditorSurfaceController controller,
+      bool Function() current,
+    ) {
+      final selection = controller.value.selection;
+      final version = controller.document.version;
+      return () {
+        if (!sourceCurrent() ||
+            !current() ||
+            controller.document.version != version ||
+            !selection.isValid) {
+          return null;
+        }
+        final surface = switch (key.currentState) {
+          final EditorSurfaceView view => view,
+          _ => null,
+        };
+        final box = key.currentContext?.findRenderObject();
+        if (surface == null ||
+            box is! RenderBox ||
+            !box.attached ||
+            !box.hasSize) {
+          return null;
+        }
+        final caret = surface.caretRectAt(
+          selection.extentOffset,
+          affinity: selection.affinity,
+        );
+        final area = surface.textArea;
+        if (caret == null || area == null || !area.overlaps(caret)) return null;
+        return MatrixUtils.transformRect(box.getTransformTo(null), caret);
+      };
+    }
+
+    if (_originalFocusNode.hasFocus) {
+      final original = _diffs[document]?.controller;
+      if (original == null) return null;
+      return QuickAskContext.fromEditor(
+        controller: original,
+        sourceLabel: '${document.path} (original)',
+        readOnly: true,
+        selectionAnchor: nativeAnchor(
+          _originalSurfaceKey,
+          original,
+          () => identical(_diffs[document]?.controller, original),
+        ),
+        selectionAnchorListenable: _viewTick,
+        isCurrent: () => false,
+      );
+    }
+    if (!_focusNode.hasFocus) return null;
+    bool current() => sourceCurrent() && !document.readOnly;
     if (_nativeController case final controller?
         when widget.nativeEditorEnabled) {
       return QuickAskContext.fromEditor(
         controller: controller,
         sourceLabel: document.path,
         readOnly: document.readOnly,
+        selectionAnchor: nativeAnchor(
+          _surfaceKey,
+          controller,
+          () =>
+              identical(_nativeController, controller) &&
+              widget.nativeEditorEnabled,
+        ),
+        selectionAnchorListenable: _viewTick,
         isCurrent: () => current() && identical(_nativeController, controller),
       );
     }
     final value = _controller.value;
     final version = document.model.version;
+    RenderEditable? editable;
+    void findEditable(Element element) {
+      if (element is StatefulElement && element.state is EditableTextState) {
+        editable = (element.state as EditableTextState).renderEditable;
+        return;
+      }
+      element.visitChildElements(findEditable);
+    }
+
+    _legacyFieldKey.currentContext?.visitChildElements(findEditable);
+    Rect? legacyAnchor() {
+      if (!sourceCurrent() ||
+          widget.nativeEditorEnabled ||
+          document.model.version != version ||
+          _controller.text != value.text ||
+          !value.selection.isValid) {
+        return null;
+      }
+      final render = editable;
+      if (render == null || !render.attached || !render.hasSize) return null;
+      final caret = render.getLocalRectForCaret(value.selection.extent);
+      if (!(Offset.zero & render.size).overlaps(caret)) return null;
+      return MatrixUtils.transformRect(render.getTransformTo(null), caret);
+    }
+
     var used = false;
     return QuickAskContext.fromText(
       text: value.text,
       selection: value.selection,
+      selectionAnchor: legacyAnchor,
+      selectionAnchorListenable: _scrollController,
       sourceLabel: document.path,
       applyReplacement: document.readOnly
           ? null
@@ -270,6 +347,8 @@ class IdeEditorState extends State<IdeEditor> with QuickAskTarget {
   final FocusNode _originalFocusNode = FocusNode(debugLabel: 'ide original');
   // The surface's state implements EditorViewHost, which editor commands use.
   final GlobalKey _surfaceKey = GlobalKey();
+  final GlobalKey _originalSurfaceKey = GlobalKey();
+  final GlobalKey _legacyFieldKey = GlobalKey();
   late final ScrollController _scrollController = ScrollController();
   final TextEditingController _findController = TextEditingController();
   final TextEditingController _replaceController = TextEditingController();
@@ -2995,8 +3074,11 @@ class IdeEditorState extends State<IdeEditor> with QuickAskTarget {
         final controller = diff.controller;
         if (controller == null) return const SizedBox.expand();
         return EditorSurface(
-          key: ObjectKey(controller),
+          key: _originalSurfaceKey,
           controller: controller,
+          onViewChanged: () {
+            if (mounted) _viewTick.value++;
+          },
           focusNode: _originalFocusNode,
           readOnly: true,
           backgroundColor: colors['editor.background'],
@@ -3157,6 +3239,7 @@ class IdeEditorState extends State<IdeEditor> with QuickAskTarget {
                             )
                           : _diffEditor(colors, _diffOf(widget.active)!)
                     : TextField(
+                        key: _legacyFieldKey,
                         controller: _controller,
                         focusNode: _focusNode,
                         scrollController: _scrollController,

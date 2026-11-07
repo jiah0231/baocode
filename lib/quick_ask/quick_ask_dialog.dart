@@ -1,11 +1,9 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../chat/chat_keys.dart';
-import '../ide/ide_button.dart';
 import '../ide/ide_hover.dart';
 import '../ide/ide_input.dart';
 import '../ide/ide_menu.dart';
@@ -16,29 +14,80 @@ import '../models/model_providers.dart';
 import '../theme/codicons.dart';
 import '../theme/workbench_theme.dart' show WorkbenchThemeService, themeColors;
 import 'quick_ask_context.dart';
+import 'quick_ask_popup.dart';
 import 'quick_ask_service.dart';
 
-/// The snapshot is captured before the dialog takes focus. No request is
-/// made until Send; closing cancels the one-shot request and discards it.
+/// A non-modal popup. Capture the source before focus moves; only an explicit
+/// send contacts a model. Escape/Close restores focus, an outside click does not.
 Future<void> showQuickAsk(
   BuildContext context, {
   QuickAskContext? source,
   QuickAskService? service,
-}) => showGeneralDialog<void>(
-  context: context,
-  barrierDismissible: false,
-  barrierLabel: context.l10n.commonDismiss,
-  barrierColor: const Color(0x40000000),
-  transitionDuration: Duration.zero,
-  pageBuilder: (context, _, _) =>
-      QuickAskDialog(source: source, service: service),
-);
+}) {
+  final done = Completer<void>();
+  final previousFocus = FocusManager.instance.primaryFocus;
+  final overlay = Overlay.of(context, rootOverlay: true);
+  final focusBox = previousFocus?.context?.findRenderObject();
+  final fallback =
+      focusBox is RenderBox && focusBox.attached && focusBox.hasSize
+      ? focusBox.localToGlobal(Offset.zero) & focusBox.size
+      : null;
+  late final OverlayEntry entry;
+  void close(bool restoreFocus) {
+    if (done.isCompleted) return;
+    entry.remove();
+    entry.dispose();
+    if (restoreFocus &&
+        previousFocus?.context?.mounted == true &&
+        previousFocus!.canRequestFocus) {
+      previousFocus.requestFocus();
+    }
+    done.complete();
+  }
+
+  final themes = InheritedTheme.capture(from: context, to: overlay.context);
+  final route = ModalRoute.of(context);
+  final popup = Localizations.override(
+    context: context,
+    child: QuickAskDialog(
+      source: source,
+      service: service,
+      fallbackAnchor: fallback,
+      ownerContext: context,
+      ownerRoute: route,
+      onClose: close,
+    ),
+  );
+  entry = OverlayEntry(
+    builder: (_) => Positioned.fill(child: themes.wrap(popup)),
+  );
+  // An overlay can disappear during navigation/window teardown, without Close.
+  entry.addListener(() {
+    if (!entry.mounted && !done.isCompleted) {
+      scheduleMicrotask(() => close(false));
+    }
+  });
+  overlay.insert(entry);
+  return done.future;
+}
 
 class QuickAskDialog extends StatefulWidget {
-  const QuickAskDialog({super.key, this.source, this.service});
+  const QuickAskDialog({
+    super.key,
+    this.source,
+    this.service,
+    this.fallbackAnchor,
+    this.ownerContext,
+    this.ownerRoute,
+    required this.onClose,
+  });
 
   final QuickAskContext? source;
   final QuickAskService? service;
+  final Rect? fallbackAnchor;
+  final BuildContext? ownerContext;
+  final ModalRoute<dynamic>? ownerRoute;
+  final void Function(bool restoreFocus) onClose;
 
   @override
   State<QuickAskDialog> createState() => _QuickAskDialogState();
@@ -60,6 +109,35 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
   bool _applying = false;
   bool _applied = false;
   bool _copied = false;
+  bool _pickingModel = false;
+  Rect? _lastAnchor;
+  final _geometryTick = ChangeNotifier();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback(_trackAnchor);
+  }
+
+  void _trackAnchor(Duration _) {
+    if (!mounted) return;
+    if (widget.ownerContext?.mounted == false ||
+        (!_pickingModel && widget.ownerRoute?.isCurrent == false)) {
+      widget.onClose(false);
+      return;
+    }
+    final previous = _lastAnchor;
+    _anchor();
+    if (previous != _lastAnchor) _geometryTick.notifyListeners();
+    // Observe frames already caused by source layout, without an idle ticker.
+    WidgetsBinding.instance.addPostFrameCallback(_trackAnchor);
+  }
+
+  Rect? _anchor() {
+    final current = widget.source?.selectionAnchor?.call();
+    if (current != null && current.isFinite) _lastAnchor = current;
+    return _lastAnchor ?? widget.fallbackAnchor;
+  }
 
   bool get _busy => _cancel != null;
   bool get _canEdit =>
@@ -72,6 +150,7 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
     _question.dispose();
     _replacement.dispose();
     _focus.dispose();
+    _geometryTick.dispose();
     super.dispose();
   }
 
@@ -187,18 +266,26 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
     _focus.requestFocus();
   }
 
-  Future<void> _pickModel(Rect anchor) => showIdeMenu(
-    context,
-    anchor: anchor,
-    entries: auxiliaryModelEntries(
-      context.l10n,
-      _providers,
-      current: _providers.quickAskModel ?? ModelProviders.followAuxiliary,
-      auto: ModelProviders.followAuxiliary,
-      autoLabel: context.l10n.aiModelAuxiliary,
-      onPick: (model) => unawaited(_providers.setQuickAskModel(model)),
-    ),
-  );
+  Future<void> _pickModel(Rect anchor) async {
+    _pickingModel = true;
+    try {
+      await showIdeMenu(
+        context,
+        anchor: anchor,
+        entries: auxiliaryModelEntries(
+          context.l10n,
+          _providers,
+          current: _providers.quickAskModel ?? ModelProviders.followAuxiliary,
+          auto: ModelProviders.followAuxiliary,
+          autoLabel: context.l10n.aiModelAuxiliary,
+          onPick: (model) => unawaited(_providers.setQuickAskModel(model)),
+        ),
+      );
+    } finally {
+      _pickingModel = false;
+      if (mounted) _focus.requestFocus();
+    }
+  }
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -209,316 +296,256 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
   Widget _build(BuildContext context) {
     final l10n = context.l10n;
     final colors = themeColors;
-    final size = MediaQuery.sizeOf(context);
     final source = widget.source;
-    final foreground = colors['editorWidget.foreground'];
-    final secondary = colors['descriptionForeground'];
     final hasContext = source?.contextText.isNotEmpty == true;
     final edit = _mode == QuickAskMode.edit;
-    final textStyle = TextStyle(fontSize: 12, height: 1.5, color: foreground);
-    Widget preview(String label, String text) => Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(label, style: TextStyle(fontSize: 11, color: secondary)),
-        const SizedBox(height: 4),
-        Container(
-          padding: const EdgeInsets.all(8),
-          color: colors['textCodeBlock.background'],
-          child: SelectableText(text, style: textStyle),
-        ),
-      ],
+    final textStyle = TextStyle(
+      fontSize: 12,
+      height: 1.5,
+      color: colors['editorWidget.foreground'],
+    );
+    Widget preview(String label, String text) => Semantics(
+      label: label,
+      child: Container(
+        padding: const EdgeInsets.all(6),
+        color: colors['textCodeBlock.background'],
+        child: SelectableText(text, style: textStyle),
+      ),
     );
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.escape): () {
-          if (!ChatKeys.isComposing && !_applying) Navigator.pop(context);
+          if (!ChatKeys.isComposing && !_applying) widget.onClose(true);
         },
       },
       child: FocusScope(
         autofocus: true,
-        child: Align(
-          alignment: const Alignment(0, -0.35),
-          child: Material(
-            type: MaterialType.transparency,
-            child: Container(
-              key: const ValueKey('quick-ask-frame'),
-              width: math.min(660.0, math.max(0.0, size.width - 24)),
-              constraints: BoxConstraints(
-                maxHeight: math.max(0.0, size.height - 48),
-              ),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: colors['editorWidget.background'],
-                border: Border.all(
-                  color: colors.get('widget.border') ?? colors['focusBorder'],
+        child: CustomSingleChildLayout(
+          delegate: QuickAskLayout(
+            anchor: _anchor,
+            overlay: Overlay.of(context, rootOverlay: true).context,
+            insets:
+                MediaQuery.paddingOf(context) +
+                MediaQuery.viewInsetsOf(context),
+            relayout: Listenable.merge([
+              _geometryTick,
+              source?.selectionAnchorListenable,
+            ]),
+          ),
+          child: TapRegion(
+            onTapOutside: (_) {
+              if (!_pickingModel && !_applying) widget.onClose(false);
+            },
+            child: Material(
+              type: MaterialType.transparency,
+              child: Container(
+                key: const ValueKey('quick-ask-frame'),
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: colors['editorWidget.background'],
+                  border: Border.all(
+                    color: colors.get('widget.border') ?? colors['focusBorder'],
+                  ),
+                  borderRadius: BorderRadius.circular(7),
+                  boxShadow: [
+                    BoxShadow(color: colors['widget.shadow'], blurRadius: 12),
+                  ],
                 ),
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(color: colors['widget.shadow'], blurRadius: 20),
-                ],
-              ),
-              child: DefaultTextStyle(
-                style: textStyle,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
+                child: DefaultTextStyle(
+                  style: textStyle,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Icon(Codicons.sparkle, size: 16, color: foreground),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            l10n.quickAskTitle,
-                            style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
+                        IdeInputBox(
+                          key: const ValueKey('quick-ask-question'),
+                          controller: _question,
+                          focusNode: _focus,
+                          autofocus: true,
+                          minLines: 1,
+                          maxLines: 4,
+                          semanticsLabel: edit
+                              ? l10n.quickAskEditHint
+                              : l10n.quickAskQuestionHint,
+                          shortcuts: {
+                            const SingleActivator(
+                              LogicalKeyboardKey.enter,
+                              control: true,
+                            ): () =>
+                                unawaited(_send()),
+                            const SingleActivator(
+                              LogicalKeyboardKey.enter,
+                              meta: true,
+                            ): () =>
+                                unawaited(_send()),
+                          },
                         ),
-                        IdeActionButton(
-                          icon: Codicons.close,
-                          tooltip: l10n.dialogCloseDialog,
-                          onPressed: _applying
-                              ? null
-                              : () => Navigator.pop(context),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Flexible(
-                      child: SingleChildScrollView(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                        const SizedBox(height: 4),
+                        Wrap(
+                          alignment: WrapAlignment.spaceBetween,
                           children: [
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: [
-                                IdeButton(
-                                  label: l10n.quickAskAsk,
-                                  secondary: edit,
-                                  onPressed: _busy
-                                      ? null
-                                      : () => _setMode(QuickAskMode.ask),
-                                ),
-                                IdeButton(
-                                  label: l10n.quickAskEdit,
-                                  secondary: !edit,
-                                  onPressed: _busy || !_canEdit
-                                      ? null
-                                      : () => _setMode(QuickAskMode.edit),
-                                ),
-                                Builder(
-                                  builder: (context) => IdeButton(
-                                    label: quickAskModelName(l10n, _providers),
-                                    secondary: true,
-                                    onPressed: _busy
-                                        ? null
-                                        : () {
-                                            final anchor = anchorOf(context);
-                                            if (anchor != null) {
-                                              unawaited(_pickModel(anchor));
-                                            }
-                                          },
-                                  ),
-                                ),
-                              ],
+                            QuickAskAction(
+                              label: l10n.quickAskAsk,
+                              icon: Codicons.comment,
+                              selected: !edit,
+                              onPressed: _busy || _applying
+                                  ? null
+                                  : () => _setMode(QuickAskMode.ask),
                             ),
-                            const SizedBox(height: 12),
-                            Text(
-                              source?.sourceLabel ?? l10n.quickAskNoSelection,
-                              style: TextStyle(fontSize: 11, color: secondary),
+                            QuickAskAction(
+                              label: l10n.quickAskEdit,
+                              icon: Codicons.edit,
+                              selected: edit,
+                              onPressed: _busy || _applying || !_canEdit
+                                  ? null
+                                  : () => _setMode(QuickAskMode.edit),
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              l10n.quickAskPrivacy,
-                              style: TextStyle(fontSize: 11, color: secondary),
+                            Builder(
+                              builder: (context) => QuickAskAction(
+                                label: quickAskModelName(l10n, _providers),
+                                icon: Codicons.chip,
+                                onPressed: _busy || _applying
+                                    ? null
+                                    : () {
+                                        final anchor = anchorOf(context);
+                                        if (anchor != null)
+                                          unawaited(_pickModel(anchor));
+                                      },
+                              ),
                             ),
-                            if (source?.truncated == true) ...[
-                              const SizedBox(height: 4),
-                              Text(
-                                l10n.quickAskTruncated,
-                                style: TextStyle(
+                            if (source != null)
+                              QuickAskAction(
+                                label: _showContext
+                                    ? l10n.quickAskHideContext
+                                    : l10n.quickAskShowContext,
+                                icon: Codicons.eye,
+                                selected: _showContext,
+                                onPressed: () => setState(
+                                  () => _showContext = !_showContext,
+                                ),
+                              ),
+                            if (hasContext)
+                              QuickAskAction(
+                                label: _includeContext
+                                    ? l10n.quickAskContextOn
+                                    : l10n.quickAskContextOff,
+                                icon: Codicons.attach,
+                                selected: _includeContext,
+                                onPressed: _busy || _applying
+                                    ? null
+                                    : () => setState(
+                                        () =>
+                                            _includeContext = !_includeContext,
+                                      ),
+                              ),
+                            if (source?.truncated == true)
+                              Semantics(
+                                label: l10n.quickAskTruncated,
+                                child: Icon(
+                                  Codicons.warning,
+                                  size: 16,
                                   color: colors['editorWarning.foreground'],
                                 ),
                               ),
-                            ],
-                            if (source != null) ...[
-                              const SizedBox(height: 8),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  IdeButton(
-                                    label: _showContext
-                                        ? l10n.quickAskHideContext
-                                        : l10n.quickAskShowContext,
-                                    secondary: true,
-                                    onPressed: () => setState(
-                                      () => _showContext = !_showContext,
-                                    ),
-                                  ),
-                                  if (hasContext)
-                                    IdeButton(
-                                      label: _includeContext
-                                          ? l10n.quickAskContextOn
-                                          : l10n.quickAskContextOff,
-                                      secondary: true,
-                                      onPressed: _busy
-                                          ? null
-                                          : () => setState(
-                                              () => _includeContext =
-                                                  !_includeContext,
-                                            ),
-                                    ),
-                                ],
-                              ),
-                              if (_showContext) ...[
-                                const SizedBox(height: 8),
-                                if (source.selectedText.isNotEmpty)
-                                  preview(
-                                    l10n.quickAskSelection,
-                                    source.selectedText,
-                                  ),
-                                if (hasContext && _includeContext) ...[
-                                  const SizedBox(height: 8),
-                                  preview(
-                                    l10n.quickAskNearby,
-                                    source.contextText,
-                                  ),
-                                ],
-                              ],
-                            ],
-                            const SizedBox(height: 12),
-                            IdeInputBox(
-                              key: const ValueKey('quick-ask-question'),
-                              controller: _question,
-                              focusNode: _focus,
-                              autofocus: true,
-                              minLines: 2,
-                              maxLines: 5,
-                              semanticsLabel: l10n.quickAskQuestionHint,
-                              placeholder: edit
-                                  ? l10n.quickAskEditHint
-                                  : l10n.quickAskQuestionHint,
-                              shortcuts: {
-                                const SingleActivator(
-                                  LogicalKeyboardKey.enter,
-                                  control: true,
-                                ): () =>
-                                    unawaited(_send()),
-                                const SingleActivator(
-                                  LogicalKeyboardKey.enter,
-                                  meta: true,
-                                ): () =>
-                                    unawaited(_send()),
-                              },
+                            QuickAskAction(
+                              label: l10n.dialogCloseDialog,
+                              icon: Codicons.close,
+                              onPressed: _applying
+                                  ? null
+                                  : () => widget.onClose(true),
                             ),
-                            if (_error case final error?) ...[
-                              const SizedBox(height: 8),
-                              Text(
-                                error,
-                                style: TextStyle(
-                                  color: colors['errorForeground'],
-                                ),
-                              ),
-                            ],
-                            if (_answer case final answer?) ...[
-                              const SizedBox(height: 12),
-                              if (edit) ...[
-                                preview(
-                                  l10n.quickAskOriginal,
-                                  source!.selectedText,
-                                ),
-                                const SizedBox(height: 8),
-                                Text(l10n.quickAskProposed),
-                                const SizedBox(height: 4),
-                                if (_applied || _applying)
-                                  SelectableText(
-                                    _replacement.text,
-                                    style: textStyle,
-                                  )
-                                else
-                                  IdeInputBox(
-                                    key: const ValueKey(
-                                      'quick-ask-replacement',
-                                    ),
-                                    controller: _replacement,
-                                    minLines: 3,
-                                    maxLines: 12,
-                                    semanticsLabel: l10n.quickAskProposed,
-                                    onChanged: (_) {
-                                      if (_copied) {
-                                        setState(() => _copied = false);
+                            QuickAskAction(
+                              label: _busy
+                                  ? l10n.quickAskStop
+                                  : l10n.quickAskSend,
+                              icon: _busy ? Codicons.debugStop : Codicons.send,
+                              onPressed: _applying
+                                  ? null
+                                  : () {
+                                      if (_busy) {
+                                        setState(_stop);
+                                      } else {
+                                        unawaited(_send());
                                       }
                                     },
-                                  ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  source.canApply
-                                      ? l10n.quickAskApplyHint
-                                      : l10n.quickAskCopyHint,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: secondary,
-                                  ),
-                                ),
-                              ] else
-                                preview(l10n.quickAskAnswer, answer),
-                              const SizedBox(height: 8),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  IdeButton(
-                                    label: _copied
-                                        ? l10n.quickAskCopied
-                                        : l10n.quickAskCopy,
-                                    secondary: true,
-                                    onPressed: () => unawaited(_copy()),
-                                  ),
-                                  if (edit && source!.canApply)
-                                    IdeButton(
-                                      label: _applied
-                                          ? l10n.quickAskApplied
-                                          : l10n.quickAskApply,
-                                      onPressed: _applied || _applying
-                                          ? null
-                                          : () => unawaited(_apply()),
-                                    ),
-                                ],
-                              ),
-                            ],
+                            ),
                           ],
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            l10n.quickAskSendHint,
-                            style: TextStyle(fontSize: 11, color: secondary),
+                        if (_showContext && source != null) ...[
+                          if (source.selectedText.isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            preview(
+                              l10n.quickAskSelection,
+                              source.selectedText,
+                            ),
+                          ],
+                          if (hasContext && _includeContext) ...[
+                            const SizedBox(height: 6),
+                            preview(l10n.quickAskNearby, source.contextText),
+                          ],
+                        ],
+                        if (_error case final error?) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            error,
+                            style: TextStyle(color: colors['errorForeground']),
                           ),
-                        ),
-                        IdeButton(
-                          label: _busy ? l10n.quickAskStop : l10n.quickAskSend,
-                          spinning: _busy,
-                          onPressed: _applying
-                              ? null
-                              : () {
-                                  if (_busy) {
-                                    setState(_stop);
-                                  } else {
-                                    unawaited(_send());
-                                  }
+                        ],
+                        if (_answer case final answer?) ...[
+                          const SizedBox(height: 6),
+                          if (edit) ...[
+                            preview(
+                              l10n.quickAskOriginal,
+                              source!.selectedText,
+                            ),
+                            const SizedBox(height: 6),
+                            if (_applied || _applying)
+                              SelectableText(
+                                _replacement.text,
+                                style: textStyle,
+                              )
+                            else
+                              IdeInputBox(
+                                key: const ValueKey('quick-ask-replacement'),
+                                controller: _replacement,
+                                minLines: 1,
+                                maxLines: 8,
+                                semanticsLabel: l10n.quickAskProposed,
+                                onChanged: (_) {
+                                  if (_copied) setState(() => _copied = false);
                                 },
-                        ),
+                              ),
+                          ] else
+                            preview(l10n.quickAskAnswer, answer),
+                          const SizedBox(height: 4),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              QuickAskAction(
+                                label: _copied
+                                    ? l10n.quickAskCopied
+                                    : l10n.quickAskCopy,
+                                icon: _copied ? Codicons.check : Codicons.copy,
+                                onPressed: () => unawaited(_copy()),
+                              ),
+                              if (edit && source!.canApply)
+                                QuickAskAction(
+                                  label: _applied
+                                      ? l10n.quickAskApplied
+                                      : l10n.quickAskApply,
+                                  icon: Codicons.checkAll,
+                                  selected: _applied,
+                                  onPressed: _applied || _applying
+                                      ? null
+                                      : () => unawaited(_apply()),
+                                ),
+                            ],
+                          ),
+                        ],
                       ],
                     ),
-                  ],
+                  ),
                 ),
               ),
             ),

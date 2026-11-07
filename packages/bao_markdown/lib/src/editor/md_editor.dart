@@ -977,13 +977,19 @@ class MarkdownEditorState extends State<MarkdownEditor>
 
   /// The caret's box at [offset] (the selection's end by default) on the
   /// screen; null where its line is not laid out.
-  Rect? caretRect([int? offset]) {
+  Rect? caretRect([
+    int? offset,
+    TextAffinity affinity = TextAffinity.downstream,
+  ]) {
     offset ??= controller.selection.extentOffset;
     if (offset < 0) return null;
     final line = controller.lineAt(offset.clamp(0, controller.length));
     final box = _boxOf(line);
     if (box == null) return null;
-    final rect = box.caretRect(offset - controller.lineStart(line));
+    final rect = box.caretRect(
+      offset - controller.lineStart(line),
+      affinity: affinity,
+    );
     return MatrixUtils.transformRect(box.getTransformTo(null), rect);
   }
 

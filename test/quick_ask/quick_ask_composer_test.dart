@@ -71,6 +71,32 @@ Finder _input(String key) => find.descendant(
 );
 
 void main() {
+  testWidgets('anchor uses reverse selection extent and survives focus loss', (
+    tester,
+  ) async {
+    final session = _session();
+    final controller = await _pumpComposer(tester, session);
+    final source = await _capture(
+      tester,
+      controller,
+      'before chosen after',
+      start: 13,
+      end: 7,
+    );
+    final editor = tester.state<MarkdownEditorState>(_editor());
+    final expected = editor.caretRect(7);
+    expect(expected, isNotNull);
+    expect(source.selectionAnchor!(), expected);
+    expect(source.selectionAnchorListenable, isNotNull);
+    tester.widget<MarkdownEditor>(_editor()).focusNode!.unfocus();
+    controller.selection = const TextSelection.collapsed(offset: 0);
+    await tester.pump();
+    expect(source.selectionAnchor!(), expected);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(source.selectionAnchor!(), isNull);
+  });
+
   testWidgets('an empty focused composer keeps its session model route', (
     tester,
   ) async {
@@ -136,9 +162,9 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(asked, isNull);
-      await tester.tap(find.text('Edit selection'));
+      await tester.tap(find.bySemanticsLabel('Edit selection'));
       await tester.enterText(_input('quick-ask-question'), 'Rewrite this');
-      await tester.tap(find.text('Send'));
+      await tester.tap(find.bySemanticsLabel('Send'));
       await tester.pumpAndSettle();
       expect(asked!['mode'], 'edit');
       expect(asked!['selection'], 'chosen');
@@ -146,13 +172,13 @@ void main() {
       expect(session.itemCount, 0);
 
       await tester.enterText(_input('quick-ask-replacement'), 'reviewed');
-      await tester.ensureVisible(find.text('Apply replacement'));
-      await tester.tap(find.text('Apply replacement'));
+      await tester.ensureVisible(find.bySemanticsLabel('Apply replacement'));
+      await tester.tap(find.bySemanticsLabel('Apply replacement'));
       await tester.pumpAndSettle();
       expect(controller.text, 'before reviewed after');
       expect(session.draft.content, controller.text);
       expect(session.itemCount, 0);
-      expect(find.text('Applied'), findsOneWidget);
+      expect(find.bySemanticsLabel('Applied'), findsOneWidget);
       expect(await source.applyReplacement!('again'), isFalse);
 
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);

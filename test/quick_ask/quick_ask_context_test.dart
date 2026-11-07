@@ -173,6 +173,11 @@ void main() {
     expect(captured.contextText, isEmpty);
     expect(captured.sourceLabel, 'code');
     expect(outerCaptures, 0);
+    expect(
+      captured.selectionAnchor?.call(),
+      const Rect.fromLTWH(12, 34, 1, 18),
+    );
+    expect(captured.selectionAnchorListenable, isNotNull);
   });
 
   test('text and editor factories preserve an explicit session route', () {
@@ -245,6 +250,13 @@ class _Target extends StatefulWidget {
 }
 
 class _TargetState extends State<_Target> with QuickAskTarget {
+  final _geometry = ValueNotifier(0);
+  @override
+  void dispose() {
+    _geometry.dispose();
+    super.dispose();
+  }
+
   @override
   String? get quickAskSessionModel => widget.sessionModel;
   @override
@@ -253,6 +265,8 @@ class _TargetState extends State<_Target> with QuickAskTarget {
     return QuickAskContext(
       sourceLabel: widget.label,
       selectedText: '${widget.label} selection',
+      selectionAnchor: () => const Rect.fromLTWH(12, 34, 1, 18),
+      selectionAnchorListenable: _geometry,
     );
   }
 

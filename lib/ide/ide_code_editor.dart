@@ -192,10 +192,36 @@ class IdeCodeEditorState extends State<IdeCodeEditor> with QuickAskTarget {
     final controller = widget.controller;
     final path = widget.path;
     final generation = _quickAskGeneration;
+    final selection = controller.value.selection;
+    final extent = selection.extentOffset;
+    final version = controller.document.version;
     return QuickAskContext.fromEditor(
       controller: controller,
       sourceLabel: path,
       readOnly: widget.readOnly,
+      selectionAnchorListenable: _viewTick,
+      selectionAnchor: () {
+        if (!mounted ||
+            generation != _quickAskGeneration ||
+            !identical(widget.controller, controller) ||
+            widget.path != path ||
+            controller.document.version != version ||
+            extent < 0) {
+          return null;
+        }
+        final surface = view;
+        final box = _surfaceKey.currentContext?.findRenderObject();
+        if (surface == null ||
+            box is! RenderBox ||
+            !box.attached ||
+            !box.hasSize) {
+          return null;
+        }
+        final caret = surface.caretRectAt(extent, affinity: selection.affinity);
+        final area = surface.textArea;
+        if (caret == null || area == null || !area.overlaps(caret)) return null;
+        return MatrixUtils.transformRect(box.getTransformTo(null), caret);
+      },
       isCurrent: () =>
           mounted &&
           generation == _quickAskGeneration &&

@@ -15,6 +15,8 @@ class QuickAskContext {
     this.sessionModel,
     this.truncated = false,
     this.applyReplacement,
+    this.selectionAnchor,
+    this.selectionAnchorListenable,
   });
 
   static const maxSelectionLength = 8000;
@@ -36,6 +38,15 @@ class QuickAskContext {
   /// current. Sent chat messages never provide this callback.
   final FutureOr<bool> Function(String replacement)? applyReplacement;
 
+  /// Resolves the captured selection's active end in global logical pixels.
+  /// Independent of focus/current selection; null if its source is no longer
+  /// laid out or visible. Call again after source scrolling or layout changes.
+  final Rect? Function()? selectionAnchor;
+
+  /// Source geometry changes. Consumers resolve after layout, not in this
+  /// notification, since scroll notifications can precede the next layout.
+  final Listenable? selectionAnchorListenable;
+
   bool get canApply =>
       !truncated && selectedText.isNotEmpty && applyReplacement != null;
 
@@ -47,6 +58,8 @@ class QuickAskContext {
     required String sourceLabel,
     String? sessionModel,
     FutureOr<bool> Function(String replacement)? applyReplacement,
+    Rect? Function()? selectionAnchor,
+    Listenable? selectionAnchorListenable,
   }) {
     final valid = selection.isValid && selection.end <= text.length;
     final start = valid ? selection.start : text.length;
@@ -62,6 +75,8 @@ class QuickAskContext {
     final after = math.min(text.length - end, available - before);
     before = math.min(start, available - after);
     return QuickAskContext(
+      selectionAnchor: selectionAnchor,
+      selectionAnchorListenable: selectionAnchorListenable,
       selectedText: selected,
       contextText:
           '${suffix(text.substring(math.max(0, start - before - 1), start), before)}$marker${prefix(text.substring(end, math.min(text.length, end + after + 1)), after)}',
@@ -82,6 +97,8 @@ class QuickAskContext {
     String? sessionModel,
     required bool Function() isCurrent,
     bool readOnly = false,
+    Rect? Function()? selectionAnchor,
+    Listenable? selectionAnchorListenable,
   }) {
     final document = controller.document;
     final version = document.version;
@@ -91,6 +108,8 @@ class QuickAskContext {
     return QuickAskContext.fromText(
       text: text,
       selection: selection,
+      selectionAnchor: selectionAnchor,
+      selectionAnchorListenable: selectionAnchorListenable,
       sourceLabel: sourceLabel,
       sessionModel: sessionModel,
       applyReplacement: readOnly || controller.selections.length != 1
@@ -140,6 +159,8 @@ class QuickAskContext {
       sessionModel: sessionModel,
       truncated: result.truncated,
       applyReplacement: result.applyReplacement,
+      selectionAnchor: result.selectionAnchor,
+      selectionAnchorListenable: result.selectionAnchorListenable,
     );
   }
 

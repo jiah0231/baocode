@@ -620,6 +620,21 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   QuickAskContext? captureQuickAskContext() {
     if (!_selectionFocusNode.hasFocus) return null;
     final selected = _selectionDelegate.quickAskSelection();
+    final resolveAnchor = _selectionDelegate.captureQuickAskAnchor();
+    Rect? selectionAnchor() {
+      if (!mounted) return null;
+      final caret = resolveAnchor?.call();
+      final box = _listKey.currentContext?.findRenderObject();
+      if (caret == null || box is! RenderBox || !box.attached || !box.hasSize) {
+        return null;
+      }
+      final bounds = MatrixUtils.transformRect(
+        box.getTransformTo(null),
+        Offset.zero & box.size,
+      );
+      return bounds.overlaps(caret) ? caret : null;
+    }
+
     final count = _feed.itemCount;
     if (count == 0) {
       return QuickAskContext(
@@ -668,6 +683,8 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     return QuickAskContext(
       sourceLabel: 'Chat',
       sessionModel: quickAskSessionModel,
+      selectionAnchor: selectionAnchor,
+      selectionAnchorListenable: _scrollController,
       selectedText: selected.text,
       contextText: nearby,
       truncated: selected.truncated,
@@ -3223,6 +3240,7 @@ class _ChatSelectionDelegate extends StaticSelectionContainerDelegate
   /// last's end, whole when not built.
   bool _all = false;
   SelectionEdgeUpdateEvent? _dragEnd;
+  bool _quickAskActiveEnd = true;
 
   /// Selected text of the end items, for when they are no longer built.
   final Map<int, String> _endText = {};
@@ -3327,6 +3345,7 @@ class _ChatSelectionDelegate extends StaticSelectionContainerDelegate
       // All of it, not the built items alone: the ends in the model, which
       // the items built later (scrolled to) are selected from.
       case SelectAllSelectionEvent() when itemCount() > 0:
+        _quickAskActiveEnd = true;
         result = super.dispatchSelectionEvent(event);
         const granularity = TextGranularity.character;
         _start = (
@@ -3340,11 +3359,13 @@ class _ChatSelectionDelegate extends StaticSelectionContainerDelegate
         _all = true;
         _dragEnd = null;
       case SelectionEdgeUpdateEvent(type: SelectionEventType.startEdgeUpdate):
+        _quickAskActiveEnd = false;
         _all = false;
         _start = _edgeAt(event.globalPosition, event.granularity);
         _refreshEdgeLocations();
         result = super.dispatchSelectionEvent(event);
       case SelectionEdgeUpdateEvent():
+        _quickAskActiveEnd = true;
         _all = false;
         _end = _edgeAt(event.globalPosition, event.granularity);
         _dragEnd = event;
@@ -3354,6 +3375,7 @@ class _ChatSelectionDelegate extends StaticSelectionContainerDelegate
       case SelectAllSelectionEvent() ||
           SelectWordSelectionEvent() ||
           SelectParagraphSelectionEvent():
+        _quickAskActiveEnd = true;
         _all = false;
         result = super.dispatchSelectionEvent(event);
         _start = _edgeFromGeometry(end: false);
@@ -3361,6 +3383,7 @@ class _ChatSelectionDelegate extends StaticSelectionContainerDelegate
         _dragEnd = null;
       case GranularlyExtendSelectionEvent(:final isEnd) ||
           DirectionallyExtendSelectionEvent(:final isEnd):
+        _quickAskActiveEnd = isEnd;
         _all = false;
         _refreshEdgeLocations();
         result = super.dispatchSelectionEvent(event);
@@ -3602,6 +3625,32 @@ class _ChatSelectionDelegate extends StaticSelectionContainerDelegate
     for (final index in ends) {
       if (_builtText(index) case final text?) _endText[index] = text;
     }
+  }
+
+  /// Freeze the rendered active edge before the popup takes focus and Flutter
+  /// clears selection geometry. Keep the selectable's transform live so the
+  /// anchor follows scrolling, rather than remembering the pointer position.
+  Rect? Function()? captureQuickAskAnchor() {
+    final index = _quickAskActiveEnd
+        ? currentSelectionEndIndex
+        : currentSelectionStartIndex;
+    if (index < 0 || index >= selectables.length) return null;
+    final selectable = selectables[index];
+    final point = _quickAskActiveEnd
+        ? selectable.value.endSelectionPoint
+        : selectable.value.startSelectionPoint;
+    if (point == null) return null;
+    final local = Rect.fromLTWH(
+      point.localPosition.dx,
+      point.localPosition.dy - point.lineHeight,
+      1,
+      point.lineHeight,
+    );
+    return () {
+      // Removed/virtualized text must not resolve through a stale render tree.
+      if (!_items.containsKey(selectable)) return null;
+      return MatrixUtils.transformRect(selectable.getTransformTo(null), local);
+    };
   }
 
   /// Unlike Copy, quick ask must stop reading at its budget, even for Select

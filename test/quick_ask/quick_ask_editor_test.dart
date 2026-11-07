@@ -22,7 +22,82 @@ class _Files with ReadWriteOnlyFiles implements IdeFileService {
   }
 }
 
+Rect _nativeAnchor(WidgetTester tester, EditorSurface surface, int offset) {
+  final finder = find.byWidget(surface);
+  final view = tester.state(finder) as EditorSurfaceView;
+  final box = tester.renderObject<RenderBox>(finder);
+  return MatrixUtils.transformRect(
+    box.getTransformTo(null),
+    view.caretRectAt(offset)!,
+  );
+}
+
 void main() {
+  for (final native in [false, true]) {
+    testWidgets('main editor anchors captured extent (native $native)', (
+      tester,
+    ) async {
+      final files = _Files();
+      final root = p.absolute('quick-ask-anchor-project');
+      final workspace = IdeWorkspace(root, files: files);
+      addTearDown(workspace.dispose);
+      await workspace.open(p.join(root, 'a.txt'));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: IdeEditor(
+              workspace: workspace,
+              active: workspace.active!,
+              nativeEditorEnabled: native,
+              onError: (error) => fail('$error'),
+              onLspStatus: (_) {},
+              onPositionChanged: (_) {},
+            ),
+          ),
+        ),
+      );
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      late Rect expected;
+      if (native) {
+        final surface = tester.widget<EditorSurface>(
+          find.byType(EditorSurface),
+        );
+        surface.controller.select(8, 2);
+        surface.focusNode!.requestFocus();
+        await tester.pump();
+        expected = _nativeAnchor(tester, surface, 2);
+      } else {
+        final field = tester.widget<EditableText>(
+          find.byType(EditableText).first,
+        );
+        field.controller.selection = const TextSelection(
+          baseOffset: 8,
+          extentOffset: 2,
+        );
+        field.focusNode.requestFocus();
+        await tester.pump();
+        final render = tester
+            .state<EditableTextState>(find.byType(EditableText).first)
+            .renderEditable;
+        expected = MatrixUtils.transformRect(
+          render.getTransformTo(null),
+          render.getLocalRectForCaret(const TextPosition(offset: 2)),
+        );
+      }
+      final captured = QuickAskContext.captureFocused()!;
+      expect(captured.selectionAnchor!(), expected);
+      expect(captured.selectionAnchorListenable, isNotNull);
+      FocusManager.instance.primaryFocus!.unfocus();
+      await tester.pump();
+      expect(captured.selectionAnchor!(), expected);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(captured.selectionAnchor!(), isNull);
+    });
+  }
+
   testWidgets(
     'both diff sides capture their own text; original never applies',
     (tester) async {
@@ -66,6 +141,8 @@ void main() {
       expect(readOnly.selectedText, 'original');
       expect(readOnly.sourceLabel, contains('(original)'));
       expect(readOnly.applyReplacement, isNull);
+      final originalAnchor = _nativeAnchor(tester, original, 8);
+      expect(readOnly.selectionAnchor!(), originalAnchor);
 
       final modified = surfaces.singleWhere((surface) => !surface.readOnly);
       modified.controller.select(0, 8);
@@ -73,8 +150,11 @@ void main() {
       await tester.pump();
       final editable = QuickAskContext.captureFocused()!;
       expect(editable.selectedText, 'modified');
+      expect(editable.selectionAnchor!(), _nativeAnchor(tester, modified, 8));
+      expect(readOnly.selectionAnchor!(), originalAnchor);
       expect(await editable.applyReplacement!('changed'), isTrue);
       expect(workspace.active!.text, 'changed text');
+      expect(editable.selectionAnchor!(), isNull);
       expect(files.text, 'modified text');
       expect(original.controller.document.text, 'original text');
       expect(modified.controller.undo(), isTrue);
