@@ -205,6 +205,26 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
     });
   }
 
+  void _insertNewline() {
+    final value = _question.value;
+    if (ChatKeys.isComposing || !value.composing.isCollapsed) return;
+    final editable = _focus.context
+        ?.findAncestorStateOfType<EditableTextState>();
+    if (editable == null) return;
+    final selection = value.selection;
+    final start = selection.isValid ? selection.start : value.text.length;
+    final end = selection.isValid ? selection.end : value.text.length;
+    // Treat this as keyboard editing, preserving the field's undo and input
+    // connection behavior instead of assigning the controller behind it.
+    editable.userUpdateTextEditingValue(
+      TextEditingValue(
+        text: value.text.replaceRange(start, end, '\n'),
+        selection: TextSelection.collapsed(offset: start + 1),
+      ),
+      SelectionChangedCause.keyboard,
+    );
+  }
+
   Future<void> _send() async {
     if (_busy ||
         _applying ||
@@ -541,7 +561,10 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
         const SingleActivator(LogicalKeyboardKey.contextMenu): () =>
             unawaited(_menu()),
         const SingleActivator(LogicalKeyboardKey.escape): () {
-          if (!ChatKeys.isComposing && !_applying && !_handingOff) {
+          if (!ChatKeys.isComposing &&
+              _question.value.composing.isCollapsed &&
+              !_applying &&
+              !_handingOff) {
             widget.onClose(true);
           }
         },
@@ -626,6 +649,10 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
                                   ? l10n.quickAskEditHint
                                   : l10n.quickAskQuestionHint,
                               shortcuts: {
+                                const SingleActivator(
+                                  LogicalKeyboardKey.enter,
+                                  shift: true,
+                                ): _insertNewline,
                                 const SingleActivator(
                                   LogicalKeyboardKey.enter,
                                   includeRepeats: false,

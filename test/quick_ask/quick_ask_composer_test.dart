@@ -70,6 +70,29 @@ Finder _input(String key) => find.descendant(
   matching: find.byType(EditableText),
 );
 
+Finder _menuEntry(String label) => find.byWidgetPredicate(
+  (widget) => widget is Semantics && widget.properties.label == label,
+);
+
+Future<void> _openSecondaryMenu(WidgetTester tester) async {
+  tester
+      .widget<EditableText>(_input('quick-ask-question'))
+      .focusNode
+      .requestFocus();
+  await tester.pump();
+  await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+  await tester.sendKeyEvent(LogicalKeyboardKey.f10);
+  await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _chooseSecondary(WidgetTester tester, String label) async {
+  await _openSecondaryMenu(tester);
+  await tester.ensureVisible(_menuEntry(label).last);
+  await tester.tap(_menuEntry(label).last);
+  await tester.pumpAndSettle();
+}
+
 void main() {
   testWidgets('anchor uses reverse selection extent and survives focus loss', (
     tester,
@@ -162,9 +185,9 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(asked, isNull);
-      await tester.tap(find.bySemanticsLabel('Edit selection'));
+      await _chooseSecondary(tester, 'Edit selection');
       await tester.enterText(_input('quick-ask-question'), 'Rewrite this');
-      await tester.tap(find.bySemanticsLabel('Send'));
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pumpAndSettle();
       expect(asked!['mode'], 'edit');
       expect(asked!['selection'], 'chosen');
@@ -172,13 +195,18 @@ void main() {
       expect(session.itemCount, 0);
 
       await tester.enterText(_input('quick-ask-replacement'), 'reviewed');
-      await tester.ensureVisible(find.bySemanticsLabel('Apply replacement'));
-      await tester.tap(find.bySemanticsLabel('Apply replacement'));
+      await _chooseSecondary(tester, 'Apply replacement');
       await tester.pumpAndSettle();
       expect(controller.text, 'before reviewed after');
       expect(session.draft.content, controller.text);
       expect(session.itemCount, 0);
-      expect(find.bySemanticsLabel('Applied'), findsOneWidget);
+      await _openSecondaryMenu(tester);
+      expect(
+        tester.widget<Semantics>(_menuEntry('Applied').last).properties.enabled,
+        isFalse,
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
       expect(await source.applyReplacement!('again'), isFalse);
 
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);

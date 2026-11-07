@@ -482,6 +482,17 @@ void main() {
         ),
       );
       await tester.pump();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      expect(
+        tester.widget<EditableText>(question()).controller.value,
+        const TextEditingValue(
+          text: '拼音',
+          selection: TextSelection.collapsed(offset: 2),
+          composing: TextRange(start: 0, end: 2),
+        ),
+      );
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
@@ -499,6 +510,23 @@ void main() {
       expect(request.input!['request'], '拼音');
     },
   );
+
+  testWidgets('Shift+Enter replaces only the selected question range', (
+    tester,
+  ) async {
+    await open(tester);
+    await tester.enterText(question(), 'first second');
+    final controller = tester.widget<EditableText>(question()).controller;
+    controller.selection = const TextSelection(baseOffset: 5, extentOffset: 12);
+    await tester.pump();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump();
+    expect(controller.text, 'first\n');
+    expect(controller.selection, const TextSelection.collapsed(offset: 6));
+    expect(request.calls, 0);
+  });
 
   testWidgets(
     'mode dropdown and secondary Send are usable with only the keyboard',
@@ -923,6 +951,8 @@ void main() {
           contextText: 'nearby',
           selectionAnchor: () => const Rect.fromLTWH(100, 100, 1, 18),
         ),
+        onAgentSubmit: (_) => true,
+        agentLabel: 'Codex · Example project',
       );
       Future<void> capture(String name) async {
         if (!const bool.fromEnvironment('QUICK_ASK_PREVIEWS')) return;
@@ -967,6 +997,10 @@ void main() {
       );
       await tester.pumpAndSettle();
       await capture('$theme-complete');
+      await mode(tester, 'Agent');
+      await capture('$theme-agent-composer');
+      expect(find.byType(QuickAskAction), findsOneWidget);
+      expect(request.calls, 1);
       expect(tester.takeException(), isNull);
     });
   }
@@ -1089,6 +1123,7 @@ void main() {
       expect(find.byType(QuickAskAction), findsOneWidget);
       expect(find.bySemanticsLabel('Chat'), findsOneWidget);
       await menu(tester);
+      expect(tester.takeException(), isNull);
       for (final label in [
         'Ask',
         'Edit selection',

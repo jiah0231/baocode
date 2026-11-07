@@ -883,12 +883,24 @@ class _MenuItem extends StatelessWidget {
           )
         : action.keybinding == null
         ? null
-        : Padding(
-            padding: const EdgeInsets.symmetric(horizontal: _em2),
-            child: Text(
-              action.keybinding!,
-              style: TextStyle(
-                color: color.withValues(alpha: enabled ? 0.7 : 0.4 * color.a),
+        : ConstrainedBox(
+            // Leave room for the action label even when its shortcut grows
+            // with text scaling or the window is narrower than the menu.
+            constraints: BoxConstraints(
+              maxWidth: math.max(
+                0,
+                (MediaQuery.sizeOf(context).width - 26) / 2,
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: _em2),
+              child: Text(
+                action.keybinding!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: color.withValues(alpha: enabled ? 0.7 : 0.4 * color.a),
+                ),
               ),
             ),
           );
@@ -903,7 +915,10 @@ class _MenuItem extends StatelessWidget {
           behavior: HitTestBehavior.opaque,
           onTap: enabled ? onTap : null,
           child: Container(
-            height: 24,
+            height: math.max(
+              24,
+              MediaQuery.textScalerOf(context).scale(13) * 1.3,
+            ),
             margin: const EdgeInsets.symmetric(horizontal: 4),
             decoration: BoxDecoration(
               color: selected ? IdeMenuColors.selectionBackground : null,
