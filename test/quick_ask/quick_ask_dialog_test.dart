@@ -14,6 +14,7 @@ import 'package:baocode/quick_ask/quick_ask_context.dart';
 import 'package:baocode/quick_ask/quick_ask_dialog.dart';
 import 'package:baocode/quick_ask/quick_ask_service.dart';
 import 'package:baocode/quick_ask/quick_ask_popup.dart';
+import 'package:baocode/quick_ask/quick_ask_review.dart';
 import 'package:baocode/theme/workbench_theme.dart';
 import 'package:baocode/theme/codicons.dart';
 import 'package:flutter/gestures.dart';
@@ -428,7 +429,7 @@ void main() {
     await choose(tester, 'Edit selection');
     await send(tester);
     expect(request.input!['mode'], 'edit');
-    expect(find.byKey(const ValueKey('quick-ask-replacement')), findsOneWidget);
+    expect(find.byType(QuickAskReview), findsOneWidget);
     await mode(tester, 'Agent');
     expect(find.text('replacement'), findsNothing);
     expect(find.byKey(const ValueKey('quick-ask-replacement')), findsNothing);
@@ -684,7 +685,8 @@ void main() {
     await send(tester);
     expect(request.input!['mode'], 'edit');
     expect(applied, isEmpty);
-    expect(find.text('original'), findsOneWidget);
+    expect(find.text('− original'), findsOneWidget);
+    await choose(tester, 'Proposed replacement (editable)');
     final replacement = find.descendant(
       of: find.byKey(const ValueKey('quick-ask-replacement')),
       matching: find.byType(EditableText),
@@ -698,6 +700,156 @@ void main() {
     await dismissMenu(tester);
     await tester.pumpAndSettle();
     expect(applied, hasLength(1));
+  });
+
+  testWidgets('review choices are reversible and apply only kept hunks once', (
+    tester,
+  ) async {
+    request.pending = Completer<String>()..complete('FIRST\nsame\nLAST\n');
+    final applied = <String>[];
+    final applying = Completer<bool>();
+    await open(
+      tester,
+      source: QuickAskContext(
+        sourceLabel: 'file.dart',
+        selectedText: 'first\nsame\nlast\n',
+        applyReplacement: (text) {
+          applied.add(text);
+          return applying.future;
+        },
+      ),
+    );
+    await choose(tester, 'Edit selection');
+    await send(tester);
+    expect(find.byType(QuickAskReview), findsOneWidget);
+    expect(applied, isEmpty);
+    Future<void> press(String key) async {
+      final found = find.byKey(ValueKey(key));
+      await tester.ensureVisible(found);
+      await tester.tap(found);
+      await tester.pumpAndSettle();
+    }
+
+    await press('quick-ask-reject-0');
+    await press('quick-ask-reject-1');
+    expect(
+      tester
+          .widget<QuickAskAction>(find.byKey(const ValueKey('quick-ask-apply')))
+          .onPressed,
+      isNull,
+    );
+    await press('quick-ask-keep-1');
+    expect(applied, isEmpty);
+    await press('quick-ask-apply');
+    expect(applied, ['first\nsame\nLAST\n']);
+    await press('quick-ask-apply');
+    await press('quick-ask-keep-0');
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byType(QuickAskDialog), findsOneWidget);
+    expect(applied, hasLength(1));
+    applying.complete(true);
+    await tester.pumpAndSettle();
+    expect(find.byType(QuickAskReview), findsNothing);
+    expect(find.text('first\nsame\nLAST\n'), findsOneWidget);
+  });
+
+  testWidgets('manual proposal editing preserves rejected hunks', (
+    tester,
+  ) async {
+    request.pending = Completer<String>()..complete('FIRST\nsame\nLAST\n');
+    final applied = <String>[];
+    await open(
+      tester,
+      source: QuickAskContext(
+        sourceLabel: 'file.dart',
+        selectedText: 'first\nsame\nlast\n',
+        applyReplacement: (text) {
+          applied.add(text);
+          return true;
+        },
+      ),
+    );
+    await choose(tester, 'Edit selection');
+    await send(tester);
+    final reject = find.byKey(const ValueKey('quick-ask-reject-0'));
+    await tester.ensureVisible(reject);
+    await tester.tap(reject);
+    await tester.pumpAndSettle();
+    await choose(tester, 'Proposed replacement (editable)');
+    final input = find.descendant(
+      of: find.byKey(const ValueKey('quick-ask-replacement')),
+      matching: find.byType(EditableText),
+    );
+    expect(
+      tester.widget<EditableText>(input).controller.text,
+      'first\nsame\nLAST\n',
+    );
+    await tester.enterText(input, 'first\nsame\nLAST reviewed\n');
+    await choose(tester, 'Apply replacement');
+    expect(applied, ['first\nsame\nLAST reviewed\n']);
+  });
+
+  testWidgets(
+    'rejecting with proposal editor open cannot revive discarded text',
+    (tester) async {
+      request.pending = Completer<String>()..complete('FIRST\nsame\nLAST\n');
+      final applied = <String>[];
+      await open(
+        tester,
+        source: QuickAskContext(
+          sourceLabel: 'file.dart',
+          selectedText: 'first\nsame\nlast\n',
+          applyReplacement: (text) {
+            applied.add(text);
+            return true;
+          },
+        ),
+      );
+      await choose(tester, 'Edit selection');
+      await send(tester);
+      await choose(tester, 'Proposed replacement (editable)');
+      final reject = find.byKey(const ValueKey('quick-ask-reject-0'));
+      await tester.ensureVisible(reject);
+      await tester.tap(reject);
+      await tester.pumpAndSettle();
+      final input = find.descendant(
+        of: find.byKey(const ValueKey('quick-ask-replacement')),
+        matching: find.byType(EditableText),
+      );
+      expect(
+        tester.widget<EditableText>(input).controller.text,
+        'first\nsame\nLAST\n',
+      );
+      await tester.enterText(
+        input,
+        '${tester.widget<EditableText>(input).controller.text}!',
+      );
+      await choose(tester, 'Apply replacement');
+      expect(applied, ['first\nsame\nLAST\n!']);
+    },
+  );
+
+  testWidgets('identical output has no enabled apply action', (tester) async {
+    request.pending = Completer<String>()..complete('original');
+    var applied = 0;
+    await open(
+      tester,
+      source: QuickAskContext(
+        sourceLabel: 'file.dart',
+        selectedText: 'original',
+        applyReplacement: (_) {
+          applied++;
+          return true;
+        },
+      ),
+    );
+    await choose(tester, 'Edit selection');
+    await send(tester);
+    expect(find.text('No differences'), findsOneWidget);
+    await menu(tester);
+    expect(menuEnabled(tester, 'Apply replacement'), isFalse);
+    expect(applied, 0);
   });
 
   testWidgets(
@@ -719,10 +871,7 @@ void main() {
         find.textContaining('The source changed or closed.'),
         findsOneWidget,
       );
-      expect(
-        find.byKey(const ValueKey('quick-ask-replacement')),
-        findsOneWidget,
-      );
+      expect(find.byType(QuickAskReview), findsOneWidget);
       expect(find.bySemanticsLabel('Applied'), findsNothing);
     },
   );
@@ -739,10 +888,7 @@ void main() {
       );
       await choose(tester, 'Edit selection');
       await send(tester);
-      expect(
-        find.byKey(const ValueKey('quick-ask-replacement')),
-        findsOneWidget,
-      );
+      expect(find.byType(QuickAskReview), findsOneWidget);
       expect(find.bySemanticsLabel('Apply replacement'), findsNothing);
       expect(find.textContaining('This source is read-only'), findsNothing);
       await menu(tester);
@@ -947,8 +1093,9 @@ void main() {
         tester,
         source: QuickAskContext(
           sourceLabel: 'editor',
-          selectedText: 'selected',
+          selectedText: 'final old = 1;\nprint(old);\nreturn false;',
           contextText: 'nearby',
+          applyReplacement: (_) => true,
           selectionAnchor: () => const Rect.fromLTWH(100, 100, 1, 18),
         ),
         onAgentSubmit: (_) => true,
@@ -1001,6 +1148,13 @@ void main() {
       await capture('$theme-agent-composer');
       expect(find.byType(QuickAskAction), findsOneWidget);
       expect(request.calls, 1);
+      await mode(tester, 'Chat');
+      await choose(tester, 'Edit selection');
+      request.pending = Completer<String>()
+        ..complete('final value = 2;\nprint(old);\nreturn true;');
+      await send(tester);
+      await capture('$theme-edit-review');
+      expect(find.byType(QuickAskReview), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   }

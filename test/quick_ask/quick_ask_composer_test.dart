@@ -194,6 +194,7 @@ void main() {
       expect(controller.text, original);
       expect(session.itemCount, 0);
 
+      await _chooseSecondary(tester, 'Proposed replacement (editable)');
       await tester.enterText(_input('quick-ask-replacement'), 'reviewed');
       await _chooseSecondary(tester, 'Apply replacement');
       await tester.pumpAndSettle();

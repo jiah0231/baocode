@@ -15,7 +15,9 @@ import '../models/model_providers.dart';
 import '../theme/codicons.dart';
 import '../theme/workbench_theme.dart' show WorkbenchThemeService, themeColors;
 import 'quick_ask_context.dart';
+import 'quick_ask_diff.dart';
 import 'quick_ask_popup.dart';
+import 'quick_ask_review.dart';
 import 'quick_ask_service.dart';
 
 /// A non-modal popup. Capture the source before focus moves; only an explicit
@@ -127,6 +129,8 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
   bool _showContext = false;
   bool _applying = false;
   bool _applied = false;
+  QuickAskDiff? _diff;
+  bool _editProposal = false;
   bool _complete = false;
   bool _copied = false;
   bool _pickingMenu = false;
@@ -166,6 +170,30 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
       box.globalToLocal(global.topLeft),
       box.globalToLocal(global.bottomRight),
     );
+  }
+
+  String get _proposed => _diff?.replacement ?? _replacement.text;
+
+  void _reviewReplacement() {
+    _diff = QuickAskDiff(widget.source!.selectedText, _replacement.text);
+    _copied = false;
+  }
+
+  void _changeReview() {
+    setState(() {
+      _copied = false;
+      final text = _proposed;
+      final selection = _replacement.selection;
+      _replacement.value = TextEditingValue(
+        text: text,
+        selection: selection.isValid
+            ? TextSelection(
+                baseOffset: selection.baseOffset.clamp(0, text.length),
+                extentOffset: selection.extentOffset.clamp(0, text.length),
+              )
+            : TextSelection.collapsed(offset: text.length),
+      );
+    });
   }
 
   bool get _busy => _cancel != null || _handingOff;
@@ -284,6 +312,8 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
       _applied = false;
       _copied = false;
       _replacement.clear();
+      _diff = null;
+      _editProposal = false;
     });
     try {
       final answer = await _service.ask(
@@ -312,6 +342,7 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
         _answer = answer;
         _complete = true;
         _replacement.text = answer;
+        if (_mode == QuickAskMode.edit) _reviewReplacement();
       });
     } on ClaudeHaikuCancelled {
       // Cancellation deliberately leaves no error or late result.
@@ -340,13 +371,14 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
         _applied ||
         !_complete ||
         _answer == null ||
-        _mode != QuickAskMode.edit) {
+        _mode != QuickAskMode.edit ||
+        _diff?.hasChanges != true) {
       return;
     }
     setState(() => _applying = true);
     var applied = false;
     try {
-      applied = await apply(_replacement.text);
+      applied = await apply(_proposed);
     } on Object {
       // Keep the proposed text available to copy when its source went away.
     }
@@ -363,7 +395,7 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
       await Clipboard.setData(
         ClipboardData(
           text: _mode == QuickAskMode.edit && _complete
-              ? _replacement.text
+              ? _proposed
               : _answer ?? '',
         ),
       );
@@ -382,6 +414,8 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
       _error = null;
       _applied = false;
       _copied = false;
+      _diff = null;
+      _editProposal = false;
     });
     _focus.requestFocus();
   }
@@ -396,6 +430,8 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
       _complete = false;
       _applied = false;
       _copied = false;
+      _diff = null;
+      _editProposal = false;
     });
     _focus.requestFocus();
   }
@@ -502,11 +538,28 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
                     _copied ? l10n.quickAskCopied : l10n.quickAskCopy,
                     onSelected: () => unawaited(_copy()),
                   ),
+                  if (_mode == QuickAskMode.edit && _complete)
+                    IdeMenuAction(
+                      l10n.quickAskProposed,
+                      checked: _editProposal,
+                      enabled: !_busy && !_applying && !_applied,
+                      onSelected: () => setState(() {
+                        _editProposal = !_editProposal;
+                        if (_editProposal) {
+                          _replacement.text = _proposed;
+                        }
+                      }),
+                    ),
                   if (_mode == QuickAskMode.edit &&
                       widget.source?.canApply == true)
                     IdeMenuAction(
                       _applied ? l10n.quickAskApplied : l10n.quickAskApply,
-                      enabled: _complete && !_busy && !_applied && !_applying,
+                      enabled:
+                          _complete &&
+                          !_busy &&
+                          !_applied &&
+                          !_applying &&
+                          _diff?.hasChanges == true,
                       onSelected: () => unawaited(_apply()),
                     ),
                 ],
@@ -760,33 +813,57 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
                                 ),
                               ),
                               if (edit) ...[
-                                preview(
-                                  l10n.quickAskOriginal,
-                                  source!.selectedText,
-                                ),
-                                const SizedBox(height: 6),
-                                if (!_complete)
-                                  SelectableText(answer, style: textStyle)
-                                else if (_applied || _applying)
-                                  SelectableText(
-                                    _replacement.text,
-                                    style: textStyle,
-                                  )
-                                else
-                                  IdeInputBox(
-                                    key: const ValueKey(
-                                      'quick-ask-replacement',
-                                    ),
-                                    controller: _replacement,
-                                    minLines: 1,
-                                    maxLines: 8,
-                                    semanticsLabel: l10n.quickAskProposed,
-                                    onChanged: (_) {
-                                      if (_copied) {
-                                        setState(() => _copied = false);
-                                      }
-                                    },
+                                if (!_complete) ...[
+                                  preview(
+                                    l10n.quickAskOriginal,
+                                    source!.selectedText,
                                   ),
+                                  const SizedBox(height: 6),
+                                  SelectableText(answer, style: textStyle),
+                                ] else if (_applied)
+                                  SelectableText(_proposed, style: textStyle)
+                                else ...[
+                                  if (_diff case final diff?)
+                                    QuickAskReview(
+                                      diff: diff,
+                                      enabled: !_applying && !_busy,
+                                      onChanged: _changeReview,
+                                    ),
+                                  if (_editProposal && !_applying) ...[
+                                    const SizedBox(height: 8),
+                                    IdeInputBox(
+                                      key: const ValueKey(
+                                        'quick-ask-replacement',
+                                      ),
+                                      controller: _replacement,
+                                      minLines: 1,
+                                      maxLines: 8,
+                                      semanticsLabel: l10n.quickAskProposed,
+                                      onChanged: (_) =>
+                                          setState(_reviewReplacement),
+                                    ),
+                                  ],
+                                  if (source!.canApply) ...[
+                                    const SizedBox(height: 8),
+                                    Align(
+                                      alignment: Alignment.centerRight,
+                                      child: QuickAskAction(
+                                        key: const ValueKey('quick-ask-apply'),
+                                        label: l10n.quickAskApply,
+                                        help: l10n.quickAskApplyHint,
+                                        icon: Codicons.check,
+                                        showLabel: true,
+                                        primary: true,
+                                        onPressed:
+                                            _applying ||
+                                                _busy ||
+                                                _diff?.hasChanges != true
+                                            ? null
+                                            : () => unawaited(_apply()),
+                                      ),
+                                    ),
+                                  ],
+                                ],
                               ] else
                                 Semantics(
                                   label: l10n.quickAskAnswer,

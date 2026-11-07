@@ -6,7 +6,7 @@ import 'package:bao_editor/monaco/flutter/editor_surface_controller.dart';
 import 'package:flutter/widgets.dart';
 
 /// A snapshot taken before the quick-ask window takes keyboard focus.
-/// Only the selected text and its bounded neighborhood leave the editor.
+/// Only the selection and bounded source context leave the editor.
 class QuickAskContext {
   const QuickAskContext({
     this.selectedText = '',
@@ -52,11 +52,16 @@ class QuickAskContext {
 
   /// Captures a selection, or the cursor's neighborhood when it is collapsed.
   /// [applyReplacement] must independently revalidate its source on use.
+  /// [codeContext] retains whole outer lines and bounded import hints.
+  /// A supplied [enclosingRange] must describe this same text revision.
+  /// It only changes reference context, never the permitted edit range.
   factory QuickAskContext.fromText({
     required String text,
     required TextSelection selection,
     required String sourceLabel,
     String? sessionModel,
+    bool codeContext = false,
+    TextRange? enclosingRange,
     FutureOr<bool> Function(String replacement)? applyReplacement,
     Rect? Function()? selectionAnchor,
     Listenable? selectionAnchorListenable,
@@ -70,16 +75,57 @@ class QuickAskContext {
       maxSelectionLength,
     );
     final marker = start == end ? '' : '\n[selection]\n';
-    final available = maxContextLength - marker.length;
+    var imports =
+        codeContext &&
+            text.length - (end - start) + marker.length > maxContextLength
+        ? _imports(text, start)
+        : '';
+    final range = enclosingRange;
+    final symbolFits =
+        codeContext &&
+        range != null &&
+        range.isValid &&
+        range.start <= start &&
+        range.end >= end &&
+        range.end <= text.length &&
+        range.end - range.start - (end - start) <=
+            maxContextLength - marker.length;
+    if (symbolFits &&
+        range.end - range.start - (end - start) + imports.length >
+            maxContextLength - marker.length) {
+      imports = '';
+    }
+    final available = maxContextLength - marker.length - imports.length;
     var before = math.min(start, available ~/ 2);
-    final after = math.min(text.length - end, available - before);
+    var after = math.min(text.length - end, available - before);
     before = math.min(start, available - after);
+    if (codeContext && text.length - (end - start) > available) {
+      if (symbolFits) {
+        before = start - range.start;
+        after = range.end - end;
+      } else {
+        // Trim partial outer lines without guessing at language syntax.
+        final left = text.substring(start - before, start).indexOf('\n');
+        if (start > before && text[start - before - 1] != '\n' && left >= 0) {
+          before -= left + 1;
+        }
+        final right = text.substring(end, end + after).lastIndexOf('\n');
+        if (end + after < text.length &&
+            after > 0 &&
+            text[end + after - 1] != '\n' &&
+            right >= 0) {
+          after = right + 1;
+        }
+      }
+    }
+    var context =
+        '${suffix(text.substring(math.max(0, start - before - 1), start), before)}$marker${prefix(text.substring(end, math.min(text.length, end + after + 1)), after)}';
+    context += imports;
     return QuickAskContext(
       selectionAnchor: selectionAnchor,
       selectionAnchorListenable: selectionAnchorListenable,
       selectedText: selected,
-      contextText:
-          '${suffix(text.substring(math.max(0, start - before - 1), start), before)}$marker${prefix(text.substring(end, math.min(text.length, end + after + 1)), after)}',
+      contextText: context,
       sourceLabel: sourceLabel,
       sessionModel: sessionModel,
       truncated: truncated,
@@ -91,12 +137,14 @@ class QuickAskContext {
 
   /// A single, undoable native editor replacement. Changes to the buffer,
   /// including an edit followed by Undo, invalidate the captured revision.
+  /// A supplied [enclosingRange] must be validated against that revision.
   factory QuickAskContext.fromEditor({
     required EditorSurfaceController controller,
     required String sourceLabel,
     String? sessionModel,
     required bool Function() isCurrent,
     bool readOnly = false,
+    TextRange? enclosingRange,
     Rect? Function()? selectionAnchor,
     Listenable? selectionAnchorListenable,
   }) {
@@ -108,6 +156,8 @@ class QuickAskContext {
     return QuickAskContext.fromText(
       text: text,
       selection: selection,
+      codeContext: true,
+      enclosingRange: enclosingRange,
       selectionAnchor: selectionAnchor,
       selectionAnchorListenable: selectionAnchorListenable,
       sourceLabel: sourceLabel,
@@ -126,6 +176,33 @@ class QuickAskContext {
               ]);
             },
     );
+  }
+
+  /// A bounded set of complete header import lines, not resolved dependencies.
+  /// Multiline imports and cross-file resolution are left to Agent. No source
+  /// files are opened here; these hints cannot expand the replacement range.
+  static String _imports(String text, int before) {
+    final header = text.substring(0, math.min(before, 8000));
+    final pattern = RegExp(
+      r'^(?:import[ \t]+[^\r\n]+;|(?:from[ \t]+[\w.]+[ \t]+)?import[ \t]+[\w., *]+|#include[ \t]+[<"][^\r\n>"]+[>"])[ \t]*\r?$',
+      multiLine: true,
+    );
+    const label = '\n[file imports]\n';
+    var budget = 800 - label.length;
+    final lines = <String>{};
+    for (final match in pattern.allMatches(header)) {
+      // Never treat a clipped header line as a complete directive.
+      if (match.end == header.length &&
+          header.length < text.length &&
+          text[header.length] != '\n') {
+        continue;
+      }
+      final line = match.group(0)!;
+      if (line.length + 1 > budget || lines.contains(line)) continue;
+      lines.add(line);
+      budget -= line.length + 1;
+    }
+    return lines.isEmpty ? '' : '$label${lines.join('\n')}';
   }
 
   static QuickAskContext? captureFocused() =>

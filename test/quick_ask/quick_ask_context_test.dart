@@ -36,6 +36,113 @@ void main() {
     expect(result.canApply, isTrue);
   });
 
+  test(
+    'native context keeps a complete small file without widening apply',
+    () async {
+      const text = "import 'a.dart';\nvoid main() { OLD; }\n";
+      final start = text.indexOf('OLD');
+      final controller = editor(text, start, start + 3);
+      final result = QuickAskContext.fromEditor(
+        controller: controller,
+        sourceLabel: 'a.dart',
+        isCurrent: () => true,
+      );
+      expect(
+        result.contextText,
+        "import 'a.dart';\nvoid main() { \n[selection]\n; }\n",
+      );
+      expect(await result.applyReplacement!('NEW'), isTrue);
+      expect(controller.document.text, text.replaceFirst('OLD', 'NEW'));
+    },
+  );
+
+  test('native context keeps whole outer lines and distant import hints', () {
+    final text =
+        "import 'dependency.dart';\n${'// padding here\n' * 500}"
+        "void main() { OLD; }\n${'// trailing line\n' * 500}";
+    final start = text.indexOf('OLD');
+    final result = QuickAskContext.fromEditor(
+      controller: editor(text, start, start + 3),
+      sourceLabel: 'a.dart',
+      isCurrent: () => true,
+    );
+    expect(result.contextText, startsWith('// padding here\n'));
+    expect(result.contextText, contains('\n[file imports]\n'));
+    expect(result.contextText, contains("import 'dependency.dart';"));
+    expect(result.contextText.length, lessThanOrEqualTo(4000));
+    expect(result.selectedText, 'OLD');
+  });
+
+  test(
+    'validated enclosing range is context only and invalid ranges fall back',
+    () {
+      final padding = '// padding\n' * 600;
+      const function = 'void f() {\n  OLD;\n}\n';
+      final text = '$padding$function$padding';
+      final start = text.indexOf('OLD');
+      QuickAskContext withRange(TextRange range) => QuickAskContext.fromEditor(
+        controller: editor(text, start, start + 3),
+        sourceLabel: 'a.dart',
+        isCurrent: () => true,
+        enclosingRange: range,
+      );
+      final result = withRange(
+        TextRange(start: padding.length, end: padding.length + function.length),
+      );
+      expect(result.contextText, 'void f() {\n  \n[selection]\n;\n}\n');
+      expect(result.selectedText, 'OLD');
+      expect(result.canApply, isTrue);
+      for (final range in [
+        TextRange.empty,
+        const TextRange(start: 0, end: 3),
+        TextRange(start: 0, end: text.length + 1),
+        TextRange(start: 0, end: text.length),
+      ]) {
+        final fallback = withRange(range);
+        expect(fallback.contextText.length, lessThanOrEqualTo(4000));
+        expect(fallback.selectedText, 'OLD');
+      }
+    },
+  );
+
+  test('import extraction and minified Unicode context stay bounded', () {
+    final text = "${"import 'a.dart';\n" * 700}${'😀' * 4000}OLD${'😀' * 4000}";
+    final start = text.indexOf('OLD');
+    final result = QuickAskContext.fromEditor(
+      controller: editor(text, start, start + 3),
+      sourceLabel: 'a.dart',
+      isCurrent: () => true,
+    );
+    expect(result.contextText.length, lessThanOrEqualTo(4000));
+    expect(
+      result.contextText.runes.any((r) => r >= 0xd800 && r <= 0xdfff),
+      isFalse,
+    );
+    expect(result.selectedText, 'OLD');
+    expect(result.canApply, isTrue);
+  });
+
+  test('complete enclosing context takes priority over extra imports', () {
+    final header = "import 'dependency.dart';\n${'// padding\n' * 500}";
+    final function = 'void f() {${' ' * 3960}OLD;}';
+    final text = '$header$function${'// tail\n' * 500}';
+    final start = text.indexOf('OLD');
+    final result = QuickAskContext.fromEditor(
+      controller: editor(text, start, start + 3),
+      sourceLabel: 'a.dart',
+      isCurrent: () => true,
+      enclosingRange: TextRange(
+        start: header.length,
+        end: header.length + function.length,
+      ),
+    );
+    expect(result.contextText, startsWith('void f() {'));
+    expect(result.contextText, endsWith(';}'));
+    expect(result.contextText, isNot(contains('[file imports]')));
+    expect(result.contextText.length, lessThanOrEqualTo(4000));
+    expect(result.selectedText, 'OLD');
+  });
+
   test('oversized selection is clipped and cannot be applied', () {
     final result = capture('a' * 9000, 0, 9000);
     expect(result.selectedText.length, 8000);
