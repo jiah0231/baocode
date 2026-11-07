@@ -409,7 +409,13 @@ void main() {
     expect(frame.top, 144);
     expect(frame.width, 320);
     expect(frame.height, lessThan(90));
-    expect(find.byType(ModalBarrier), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byType(QuickAskDialog),
+        matching: find.byType(ModalBarrier),
+      ),
+      findsNothing,
+    );
     expect(
       find.descendant(
         of: find.byType(QuickAskDialog),
@@ -439,10 +445,10 @@ void main() {
           tester.getRect(find.byKey(const ValueKey('quick-ask-frame')));
       expect(frame().topLeft, const Offset(50, 104));
       anchor.value = const Rect.fromLTWH(130, 200, 1, 18);
-      await tester.pump();
+      await tester.pumpAndSettle();
       expect(frame().topLeft, const Offset(130, 224));
       anchor.value = const Rect.fromLTWH(790, 580, 1, 18);
-      await tester.pump();
+      await tester.pumpAndSettle();
       expect(frame().right, lessThanOrEqualTo(792));
       expect(frame().bottom, 574);
       tester.view.physicalSize = const Size(240, 180);

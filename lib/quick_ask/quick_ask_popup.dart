@@ -1,22 +1,19 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../ide/ide_hover.dart';
 import '../theme/workbench_theme.dart' show themeColors;
 
-/// Resolve at layout time, after scrolling updates the source transform.
+/// Layout reads only an anchor snapshot, never another render tree's size.
+/// The popup refreshes this after the source has finished layout.
 class QuickAskLayout extends SingleChildLayoutDelegate {
-  QuickAskLayout({
-    required this.anchor,
-    required this.overlay,
-    required this.insets,
-    super.relayout,
-  });
+  QuickAskLayout({required this.anchor, required this.insets})
+    : super(relayout: anchor);
 
-  final Rect? Function() anchor;
-  final BuildContext overlay;
+  final ValueListenable<Rect?> anchor;
   final EdgeInsets insets;
 
   @override
@@ -37,14 +34,8 @@ class QuickAskLayout extends SingleChildLayoutDelegate {
 
   @override
   Offset getPositionForChild(Size size, Size childSize) {
-    final box = overlay.findRenderObject();
-    final global = anchor();
-    final rect = global != null && box is RenderBox && box.attached
-        ? Rect.fromPoints(
-            box.globalToLocal(global.topLeft),
-            box.globalToLocal(global.bottomRight),
-          )
-        : Rect.fromLTWH(size.width / 2, size.height / 2, 0, 0);
+    final rect =
+        anchor.value ?? Rect.fromLTWH(size.width / 2, size.height / 2, 0, 0);
     final left = insets.left + 8;
     final top = insets.top + 8;
     final right = math.max(

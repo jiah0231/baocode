@@ -52,6 +52,8 @@ Future<void> showQuickAsk(
       source: source,
       service: service,
       fallbackAnchor: fallback,
+      initialAnchor: source?.selectionAnchor?.call(),
+      overlayContext: overlay.context,
       ownerContext: context,
       ownerRoute: route,
       onClose: close,
@@ -76,6 +78,8 @@ class QuickAskDialog extends StatefulWidget {
     this.source,
     this.service,
     this.fallbackAnchor,
+    this.initialAnchor,
+    required this.overlayContext,
     this.ownerContext,
     this.ownerRoute,
     required this.onClose,
@@ -84,6 +88,8 @@ class QuickAskDialog extends StatefulWidget {
   final QuickAskContext? source;
   final QuickAskService? service;
   final Rect? fallbackAnchor;
+  final Rect? initialAnchor;
+  final BuildContext overlayContext;
   final BuildContext? ownerContext;
   final ModalRoute<dynamic>? ownerRoute;
   final void Function(bool restoreFocus) onClose;
@@ -110,11 +116,14 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
   bool _copied = false;
   bool _pickingModel = false;
   Rect? _lastAnchor;
-  final _geometryTick = ValueNotifier(0);
+  final _anchorPosition = ValueNotifier<Rect?>(null);
 
   @override
   void initState() {
     super.initState();
+    _lastAnchor = widget.initialAnchor;
+    _anchorPosition.value = _localAnchor(_lastAnchor ?? widget.fallbackAnchor);
+    widget.source?.selectionAnchorListenable?.addListener(_scheduleAnchor);
     WidgetsBinding.instance.addPostFrameCallback(_trackAnchor);
   }
 
@@ -125,17 +134,22 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
       widget.onClose(false);
       return;
     }
-    final previous = _lastAnchor;
-    _anchor();
-    if (previous != _lastAnchor) _geometryTick.value++;
+    final current = widget.source?.selectionAnchor?.call();
+    if (current != null && current.isFinite) _lastAnchor = current;
+    _anchorPosition.value = _localAnchor(_lastAnchor ?? widget.fallbackAnchor);
     // Observe frames already caused by source layout, without an idle ticker.
     WidgetsBinding.instance.addPostFrameCallback(_trackAnchor);
   }
 
-  Rect? _anchor() {
-    final current = widget.source?.selectionAnchor?.call();
-    if (current != null && current.isFinite) _lastAnchor = current;
-    return _lastAnchor ?? widget.fallbackAnchor;
+  void _scheduleAnchor() => WidgetsBinding.instance.ensureVisualUpdate();
+
+  Rect? _localAnchor(Rect? global) {
+    final box = widget.overlayContext.findRenderObject();
+    if (global == null || box is! RenderBox || !box.attached) return null;
+    return Rect.fromPoints(
+      box.globalToLocal(global.topLeft),
+      box.globalToLocal(global.bottomRight),
+    );
   }
 
   bool get _busy => _cancel != null;
@@ -149,7 +163,8 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
     _question.dispose();
     _replacement.dispose();
     _focus.dispose();
-    _geometryTick.dispose();
+    widget.source?.selectionAnchorListenable?.removeListener(_scheduleAnchor);
+    _anchorPosition.dispose();
     super.dispose();
   }
 
@@ -321,15 +336,10 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
         autofocus: true,
         child: CustomSingleChildLayout(
           delegate: QuickAskLayout(
-            anchor: _anchor,
-            overlay: Overlay.of(context, rootOverlay: true).context,
+            anchor: _anchorPosition,
             insets:
                 MediaQuery.paddingOf(context) +
                 MediaQuery.viewInsetsOf(context),
-            relayout: Listenable.merge([
-              _geometryTick,
-              source?.selectionAnchorListenable,
-            ]),
           ),
           child: TapRegion(
             onTapOutside: (_) {

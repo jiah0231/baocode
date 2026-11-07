@@ -93,14 +93,19 @@ void main() {
     expect(upstreamSource.selectionAnchor!(), upstream);
     expect(upstreamSource.selectionAnchor!(), isNot(downstream));
 
+    // Flutter considers non-collapsed TextSelections equal regardless of
+    // affinity, so change the base too to make this an actual controller
+    // update. The active extent remains the exact same wrap boundary.
     controller.setSelections([
       TextSelection(
-        baseOffset: offset + 2,
+        baseOffset: offset + 3,
         extentOffset: offset,
         affinity: TextAffinity.downstream,
       ),
     ]);
     await tester.pumpAndSettle();
+    expect(controller.value.selection.affinity, TextAffinity.downstream);
+    expect(controller.value.selection.extentOffset, offset);
     final downstreamSource = QuickAskContext.captureFocused()!;
     expect(
       downstreamSource.selectionAnchor!(),
