@@ -114,7 +114,27 @@ final class JsonStateStore {
 
 /// Writes [contents] to [path] through a temporary file beside it renamed
 /// over it, so a reader never sees half of it.
-Future<void> writeAtomically(String path, String contents) async {
+Future<void> writeAtomically(String path, String contents) {
+  final absolute = p.normalize(p.absolute(path));
+  final key = Platform.isWindows ? absolute.toLowerCase() : absolute;
+  final result = (_pendingWrites[key] ?? Future<void>.value()).then(
+    (_) => _writeAtomically(absolute, contents),
+  );
+  // Only the queue tail absorbs failure, so the next write can proceed.
+  // Return the original future: its caller still receives the error.
+  final tail = result.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+  _pendingWrites[key] = tail;
+  unawaited(
+    tail.then((_) {
+      if (identical(_pendingWrites[key], tail)) _pendingWrites.remove(key);
+    }),
+  );
+  return result;
+}
+
+final Map<String, Future<void>> _pendingWrites = {};
+
+Future<void> _writeAtomically(String path, String contents) async {
   final dir = Directory(p.dirname(path));
   await dir.create(recursive: true);
   // Independent stores can flush this path in the same clock tick. Reserve
