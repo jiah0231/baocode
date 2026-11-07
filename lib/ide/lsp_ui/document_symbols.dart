@@ -26,6 +26,7 @@ class IdeDocumentSymbols extends ChangeNotifier {
 
   String? _path;
   int _version = -1;
+  int _symbolsVersion = -1;
   IdeDocument? _document;
   List<LspDocumentSymbol> _symbols = const [];
   bool _loaded = false;
@@ -36,6 +37,17 @@ class IdeDocumentSymbols extends ChangeNotifier {
   /// The document [symbols] belong to.
   String? get path => _path;
   List<LspDocumentSymbol> get symbols => _symbols;
+
+  /// Unlike the outline's last known answer, this is safe for source ranges.
+  /// Editing then undoing still changes the version, so cannot revive a stale
+  /// answer. Identity also guards reopening another document at the same path.
+  List<LspDocumentSymbol> currentSymbols(IdeDocument document) =>
+      !_disposed &&
+          _loaded &&
+          identical(document, _document) &&
+          document.model.version == _symbolsVersion
+      ? _symbols
+      : const [];
 
   /// Whether an answer arrived for [path] (an empty one included).
   bool get loaded => _loaded;
@@ -103,6 +115,7 @@ class IdeDocumentSymbols extends ChangeNotifier {
       return;
     }
     _symbols = symbols;
+    _symbolsVersion = version;
     _loaded = true;
     notifyListeners();
   }

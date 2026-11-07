@@ -11,6 +11,7 @@ import 'package:flutter/widgets.dart';
 
 import '../../../debug/ui/debug_toolbar.dart';
 import '../../../keybindings/keybinding_service.dart';
+import '../../../quick_ask/quick_ask_symbols.dart';
 import '../../../theme/workbench_theme.dart';
 import '../../../workspace/islands.dart';
 import '../../file_service.dart';
@@ -217,6 +218,16 @@ class EditorPart extends StatelessWidget {
                                   key: editors.editorKey,
                                   workspace: workspace,
                                   active: active,
+                                  quickAskFunctionRange:
+                                      (document, selection) =>
+                                          quickAskEnclosingFunction(
+                                            document.model.snapshot,
+                                            selection,
+                                            language.symbols?.currentSymbols(
+                                                  document,
+                                                ) ??
+                                                const [],
+                                          ),
                                   onError: host.report,
                                   onLspStatus: (_) {},
                                   onPositionChanged: editors.positionChanged,

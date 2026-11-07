@@ -7,15 +7,18 @@ import 'package:flutter/semantics.dart' show CustomSemanticsAction;
 import '../chat/chat_keys.dart';
 import '../chat/widgets/markdown_view.dart';
 import '../ide/ide_input.dart';
+import '../ide/ide_hover.dart';
 import '../ide/ide_menu.dart';
 import '../kernel/claude_code/claude_haiku.dart';
 import '../l10n/l10n.dart';
 import '../models/auxiliary_model_menu.dart';
 import '../models/model_providers.dart';
 import '../theme/codicons.dart';
+import '../workspace/window_controls.dart';
 import '../theme/workbench_theme.dart' show WorkbenchThemeService, themeColors;
 import 'quick_ask_context.dart';
 import 'quick_ask_diff.dart';
+import 'quick_ask_files.dart';
 import 'quick_ask_popup.dart';
 import 'quick_ask_review.dart';
 import 'quick_ask_service.dart';
@@ -28,6 +31,8 @@ Future<void> showQuickAsk(
   QuickAskService? service,
   FutureOr<bool> Function(String prompt)? onAgentSubmit,
   String? agentLabel,
+  Future<String?> Function()? pickFile,
+  Future<QuickAskFileContext> Function(String path)? readFile,
 }) {
   final done = Completer<void>();
   final previousFocus = FocusManager.instance.primaryFocus;
@@ -57,6 +62,8 @@ Future<void> showQuickAsk(
     child: QuickAskDialog(
       source: source,
       service: service,
+      pickFile: pickFile,
+      readFile: readFile,
       onAgentSubmit: onAgentSubmit,
       agentLabel: agentLabel,
       fallbackAnchor: fallback,
@@ -95,6 +102,8 @@ class QuickAskDialog extends StatefulWidget {
     this.service,
     this.onAgentSubmit,
     this.agentLabel,
+    this.pickFile,
+    this.readFile,
     this.fallbackAnchor,
     this.initialAnchor,
     required this.overlayContext,
@@ -108,6 +117,8 @@ class QuickAskDialog extends StatefulWidget {
   final QuickAskService? service;
   final FutureOr<bool> Function(String prompt)? onAgentSubmit;
   final String? agentLabel;
+  final Future<String?> Function()? pickFile;
+  final Future<QuickAskFileContext> Function(String path)? readFile;
   final Rect? fallbackAnchor;
   final Rect? initialAnchor;
   final BuildContext overlayContext;
@@ -144,6 +155,8 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
   bool _complete = false;
   bool _copied = false;
   bool _pickingMenu = false;
+  bool _loadingFile = false;
+  final _files = <String, QuickAskFileContext>{};
   final _frameKey = GlobalKey();
   Rect? _lastAnchor;
   final _anchorPosition = ValueNotifier<Rect?>(null);
@@ -206,7 +219,7 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
     });
   }
 
-  bool get _busy => _cancel != null || _handingOff;
+  bool get _busy => _cancel != null || _handingOff || _loadingFile;
   bool get _canEdit =>
       _includeSelection &&
       widget.source?.selectedText.isNotEmpty == true &&
@@ -263,6 +276,49 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
     );
   }
 
+  Future<void> _addFile() async {
+    if (_busy || _applying || _files.length >= QuickAskFileContext.maxFiles) {
+      return;
+    }
+    setState(() {
+      _loadingFile = true;
+      _error = null;
+    });
+    try {
+      final String? path;
+      if (widget.pickFile case final pick?) {
+        path = await pick();
+      } else {
+        final paths = await WindowControls.pickOpenFiles(multiple: false);
+        path = paths.isEmpty ? null : paths.first;
+      }
+      if (!mounted || path == null || _files.containsKey(path)) return;
+      final file = await (widget.readFile ?? QuickAskFileContext.read)(path);
+      if (!mounted) return;
+      setState(() {
+        _files[path!] = file;
+        _showContext = true;
+      });
+    } on Object catch (error) {
+      if (!mounted) return;
+      final l10n = context.l10n;
+      setState(
+        () => _error = switch (error) {
+          QuickAskFileException(reason: QuickAskFileFailure.tooLarge) =>
+            l10n.quickAskFileTooLarge,
+          QuickAskFileException(reason: QuickAskFileFailure.notText) =>
+            l10n.placeholderBinary,
+          _ => l10n.iconUploadUnreadable,
+        },
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _loadingFile = false);
+        _focus.requestFocus();
+      }
+    }
+  }
+
   Future<void> _send() async {
     if (_busy ||
         _applying ||
@@ -295,6 +351,7 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
             surroundingText: _includeContext
                 ? widget.source?.contextText ?? ''
                 : '',
+            files: _files.values.toList(),
             source: widget.source?.sourceLabel,
           ),
         );
@@ -336,6 +393,7 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
         surroundingText: _includeContext
             ? widget.source?.contextText ?? ''
             : '',
+        files: _files.values.toList(),
         source: widget.source?.sourceLabel,
         sessionModel: widget.source?.sessionModel,
         mode: _mode,
@@ -477,7 +535,7 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
                 IdeMenuAction(
                   _busy ? l10n.quickAskStop : l10n.quickAskSend,
                   keybinding: _busy ? null : 'Enter',
-                  enabled: !_applying && !_handingOff,
+                  enabled: !_applying && !_handingOff && !_loadingFile,
                   onSelected: () =>
                       _busy ? setState(_stop) : unawaited(_send()),
                 ),
@@ -496,7 +554,16 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
                   ),
                 ],
                 const IdeMenuSeparator(),
-                if (widget.source != null) ...[
+                if (WindowControls.canPickFiles || widget.pickFile != null)
+                  IdeMenuAction(
+                    l10n.quickAskAddFile,
+                    enabled:
+                        !_busy &&
+                        !_applying &&
+                        _files.length < QuickAskFileContext.maxFiles,
+                    onSelected: () => unawaited(_addFile()),
+                  ),
+                if (widget.source != null || _files.isNotEmpty) ...[
                   IdeMenuAction(
                     _showContext
                         ? l10n.quickAskHideContext
@@ -504,7 +571,7 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
                     onSelected: () =>
                         setState(() => _showContext = !_showContext),
                   ),
-                  if (widget.source!.selectedText.isNotEmpty)
+                  if (widget.source?.selectedText.isNotEmpty == true)
                     IdeMenuAction(
                       l10n.quickAskSelection,
                       checked: _includeSelection,
@@ -516,7 +583,7 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
                         _complete = false;
                       }),
                     ),
-                  if (widget.source!.contextText.isNotEmpty)
+                  if (widget.source?.contextText.isNotEmpty == true)
                     IdeMenuAction(
                       _includeContext
                           ? l10n.quickAskContextOn
@@ -644,7 +711,10 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
           ),
           child: TapRegion(
             onTapOutside: (_) {
-              if (!_pickingMenu && !_applying && !_handingOff) {
+              if (!_pickingMenu &&
+                  !_applying &&
+                  !_handingOff &&
+                  !_loadingFile) {
                 widget.onClose(false);
               }
             },
@@ -752,6 +822,33 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
                                     : () => unawaited(_menu(modes: true)),
                               ),
                             ),
+                            for (final entry in _files.entries)
+                              Row(
+                                key: ValueKey('quick-ask-file-${entry.key}'),
+                                children: [
+                                  Expanded(
+                                    child: IdeHover(
+                                      message: entry.key,
+                                      child: Text(
+                                        entry.value.name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ),
+                                  QuickAskAction(
+                                    label: l10n.modelsOptionRemove(
+                                      entry.value.name,
+                                    ),
+                                    icon: Codicons.close,
+                                    onPressed: _busy || _applying
+                                        ? null
+                                        : () => setState(
+                                            () => _files.remove(entry.key),
+                                          ),
+                                  ),
+                                ],
+                              ),
                             if (_busy)
                               Semantics(
                                 label: l10n.langLoading,
@@ -772,15 +869,19 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
                                   ),
                                 ),
                               ),
-                            if (_showContext && source != null) ...[
+                            if (_showContext &&
+                                (source != null || _files.isNotEmpty)) ...[
                               const SizedBox(height: 6),
                               SelectableText(
                                 _agent
                                     ? l10n.quickAskAgentHint
-                                    : l10n.quickAskPrivacy,
+                                    : _files.isEmpty
+                                    ? l10n.quickAskPrivacy
+                                    : l10n.quickAskFilesPrivacy,
                                 style: textStyle,
                               ),
-                              if (source.truncated && _includeSelection)
+                              if (source?.truncated == true &&
+                                  _includeSelection)
                                 Text(
                                   l10n.quickAskTruncated,
                                   style: TextStyle(
@@ -788,19 +889,27 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
                                   ),
                                 ),
                               if (_includeSelection &&
-                                  source.selectedText.isNotEmpty) ...[
+                                  source?.selectedText.isNotEmpty == true) ...[
                                 const SizedBox(height: 6),
                                 preview(
                                   l10n.quickAskSelection,
-                                  source.selectedText,
+                                  source!.selectedText,
                                 ),
                               ],
                               if (hasContext && _includeContext) ...[
                                 const SizedBox(height: 6),
                                 preview(
                                   l10n.quickAskNearby,
-                                  source.contextText,
+                                  source!.contextText,
                                 ),
+                              ],
+                            ],
+                            if (_showContext && _files.isNotEmpty) ...[
+                              const SizedBox(height: 6),
+                              Text(l10n.quickAskFilesHint),
+                              for (final file in _files.values) ...[
+                                const SizedBox(height: 6),
+                                preview(file.name, file.text),
                               ],
                             ],
                             if (_error case final error?) ...[

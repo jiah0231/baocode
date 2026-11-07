@@ -126,10 +126,16 @@ class IdeEditor extends StatefulWidget {
     this.onPaste,
     this.debug,
     this.agentEdits,
+    this.quickAskFunctionRange,
   });
 
   final IdeWorkspace workspace;
   final IdeDocument active;
+
+  /// Synchronous, revision-validated callable context. Never changes the edit
+  /// target and never waits for a language server when opening quick ask.
+  final TextRange? Function(IdeDocument document, TextSelection selection)?
+  quickAskFunctionRange;
   final ValueChanged<Object> onError;
   final ValueChanged<String> onLspStatus;
   final ValueChanged<IdeEditorPosition> onPositionChanged;
@@ -275,6 +281,12 @@ class IdeEditorState extends State<IdeEditor> with QuickAskTarget {
         controller: controller,
         sourceLabel: document.path,
         readOnly: document.readOnly,
+        enclosingRange: identical(controller.document, document.model)
+            ? widget.quickAskFunctionRange?.call(
+                document,
+                controller.value.selection,
+              )
+            : null,
         selectionAnchor: nativeAnchor(
           _surfaceKey,
           controller,
@@ -317,6 +329,10 @@ class IdeEditorState extends State<IdeEditor> with QuickAskTarget {
     return QuickAskContext.fromText(
       text: value.text,
       selection: value.selection,
+      codeContext: true,
+      enclosingRange: value.text == document.model.text
+          ? widget.quickAskFunctionRange?.call(document, value.selection)
+          : null,
       selectionAnchor: legacyAnchor,
       selectionAnchorListenable: _scrollController,
       sourceLabel: document.path,

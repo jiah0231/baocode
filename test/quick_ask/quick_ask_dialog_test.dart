@@ -11,6 +11,7 @@ import 'package:baocode/l10n/l10n.dart';
 import 'package:baocode/models/model_providers.dart';
 import 'package:baocode/models/model_provider.dart';
 import 'package:baocode/quick_ask/quick_ask_context.dart';
+import 'package:baocode/quick_ask/quick_ask_files.dart';
 import 'package:baocode/quick_ask/quick_ask_dialog.dart';
 import 'package:baocode/quick_ask/quick_ask_service.dart';
 import 'package:baocode/quick_ask/quick_ask_popup.dart';
@@ -102,6 +103,8 @@ void main() {
     Locale? locale,
     FutureOr<bool> Function(String prompt)? onAgentSubmit,
     String? agentLabel,
+    Future<String?> Function()? pickFile,
+    Future<QuickAskFileContext> Function(String path)? readFile,
   }) async {
     await tester.pumpWidget(
       RepaintBoundary(
@@ -121,6 +124,8 @@ void main() {
                     service: service,
                     onAgentSubmit: onAgentSubmit,
                     agentLabel: agentLabel,
+                    pickFile: pickFile,
+                    readFile: readFile,
                   ),
                 ),
               ),
@@ -187,6 +192,155 @@ void main() {
     await tester.tap(menuEntry(label).last);
     await tester.pumpAndSettle();
   }
+
+  testWidgets('picked files are reviewed and removable before explicit send', (
+    tester,
+  ) async {
+    await open(
+      tester,
+      pickFile: () async => '/private/example.dart',
+      readFile: (_) async => const QuickAskFileContext(
+        name: 'example.dart',
+        text: 'reference only',
+      ),
+    );
+    await choose(tester, 'Add file…');
+    expect(request.calls, 0);
+    expect(find.text('reference only'), findsOneWidget);
+    expect(
+      find.textContaining('unsaved edits are not included'),
+      findsOneWidget,
+    );
+    await send(tester);
+    expect(request.input!['files'], [
+      {'name': 'example.dart', 'text': 'reference only'},
+    ]);
+    expect(jsonEncode(request.input), isNot(contains('/private/')));
+    await tester.ensureVisible(
+      find.bySemanticsLabel('Remove example.dart').last,
+    );
+    await tester.tap(find.bySemanticsLabel('Remove example.dart').last);
+    await tester.pumpAndSettle();
+    await send(tester);
+    expect(request.input!.containsKey('files'), isFalse);
+  });
+
+  testWidgets(
+    'picker cancel, duplicate, failure and capacity keep bounded snapshots',
+    (tester) async {
+      String? path;
+      var reads = 0;
+      await open(
+        tester,
+        pickFile: () async => path,
+        readFile: (path) async {
+          reads++;
+          if (path == 'bad') {
+            throw const QuickAskFileException(QuickAskFileFailure.tooLarge);
+          }
+          return QuickAskFileContext(name: path, text: 'snapshot $path');
+        },
+      );
+      await choose(tester, 'Add file…');
+      expect(reads, 0);
+      path = 'bad';
+      await choose(tester, 'Add file…');
+      expect(find.textContaining('This file was not added'), findsOneWidget);
+      path = 'first';
+      await choose(tester, 'Add file…');
+      await choose(tester, 'Add file…');
+      expect(reads, 2);
+      for (path in ['second', 'third']) {
+        await choose(tester, 'Add file…');
+      }
+      await menu(tester);
+      expect(menuEnabled(tester, 'Add file…'), isFalse);
+      await dismissMenu(tester);
+      await send(tester);
+      expect((request.input!['files'] as List).length, 3);
+    },
+  );
+
+  testWidgets(
+    'pending picker prevents send and ignores completion after close',
+    (tester) async {
+      final picked = Completer<String?>();
+      var reads = 0;
+      await open(
+        tester,
+        pickFile: () => picked.future,
+        readFile: (_) async {
+          reads++;
+          return const QuickAskFileContext(name: 'a', text: 'b');
+        },
+      );
+      await choose(tester, 'Add file…');
+      await send(tester);
+      expect(request.calls, 0);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byType(QuickAskDialog), findsNothing);
+      picked.complete('a');
+      await tester.pumpAndSettle();
+      expect(reads, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('Agent receives selected file snapshots without local paths', (
+    tester,
+  ) async {
+    String? prompt;
+    await open(
+      tester,
+      onAgentSubmit: (value) {
+        prompt = value;
+        return true;
+      },
+      pickFile: () async => '/private/helper.dart',
+      readFile: (_) async =>
+          const QuickAskFileContext(name: 'helper.dart', text: 'reference'),
+    );
+    await choose(tester, 'Add file…');
+    await mode(tester, 'Agent');
+    await send(tester);
+    final payload = jsonDecode(prompt!.split('\n').last) as Map;
+    expect(payload['files'], [
+      {'name': 'helper.dart', 'text': 'reference'},
+    ]);
+    expect(prompt, isNot(contains('/private/')));
+    expect(request.calls, 0);
+    expect(find.byType(QuickAskDialog), findsNothing);
+  });
+
+  testWidgets('failed file read after close does not update disposed UI', (
+    tester,
+  ) async {
+    final read = Completer<QuickAskFileContext>();
+    await open(tester, pickFile: () async => 'a', readFile: (_) => read.future);
+    await choose(tester, 'Add file…');
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    read.completeError(
+      const QuickAskFileException(QuickAskFileFailure.unreadable),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(request.calls, 0);
+  });
+
+  testWidgets('pending file read is discarded after close', (tester) async {
+    final read = Completer<QuickAskFileContext>();
+    await open(tester, pickFile: () async => 'a', readFile: (_) => read.future);
+    await choose(tester, 'Add file…');
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    read.complete(const QuickAskFileContext(name: 'a', text: 'b'));
+    await tester.pumpAndSettle();
+    expect(find.byType(QuickAskDialog), findsNothing);
+    expect(tester.takeException(), isNull);
+    expect(request.calls, 0);
+  });
 
   testWidgets(
     'one visible mode dropdown opens without sending or showing context',
@@ -1104,6 +1258,11 @@ void main() {
         ),
         onAgentSubmit: (_) => true,
         agentLabel: 'Codex · Example project',
+        pickFile: () async => '/example/helper.dart',
+        readFile: (_) async => const QuickAskFileContext(
+          name: 'helper.dart',
+          text: 'int helper() => 42;',
+        ),
       );
       Future<void> capture(String name) async {
         if (!const bool.fromEnvironment('QUICK_ASK_PREVIEWS')) return;
@@ -1166,6 +1325,9 @@ void main() {
         ),
       );
       expect(applyLabel.style!.color, themeColors['button.foreground']);
+      await mode(tester, 'Chat');
+      await choose(tester, 'Add file…');
+      await capture('$theme-file-context');
       expect(tester.takeException(), isNull);
     });
   }

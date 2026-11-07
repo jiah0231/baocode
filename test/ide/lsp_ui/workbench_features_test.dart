@@ -9,6 +9,7 @@ import 'package:baocode/ide/lsp/lsp_protocol.dart';
 import 'package:baocode/ide/lsp_ui/document_symbols.dart';
 import 'package:baocode/ide/lsp_ui/semantic_tokens.dart';
 import 'package:baocode/theme/codicons.dart';
+import 'package:baocode/quick_ask/quick_ask_context.dart';
 
 import '../../flutter_test_config.dart' show testColorTheme;
 import '../workbench/fake_files.dart';
@@ -50,6 +51,46 @@ List<LspDocumentSymbol> _symbols(String path) => [
 ];
 
 void main() {
+  testWidgets(
+    'quick ask uses current callable symbols and rejects stale ranges',
+    (tester) async {
+      final padding = '// padding\n' * 500;
+      const function = 'void f() {\n  OLD;\n}\n';
+      final source = '$padding$function$padding';
+      final languages = FakeLanguageFeatures()
+        ..onDocumentSymbols = (_) => [
+          LspDocumentSymbol(
+            name: 'f',
+            kind: LspSymbolKind.function,
+            range: lspRange(500, 0, 1, endLine: 502),
+            selectionRange: lspRange(500, 5, 6),
+          ),
+        ];
+      await pumpLanguageWorkbench(tester, {_a: source}, languages, open: [_a]);
+      await settle(tester);
+      final surface = tester.widget<EditorSurface>(
+        find.byType(EditorSurface).first,
+      );
+      final start = source.indexOf('OLD');
+      surface.controller.select(start, start + 3);
+      surface.focusNode!.requestFocus();
+      await tester.pump();
+      final captured = QuickAskContext.captureFocused()!;
+      expect(captured.contextText, 'void f() {\n  \n[selection]\n;\n}');
+      expect(captured.selectedText, 'OLD');
+      // The symbol is reference-only; the replacement still touches OLD alone.
+      expect(await captured.applyReplacement!('NEW'), isTrue);
+      expect(
+        surface.controller.document.text,
+        source.replaceFirst('OLD', 'NEW'),
+      );
+      surface.controller.select(start, start + 3);
+      final stale = QuickAskContext.captureFocused()!;
+      expect(stale.contextText, contains('// padding'));
+      expect(stale.selectedText, 'NEW');
+    },
+  );
+
   testWidgets('the outline lists symbols, follows the caret and reveals '
       'them; breadcrumbs show the symbol path', (tester) async {
     final languages = FakeLanguageFeatures()..onDocumentSymbols = _symbols;
