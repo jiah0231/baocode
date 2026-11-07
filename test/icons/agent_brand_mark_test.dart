@@ -65,23 +65,13 @@ void main() {
                     )
                     .decoration
                 as BoxDecoration;
-        final Color ink;
-        if (logo == 'claudecode') {
-          final spark = tester.widget<BrandLogo>(find.byType(BrandLogo));
-          expect(spark.name, 'claude');
-          ink = spark.color!;
-        } else {
-          expect(find.byType(BrandLogo), findsNothing);
-          final mark = tester.widget<CustomPaint>(
-            find.descendant(
-              of: find.byType(AgentBrandMark),
-              matching: find.byType(CustomPaint),
-            ),
-          );
-          // The tile border and glyph share their RGB, with a quieter border.
-          ink = (tile.border! as Border).top.color.withValues(alpha: 1);
-          expect(mark.painter, isNotNull);
-        }
+        final mark = tester.widget<BrandLogo>(find.byType(BrandLogo));
+        // Guard the requested ChatGPT knot: codex.svg is also a terminal
+        // symbol, so switching to that asset would regress the session mark.
+        expect(mark.name, logo == 'codex' ? 'openai' : 'claude');
+        expect(mark.size, logo == 'codex' ? 14 : 12);
+        final ink = mark.color!;
+        expect((tile.border! as Border).top.color.withValues(alpha: 1), ink);
         expect(contrast(ink, tile.color!), greaterThanOrEqualTo(4.5));
         if (themeColors.highContrast) {
           expect(contrast(ink, tile.color!), 21);

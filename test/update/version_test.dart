@@ -76,9 +76,9 @@ void main() {
       expect(v('1.2.0') == v('1.2.0+0'), isTrue);
     });
 
-    test('Pebrel UI release upgrades the published +44 build', () {
-      expect(currentAppVersion, v('1.9.1+45'));
-      expect(currentAppVersion > v('1.9.1+44'), isTrue);
+    test('Codex identity correction upgrades the published +45 build', () {
+      expect(currentAppVersion, v('1.9.1+46'));
+      expect(currentAppVersion > v('1.9.1+45'), isTrue);
     });
 
     test("is pubspec.yaml's version", () {

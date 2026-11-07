@@ -46,46 +46,17 @@ class AgentBrandMark extends StatelessWidget {
               ),
             ),
             child: Center(
-              child: claude
-                  ? BrandLogo('claude', size: 12, color: foreground)
-                  : CustomPaint(
-                      size: const Size.square(12),
-                      painter: _TerminalMarkPainter(foreground),
-                    ),
+              // Codex sessions use the recognizable ChatGPT/OpenAI knot,
+              // not a terminal prompt. The asset has a little more inset.
+              child: BrandLogo(
+                claude ? 'claude' : 'openai',
+                size: claude ? 12 : 14,
+                color: foreground,
+              ),
             ),
           ),
         ),
       ),
     );
   }
-}
-
-/// An app-owned terminal glyph, not the dense provider mark used elsewhere.
-class _TerminalMarkPainter extends CustomPainter {
-  const _TerminalMarkPainter(this.color);
-
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.scale(size.width / 12, size.height / 12);
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-    canvas.drawPath(
-      Path()
-        ..moveTo(2, 3)
-        ..lineTo(5, 6)
-        ..lineTo(2, 9),
-      paint,
-    );
-    canvas.drawLine(const Offset(7, 9), const Offset(10, 9), paint);
-  }
-
-  @override
-  bool shouldRepaint(_TerminalMarkPainter oldDelegate) =>
-      oldDelegate.color != color;
 }

@@ -249,6 +249,7 @@ void main() {
               'assets/model_icons/claude.svg',
               'assets/model_icons/claudecode.svg',
               'assets/model_icons/codex.svg',
+              'assets/model_icons/openai.svg',
               'assets/branding/logo.svg',
             ]) {
               await SvgAssetLoader(asset).loadBytes(null);
