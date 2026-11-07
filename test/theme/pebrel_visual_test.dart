@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -136,6 +137,50 @@ Future<void> _loadPreviewFonts() async {
   }
 }
 
+/// Only capture Maple-off when exact, individually addressable Windows font
+/// files are available. Do not alias Segoe UI as Roboto, substitute Maple, or
+/// guess which face FontLoader selects from a Microsoft YaHei TTC collection.
+/// Standard CI images may only have msyh.ttc; then this remains a layout test.
+Future<bool> _loadWindowsPreviewFonts() async {
+  if (!Platform.isWindows) return false;
+  final windows = Platform.environment['WINDIR'];
+  if (windows == null) return false;
+  final fonts = <(String, String)>[
+    for (final file in [
+      'segoeui.ttf',
+      'segoeuib.ttf',
+      'segoeuii.ttf',
+      'segoeuiz.ttf',
+    ])
+      ('Segoe UI', file),
+    for (final file in [
+      'consola.ttf',
+      'consolab.ttf',
+      'consolai.ttf',
+      'consolaz.ttf',
+    ])
+      ('Consolas', file),
+    ('Microsoft YaHei UI', 'msyhui.ttf'),
+  ];
+  if (fonts.any((font) => !File('$windows/Fonts/${font.$2}').existsSync())) {
+    return false;
+  }
+  for (final family in fonts.map((font) => font.$1).toSet()) {
+    final loader = FontLoader(family);
+    for (final font in fonts.where((font) => font.$1 == family)) {
+      loader.addFont(
+        Future.value(
+          ByteData.sublistView(
+            await File('$windows/Fonts/${font.$2}').readAsBytes(),
+          ),
+        ),
+      );
+    }
+    await loader.load();
+  }
+  return true;
+}
+
 Future<void> _capture(WidgetTester tester, String name) async {
   if (!_previews) return;
   await tester.runAsync(() async {
@@ -152,15 +197,19 @@ Future<void> _capture(WidgetTester tester, String name) async {
 }
 
 void main() {
-  for (final theme in [
-    'Silver Light',
-    'Catppuccin Macchiato',
-    'Catppuccin Latte',
+  for (final (theme, width, scale, maple) in [
+    for (final theme in [
+      'Silver Light',
+      'Catppuccin Macchiato',
+      'Catppuccin Latte',
+    ])
+      for (final (width, scale) in [(1400.0, 100), (1100.0, 125)])
+        (theme, width, scale, true),
+    ('Silver Light', 1100.0, 125, false),
   ]) {
-    for (final (width, scale) in [(1400.0, 100), (1100.0, 125)]) {
-      testWidgets('$theme real chat at ${width.toInt()}px / $scale%', (
-        tester,
-      ) async {
+    testWidgets(
+      '$theme real chat at ${width.toInt()}px / $scale% / Maple $maple',
+      (tester) async {
         tester.view.physicalSize = Size(width, 1000);
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.reset);
@@ -174,11 +223,22 @@ void main() {
           CodeFont.uiScale.value = previousScale;
           CodeFont.mapleFont.value = previousMaple;
         });
+        var captureReady = maple;
         await tester.runAsync(() async {
           await themes.initialize();
           await themes.setColorTheme('Pebrel $theme');
           if (_previews) {
             await _loadPreviewFonts();
+            if (!maple) {
+              captureReady = await _loadWindowsPreviewFonts();
+              if (!captureReady) {
+                debugPrint(
+                  'Maple-off: layout assertions only. Exact Windows '
+                  'font files unavailable; no aesthetic preview emitted. '
+                  'Ahem fallback is not representative of the desktop app.',
+                );
+              }
+            }
             // Finish SVG compilation before the first frame is captured.
             for (final asset in [
               'assets/model_icons/claude.svg',
@@ -192,7 +252,7 @@ void main() {
         });
         expect(themes.colorThemeId, 'Pebrel $theme');
         CodeFont.uiScale.value = scale;
-        CodeFont.mapleFont.value = true;
+        CodeFont.mapleFont.value = maple;
 
         final created = <_PreviewKernel>[];
         KernelDescriptor descriptor(String id, String label, String logo) {
@@ -249,8 +309,8 @@ void main() {
         expect(tester.takeException(), isNull);
         final name =
             '${theme.toLowerCase().replaceAll(' ', '-')}'
-            '-${width.toInt()}-$scale';
-        await _capture(tester, '$name-bottom');
+            '-${width.toInt()}-$scale${maple ? '' : '-maple-off-windows'}';
+        if (captureReady) await _capture(tester, '$name-bottom');
         // A scaled transcript may be taller than the viewport. Capture its
         // beginning too so headings and body cannot silently escape review.
         final historyScroll = tester
@@ -274,12 +334,15 @@ void main() {
           );
           await tester.pumpAndSettle();
           expect(tester.takeException(), isNull);
-          await _capture(tester, '$name-top');
+          if (captureReady) await _capture(tester, '$name-top');
         }
         await tester.pumpWidget(const SizedBox());
         await tester.pump();
         expect(tester.takeException(), isNull);
-      });
-    }
+      },
+      variant: maple
+          ? const DefaultTestVariant()
+          : TargetPlatformVariant.only(TargetPlatform.windows),
+    );
   }
 }

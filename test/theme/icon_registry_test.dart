@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -12,6 +13,7 @@ void main() {
   late Directory folder;
   late IconRegistry registry;
   late List<String> loaded;
+  late Completer<void> fontRead;
   final kept = IconRegistry.instance;
 
   setUp(() {
@@ -19,8 +21,14 @@ void main() {
     Directory(p.join(folder.path, 'dist')).createSync();
     File(p.join(folder.path, 'dist', 'glicons.woff2')).writeAsBytesSync([1]);
     loaded = [];
+    fontRead = Completer<void>();
     registry = IconRegistry()
-      ..loadFont = (family, Uint8List bytes) async => loaded.add(family);
+      ..loadFont = (family, Uint8List bytes) async {
+        loaded.add(family);
+        // File.readAsBytes has closed its handle before handing us the bytes.
+        // Wait for this signal before deleting the fixture on Windows.
+        if (!fontRead.isCompleted) fontRead.complete();
+      };
     IconRegistry.instance = registry;
   });
   tearDown(() {
@@ -72,9 +80,7 @@ void main() {
       expect(registry.lookup('add'), Codicons.add);
       // The font loads once (read from disk), and its icons repaint when it
       // has.
-      for (var i = 0; loaded.isEmpty && i < 100; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-      }
+      await fontRead.future.timeout(const Duration(seconds: 5));
       await pumpEventQueue();
       expect(loaded, ['eamodio.gitlens/dist/glicons.woff2']);
       expect(notified, 2);
@@ -133,6 +139,8 @@ void main() {
         },
       ),
     ]);
+    await fontRead.future.timeout(const Duration(seconds: 5));
+    expect(loaded, ['eamodio.gitlens/dist/glicons.woff2']);
     expect(registry.contains('good-one'), isTrue);
     // An id needs a dash.
     expect(registry.contains('bad'), isFalse);
@@ -143,9 +151,13 @@ void main() {
 
   testWidgets('a status bar item shows an extension\'s icon in its font, '
       'not its name', (tester) async {
-    registry.setExtensionIcons([
-      gitLens({'gitlens-graph': glyph(r'\f102')}),
-    ]);
+    await tester.runAsync(() async {
+      registry.setExtensionIcons([
+        gitLens({'gitlens-graph': glyph(r'\f102')}),
+      ]);
+      await fontRead.future.timeout(const Duration(seconds: 5));
+    });
+    expect(loaded, ['eamodio.gitlens/dist/glicons.woff2']);
     await tester.pumpWidget(
       Directionality(
         textDirection: TextDirection.ltr,

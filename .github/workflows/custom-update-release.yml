@@ -297,6 +297,14 @@ jobs:
           test/settings/appearance_code_font_test.dart
           test/theme/code_font_test.dart
           test/theme/code_text_scale_test.dart
+      - name: Test Pebrel reading hierarchy and session identity
+        run: >-
+          flutter test --no-pub --reporter expanded --timeout 2m
+          test/theme/pebrel_render_palette_test.dart
+          test/theme/pebrel_app_colors_test.dart
+          test/theme/pebrel_visual_test.dart
+          test/icons/agent_brand_mark_test.dart
+          test/markdown_test.dart
       - name: Build and test owned Windows Codex launcher
         timeout-minutes: 5
         shell: pwsh

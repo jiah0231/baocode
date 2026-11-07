@@ -27,11 +27,14 @@ Map<String, String> pebrelRenderPalette(
     light ? .5 : .065,
   );
   final composer = _mix(background, accentSeed, light ? .035 : .065);
-  final hover = _mix(shell, accentSeed, .065);
+  // Distinct even when a source palette uses the same shell and page color.
+  final hover = _mix(shell, accentSeed, .045);
   final selected = _mix(shell, accentSeed, light ? .14 : .19);
   final codeFill = _mix(background, _parse(ansi[5]), light ? .055 : .09);
   final addedFill = _mix(background, color('success'), .07);
   final removedFill = _mix(background, color('error'), .07);
+  final addedTextFill = _mix(background, color('success'), .15);
+  final removedTextFill = _mix(background, color('error'), .15);
   final surfaces = [
     background,
     shell,
@@ -43,6 +46,8 @@ Map<String, String> pebrelRenderPalette(
     codeFill,
     addedFill,
     removedFill,
+    addedTextFill,
+    removedTextFill,
   ];
   Color text(Color seed) => _readable(seed, surfaces);
   final body = text(foreground);
@@ -51,7 +56,7 @@ Map<String, String> pebrelRenderPalette(
   final muted = text(_mix(color('muted'), background, .12));
   final buttonText = _contrast(const Color(0xFFFFFFFF), accent) >= 4.5
       ? const Color(0xFFFFFFFF)
-      : const Color(0xFF141824);
+      : _readable(const Color(0xFF141824), [accent]);
   final buttonHover = _readable(_mix(accent, buttonText, .08), [buttonText]);
   final values = <String, Color>{
     'background': background,
@@ -82,6 +87,8 @@ Map<String, String> pebrelRenderPalette(
     'info': link,
     'addedFill': addedFill,
     'removedFill': removedFill,
+    'addedTextFill': addedTextFill,
+    'removedTextFill': removedTextFill,
     'keyword': text(_parse(ansi[5])),
     'string': text(_parse(ansi[2])),
     'number': text(_parse(ansi[3])),

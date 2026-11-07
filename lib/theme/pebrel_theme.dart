@@ -118,7 +118,10 @@ class PebrelThemeDefinition {
     put(u['link']!, 'textLink.foreground textLink.activeForeground');
     put(u['heading']!, 'settings.headerForeground');
     put(u['disabled']!, 'disabledForeground');
-    put(u['surface']!, 'editorWidget.background button.secondaryBackground');
+    put(
+      u['surface']!,
+      'editorWidget.background button.secondaryBackground textCodeBlock.background textBlockQuote.background',
+    );
     put(
       u['raised']!,
       'menu.background dropdown.background dropdown.listBackground quickInput.background settings.dropdownBackground',
@@ -148,14 +151,10 @@ class PebrelThemeDefinition {
       'editorWarning.foreground gitDecoration.modifiedResourceForeground inputValidation.warningBorder list.warningForeground',
     );
     put(u['info']!, 'editorInfo.foreground inputValidation.infoBorder');
-    put(
-      u['addedFill']!,
-      'diffEditor.insertedLineBackground diffEditor.insertedTextBackground',
-    );
-    put(
-      u['removedFill']!,
-      'diffEditor.removedLineBackground diffEditor.removedTextBackground',
-    );
+    put(u['addedFill']!, 'diffEditor.insertedLineBackground');
+    put(u['removedFill']!, 'diffEditor.removedLineBackground');
+    put(u['addedTextFill']!, 'diffEditor.insertedTextBackground');
+    put(u['removedTextFill']!, 'diffEditor.removedTextBackground');
     // Keep original tokens for cached snapshots and independent source previews.
     for (final entry in original.entries) {
       colors['pebrel.${entry.key}'] = entry.value;

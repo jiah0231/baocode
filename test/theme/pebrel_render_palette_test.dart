@@ -42,6 +42,8 @@ void main() {
           'codeFill',
           'addedFill',
           'removedFill',
+          'addedTextFill',
+          'removedTextFill',
         ]) {
           for (final foreground in [
             'foreground',
@@ -94,6 +96,9 @@ void main() {
           role('hover'),
           role('selected'),
         }, hasLength(4));
+        expect(role('addedTextFill'), isNot(role('addedFill')));
+        expect(role('removedTextFill'), isNot(role('removedFill')));
+        expect(colors['textCodeBlock.background'], role('surface'));
         expect(role('heading'), isNot(role('foreground')));
         expect(role('emphasis'), isNot(role('foreground')));
         expect(colors['textLink.foreground'], role('link'));
@@ -147,6 +152,41 @@ void main() {
       },
     );
   }
+
+  test('custom middle-luminance accents retain readable button labels', () {
+    final raw = jsonDecode(
+      jsonEncode(
+        snapshots.firstWhere(
+          (snapshot) => snapshot['base'] == 'CatppuccinMacchiato',
+        ),
+      ),
+    ) as Map<String, dynamic>;
+    final ui = raw['ui'] as Map<String, dynamic>;
+    ui.addAll({
+      'background': '#000000',
+      'shell': '#000000',
+      'foreground': '#FFFFFF',
+      'accent': '#0088BB',
+      'info': '#0088BB',
+      'success': '#000000',
+      'error': '#000000',
+      'warning': '#000000',
+    });
+    (raw['terminal'] as Map)['palette'] = List.filled(256, '#000000');
+    final theme = PebrelThemeDefinition.fromJson(raw);
+    final colors = Map<String, String>.from(
+      theme.toColorThemeJson()['colors'] as Map,
+    );
+    expect(
+      contrast(colors['button.foreground']!, colors['button.background']!),
+      greaterThanOrEqualTo(4.5),
+    );
+    expect(
+      contrast(colors['button.foreground']!, colors['button.hoverBackground']!),
+      greaterThanOrEqualTo(4.5),
+    );
+    expect(theme.toJson(), raw);
+  });
 
   testWidgets(
     'Pebrel markdown uses independent emphasis and link roles and switching restores old themes',

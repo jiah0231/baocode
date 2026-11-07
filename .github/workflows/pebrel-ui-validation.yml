@@ -46,6 +46,7 @@ jobs:
           git diff --exit-code HEAD --
           if ($LASTEXITCODE -ne 0) { throw 'Generated source differs from candidate' }
       - name: Analyze exact candidate
+        id: analyze
         run: flutter analyze --no-pub --fatal-infos
       - name: Check changed Dart formatting
         shell: pwsh
@@ -63,6 +64,7 @@ jobs:
           if-no-files-found: warn
           path: build/pebrel-previews/*.png
       - name: Test theme, session, reading and popup regressions
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
         shell: pwsh
         run: |
           Remove-Item Env:BAO_BROWSER_LIVE -ErrorAction SilentlyContinue
