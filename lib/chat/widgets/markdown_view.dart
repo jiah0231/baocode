@@ -480,7 +480,7 @@ Widget _imageLink(String src, String alt) {
       onTap: recognizer.onTap,
       child: IdeHover(
         message: src,
-        child: Text(label, style: TextStyle(color: AppColors.accent)),
+        child: Text(label, style: TextStyle(color: AppColors.link)),
       ),
     ),
   );
@@ -736,7 +736,7 @@ class _List extends StatelessWidget {
     if (checkbox is md.Element && checkbox.tag == 'input') {
       final checked = checkbox.attributes['checked'] != null;
       // In the links' color, as tall as a capital and centred on the line.
-      final accent = AppColors.accent;
+      final accent = AppColors.link;
       // Its own size, at the start of the marker's column (which is wider).
       final square = Container(
         width: 15,
@@ -983,7 +983,7 @@ InlineSpan _inline(md.Node node, MarkdownOptions options) {
     'strong' || 'b' => TextSpan(
       style: TextStyle(
         fontWeight: FontWeight.w600,
-        color: AppColors.textPrimary,
+        color: AppColors.textEmphasis,
       ),
       children: inner(),
     ),
@@ -998,7 +998,7 @@ InlineSpan _inline(md.Node node, MarkdownOptions options) {
     'code' => switch (options.code?.call(_unescape(node.textContent))) {
       // A file's: in the link's color, its icon first in the background.
       final recognizer? => InlineCodeSpan(
-        style: MarkdownView.codeStyle.copyWith(color: AppColors.accent),
+        style: MarkdownView.codeStyle.copyWith(color: AppColors.link),
         children: [
           if (options.codeIcon?.call(_unescape(node.textContent))
               case final icon?)
@@ -1023,7 +1023,7 @@ InlineSpan _inline(md.Node node, MarkdownOptions options) {
     },
     'a' => switch ((options.link ?? _linkRecognizer)(node.attributes['href'])) {
       final recognizer? => TextSpan(
-        style: TextStyle(color: AppColors.accent),
+        style: TextStyle(color: AppColors.link),
         children: [
           if (options.linkIcon?.call(node.attributes['href']) case final icon?)
             _linkIcon(icon, recognizer, const EdgeInsets.only(right: 3)),
@@ -1031,7 +1031,7 @@ InlineSpan _inline(md.Node node, MarkdownOptions options) {
         ],
       ),
       null => TextSpan(
-        style: TextStyle(color: AppColors.accent),
+        style: TextStyle(color: AppColors.link),
         children: inner(),
       ),
     },

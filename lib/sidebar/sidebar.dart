@@ -16,7 +16,7 @@ import '../chat/widgets/pixel_loader.dart';
 import '../forge/forge_api.dart' show ForgeState;
 import '../forge/forge_ref.dart' show ForgeItemKind;
 import '../forge/forge_view.dart' show forgeStateLook;
-import '../icons/brand_logos.dart';
+import '../icons/agent_brand_mark.dart';
 import '../icons/project_icon_picker.dart';
 import '../icons/project_icon_view.dart';
 import '../ide/ide_button.dart' show IdeButtonColors;
@@ -3741,7 +3741,7 @@ class _ThreadRow extends StatelessWidget {
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          BrandLogo(logo, size: 12, color: foreground),
+          AgentBrandMark(logo, color: foreground),
           const SizedBox(width: 4),
           Flexible(child: title),
         ],

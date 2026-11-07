@@ -2,6 +2,8 @@
 // GPL-3.0-or-later. See assets/pebrel/NOTICE.md and LICENSE.
 import 'dart:convert';
 
+import 'pebrel_render_palette.dart';
+
 /// A lossless app-owned snapshot, separate from the MIT editor's theme model.
 /// Geometry, typography, effects and unknown future fields survive round trips;
 /// rendering overrides do not overwrite the user's layout or font settings.
@@ -65,12 +67,13 @@ class PebrelThemeDefinition {
   /// VS Code-compatible rendering data. Original data is never replaced by this
   /// intentionally narrower projection. No font or geometry override is applied.
   Map<String, dynamic> toColorThemeJson() {
-    final u = uiColors;
+    final original = uiColors;
+    final u = pebrelRenderPalette(original, indexedColors, light: isLight);
     final t = terminal;
     final fg = u['foreground']!;
     final bg = u['background']!;
     final shell = u['shell']!;
-    final selected = u['selection']!;
+    final selected = u['selected']!;
     final line = u['line']!;
     final accent = u['accent']!;
     final muted = u['muted']!;
@@ -87,46 +90,78 @@ class PebrelThemeDefinition {
     );
     put(
       bg,
-      'editor.background panel.background editorWidget.background menu.background dropdown.background dropdown.listBackground input.background quickInput.background tab.activeBackground settings.textInputBackground settings.dropdownBackground',
+      'editor.background panel.background input.background tab.activeBackground settings.textInputBackground',
     );
     put(
       fg,
-      'foreground editor.foreground settings.headerForeground sideBar.foreground input.foreground dropdown.foreground menu.foreground quickInput.foreground list.activeSelectionForeground list.inactiveSelectionForeground list.hoverForeground tab.activeForeground statusBar.foreground titleBar.activeForeground activityBar.foreground',
+      'foreground editor.foreground sideBar.foreground input.foreground dropdown.foreground menu.foreground quickInput.foreground list.activeSelectionForeground list.inactiveSelectionForeground list.hoverForeground tab.activeForeground statusBar.foreground titleBar.activeForeground activityBar.foreground button.secondaryForeground quickInputList.focusForeground',
     );
     put(
       muted,
-      'descriptionForeground disabledForeground icon.foreground input.placeholderForeground tab.inactiveForeground activityBar.inactiveForeground titleBar.inactiveForeground editorLineNumber.foreground',
+      'descriptionForeground icon.foreground input.placeholderForeground tab.inactiveForeground activityBar.inactiveForeground titleBar.inactiveForeground editorLineNumber.foreground',
     );
     put(
       line,
       'panel.border sideBar.border activityBar.border titleBar.border editorGroup.border menu.border tab.border surface.border',
     );
-    put(u['frame']!, 'input.border dropdown.border checkbox.border');
+    put(u['controlBorder']!, 'input.border dropdown.border checkbox.border');
     put(
       accent,
-      'focusBorder textLink.foreground textLink.activeForeground button.background button.hoverBackground progressBar.background badge.background activityBarBadge.background editorCursor.foreground list.highlightForeground tab.activeBorder',
+      'button.background progressBar.background badge.background activityBarBadge.background editorCursor.foreground list.highlightForeground tab.activeBorder inputOption.activeForeground',
     );
-    put(bg, 'button.foreground badge.foreground activityBarBadge.foreground');
+    put(
+      u['buttonText']!,
+      'button.foreground badge.foreground activityBarBadge.foreground',
+    );
+    put(u['buttonHover']!, 'button.hoverBackground');
+    put(u['focus']!, 'focusBorder list.focusOutline inputOption.activeBorder');
+    put(u['link']!, 'textLink.foreground textLink.activeForeground');
+    put(u['heading']!, 'settings.headerForeground');
+    put(u['disabled']!, 'disabledForeground');
+    put(u['surface']!, 'editorWidget.background button.secondaryBackground');
+    put(
+      u['raised']!,
+      'menu.background dropdown.background dropdown.listBackground quickInput.background settings.dropdownBackground',
+    );
+    put(u['composer']!, 'agentsChatInput.background chat.requestBackground');
+    put(
+      u['hover']!,
+      'list.hoverBackground toolbar.hoverBackground button.secondaryHoverBackground',
+    );
+    put(u['inlineCode']!, 'textPreformat.foreground');
+    put(u['codeFill']!, 'textPreformat.background');
+    put(line, 'chat.requestBorder');
     put(
       selected,
-      'list.activeSelectionBackground list.inactiveSelectionBackground list.focusBackground list.hoverBackground toolbar.hoverBackground button.secondaryBackground inputOption.activeBackground agentsChatInput.background editor.selectionBackground',
+      'list.activeSelectionBackground list.inactiveSelectionBackground list.focusBackground quickInputList.focusBackground inputOption.activeBackground editor.selectionBackground',
     );
     put(
       u['error']!,
-      'errorForeground editorError.foreground gitDecoration.deletedResourceForeground inputValidation.errorBorder',
+      'errorForeground editorError.foreground gitDecoration.deletedResourceForeground inputValidation.errorBorder list.errorForeground chat.linesRemovedForeground',
     );
     put(
       u['success']!,
-      'gitDecoration.addedResourceForeground editorGutter.addedBackground',
+      'gitDecoration.addedResourceForeground editorGutter.addedBackground chat.linesAddedForeground',
     );
     put(
       u['warning']!,
-      'editorWarning.foreground gitDecoration.modifiedResourceForeground inputValidation.warningBorder',
+      'editorWarning.foreground gitDecoration.modifiedResourceForeground inputValidation.warningBorder list.warningForeground',
     );
     put(u['info']!, 'editorInfo.foreground inputValidation.infoBorder');
-    // Explicit chat tokens allow faithful colors without changing other themes.
-    for (final entry in u.entries) {
+    put(
+      u['addedFill']!,
+      'diffEditor.insertedLineBackground diffEditor.insertedTextBackground',
+    );
+    put(
+      u['removedFill']!,
+      'diffEditor.removedLineBackground diffEditor.removedTextBackground',
+    );
+    // Keep original tokens for cached snapshots and independent source previews.
+    for (final entry in original.entries) {
       colors['pebrel.${entry.key}'] = entry.value;
+    }
+    for (final entry in u.entries) {
+      colors['pebrel.render.${entry.key}'] = entry.value;
     }
     colors['terminal.background'] = t['background'] as String;
     colors['terminal.foreground'] = t['foreground'] as String;
@@ -176,19 +211,35 @@ class PebrelThemeDefinition {
         },
         {
           'scope': 'string',
-          'settings': {'foreground': u['success']},
+          'settings': {'foreground': u['string']},
         },
         {
           'scope': 'keyword, storage',
-          'settings': {'foreground': accent},
+          'settings': {'foreground': u['keyword']},
         },
         {
           'scope': 'constant.numeric, constant.language',
-          'settings': {'foreground': u['warning']},
+          'settings': {'foreground': u['number']},
         },
         {
           'scope': 'entity.name.function, support.function',
-          'settings': {'foreground': u['info']},
+          'settings': {'foreground': u['function']},
+        },
+        {
+          'scope': 'entity.name.type, support.type, support.class, entity.other.attribute-name',
+          'settings': {'foreground': u['type']},
+        },
+        {
+          'scope': 'variable.other.property, support.variable',
+          'settings': {'foreground': u['type']},
+        },
+        {
+          'scope': 'markup.bold',
+          'settings': {'foreground': u['emphasis'], 'fontStyle': 'bold'},
+        },
+        {
+          'scope': 'markup.heading',
+          'settings': {'foreground': u['heading'], 'fontStyle': 'bold'},
         },
         {
           'scope': 'invalid',

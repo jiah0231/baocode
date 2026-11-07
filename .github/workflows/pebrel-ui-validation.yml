@@ -1,0 +1,71 @@
+# Isolated UI verification. No releases, signing, deployment or live agents.
+name: Pebrel UI validation
+on:
+  push:
+    branches: ['feat/pebrel-ui*']
+permissions:
+  contents: read
+concurrency:
+  group: pebrel-ui-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    if: github.repository == 'jiah0231/baocode'
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Restore unchanged bundled assets
+        shell: pwsh
+        run: |
+          python tool/ci/reassemble_preview_assets.py
+          if ($LASTEXITCODE -ne 0) { throw 'Preview asset reconstruction failed' }
+          python tool/ci/reassemble_maple_font.py
+          if ($LASTEXITCODE -ne 0) { throw 'Font asset reconstruction failed' }
+          git diff --exit-code HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Asset reconstruction changed tracked source' }
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.5'
+          cache: true
+      - id: iroh
+        uses: ./.github/actions/bao-iroh-prebuilt
+      - if: steps.iroh.outputs.hit != 'true'
+        uses: ./.github/actions/setup-rust
+      - name: Resolve packages and localization
+        shell: pwsh
+        run: |
+          flutter pub get
+          if ($LASTEXITCODE -ne 0) { throw 'Package resolution failed' }
+          flutter gen-l10n
+          if ($LASTEXITCODE -ne 0) { throw 'Localization generation failed' }
+          git diff --exit-code HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Generated source differs from candidate' }
+      - name: Analyze exact candidate
+        run: flutter analyze --no-pub --fatal-infos
+      - name: Check changed Dart formatting
+        shell: pwsh
+        run: |
+          $files = @(git diff --name-only --diff-filter=ACMR 4842dd6e10598638b58118d2468f0916cb2a0875 HEAD -- '*.dart')
+          if ($LASTEXITCODE -ne 0) { throw 'Changed-file enumeration failed' }
+          dart format --output=none --set-exit-if-changed @files
+          if ($LASTEXITCODE -ne 0) { throw 'UI source needs formatting' }
+      - name: Capture rendered light and dark workbench previews
+        run: flutter test --no-pub --reporter expanded --timeout 2m test/theme/pebrel_visual_test.dart --dart-define=PEBREL_PREVIEWS=true
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: pebrel-ui-visual-previews
+          if-no-files-found: warn
+          path: build/pebrel-previews/*.png
+      - name: Test theme, session, reading and popup regressions
+        shell: pwsh
+        run: |
+          Remove-Item Env:BAO_BROWSER_LIVE -ErrorAction SilentlyContinue
+          Remove-Item Env:BAOCODE_CODEX_OFFICIAL_SMOKE -ErrorAction SilentlyContinue
+          flutter test --no-pub --reporter expanded --timeout 2m test/theme test/icons test/markdown_test.dart test/sidebar_test.dart test/sidebar_hosts_test.dart test/ide/workbench/color_theme_gallery_test.dart test/ide/workbench/color_theme_picker_test.dart test/ide/workbench/theme_preview_session_test.dart test/ide/workbench/theme_preview_auto_test.dart test/ide/markdown/markdown_preview_test.dart test/settings/appearance_code_font_test.dart test/chat/chat_history_rebuild_test.dart test/chat/chat_width_test.dart test/chat/line_diff_test.dart test/ide/git/log_diff_test.dart test/ide/git/scm_diff_test.dart test/quick_ask test/composer_test.dart
+          if ($LASTEXITCODE -ne 0) { throw 'Pebrel UI regressions failed' }

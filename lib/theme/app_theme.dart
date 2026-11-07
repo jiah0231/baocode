@@ -20,6 +20,8 @@ abstract final class AppColors {
     return _colors.theme.defines(id) ? _colors.get(id) : null;
   }
 
+  static Color? _render(String name) => _pebrel('render.$name');
+
   /// The first of [ids] the theme or the registry gives a color.
   static Color _first(List<String> ids) {
     final colors = _colors;
@@ -78,18 +80,21 @@ abstract final class AppColors {
 
   /// `editorWidget.background`: cards and panels.
   static Color get surface =>
-      _pebrel('background') ?? _colors['editorWidget.background'];
+      _render('surface') ??
+      _pebrel('background') ??
+      _colors['editorWidget.background'];
 
   /// `menu.background`: menus and popups over the rest.
   static Color get surfaceRaised =>
-      _pebrel('background') ?? _colors['menu.background'];
+      _render('raised') ?? _pebrel('background') ?? _colors['menu.background'];
 
   /// `editor.background`: code and terminal output.
   static Color get code =>
       _pebrel('background') ?? _colors['editor.background'];
 
   /// `panel.border`.
-  static Color get border => _pebrel('line') ?? _colors['panel.border'];
+  static Color get border =>
+      _render('line') ?? _pebrel('line') ?? _colors['panel.border'];
 
   /// Between the window's parts, the IDE's line between its side bar, editor
   /// and chat: `sideBar.border`, else the Modern UI's `surface.border`
@@ -99,7 +104,7 @@ abstract final class AppColors {
   /// transparent (Red, Kimbie Dark…) or a background's own color (Dark+).
   /// Then the editor's foreground, faintly, as Cursor's strokes.
   static Color get partBorder {
-    if (_pebrel('line') case final line?) return line;
+    if ((_render('line') ?? _pebrel('line')) case final line?) return line;
     final line = _first(['sideBar.border', 'surface.border', 'panel.border']);
     if (_stands(line, background) && _stands(line, code)) return line;
     final foreground = _colors['editor.foreground'];
@@ -112,7 +117,11 @@ abstract final class AppColors {
   /// into, a step on towards [accent]. Not the theme's border, which may be
   /// of another hue (Solarized Dark's violet around its teal).
   static Color bubbleBorder({bool focused = false}) {
-    if (_pebrel(focused ? 'frame' : 'line') case final line?) return line;
+    if ((_render(focused ? 'focus' : 'line') ??
+            _pebrel(focused ? 'frame' : 'line'))
+        case final line?) {
+      return line;
+    }
     final line = Color.lerp(
       _towardsText(bubbleFill, 0.12),
       accent.withValues(alpha: 1),
@@ -125,7 +134,9 @@ abstract final class AppColors {
   /// agents' window and the IDE alike: `agentsChatInput.background` over
   /// [code].
   static Color get bubbleFill => Color.alphaBlend(
-    _pebrel('selection') ?? _colors['agentsChatInput.background'],
+    _render('composer') ??
+        _pebrel('selection') ??
+        _colors['agentsChatInput.background'],
     code,
   );
 
@@ -152,33 +163,48 @@ abstract final class AppColors {
 
   /// `input.border`, else `dropdown.border`.
   static Color get borderStrong =>
-      _pebrel('frame') ?? _first(['input.border', 'dropdown.border']);
+      _render('controlBorder') ??
+      _pebrel('frame') ??
+      _first(['input.border', 'dropdown.border']);
 
   /// `list.hoverBackground`.
   static Color get hover =>
-      _pebrel('selection') ?? _colors['list.hoverBackground'];
+      _render('hover') ??
+      _pebrel('selection') ??
+      _colors['list.hoverBackground'];
 
   /// `settings.headerForeground`: titles and what stands out.
   static Color get textPrimary =>
-      _pebrel('foreground') ?? _colors['settings.headerForeground'];
+      _render('heading') ??
+      _pebrel('foreground') ??
+      _colors['settings.headerForeground'];
 
   /// `foreground`.
-  static Color get text => _pebrel('foreground') ?? _colors['foreground'];
+  static Color get text =>
+      _render('foreground') ?? _pebrel('foreground') ?? _colors['foreground'];
+
+  /// Emphasis in a Pebrel conversation, without recoloring other themes.
+  static Color get textEmphasis => _render('emphasis') ?? textPrimary;
+
+  /// Links are distinct from a neutral or warm UI accent.
+  static Color get link => _render('link') ?? accent;
 
   /// `descriptionForeground`.
   static Color get textMuted =>
-      _pebrel('muted') ?? _colors['descriptionForeground'];
+      _render('muted') ?? _pebrel('muted') ?? _colors['descriptionForeground'];
 
   /// `disabledForeground`.
   static Color get textFaint =>
-      _pebrel('muted') ?? _colors['disabledForeground'];
+      _render('faint') ?? _pebrel('muted') ?? _colors['disabledForeground'];
 
   /// The theme's own `textLink.foreground`, else its `focusBorder`: links
   /// in the theme's color, not the registry's blue, in a theme that sets
   /// none (Kimbie Dark, Solarized Light). The registry's link color in
   /// neither.
   static Color get accent {
-    if (_pebrel('accent') case final accent?) return accent;
+    if ((_render('accent') ?? _pebrel('accent')) case final accent?) {
+      return accent;
+    }
     final colors = _colors;
     for (final id in const ['textLink.foreground', 'focusBorder']) {
       if (colors.theme.defines(id)) return colors[id];
@@ -201,17 +227,22 @@ abstract final class AppColors {
   /// (see [seeThroughSelection]), for editors that may paint it over the
   /// text rather than under.
   static Color get textSelection => seeThroughSelection(
-    _pebrel('selection') ?? _colors['editor.selectionBackground'],
+    _render('selected') ??
+        _pebrel('selection') ??
+        _colors['editor.selectionBackground'],
     code,
   );
 
   /// `gitDecoration.addedResourceForeground`.
   static Color get added =>
-      _pebrel('success') ?? _colors['gitDecoration.addedResourceForeground'];
+      _render('success') ??
+      _pebrel('success') ??
+      _colors['gitDecoration.addedResourceForeground'];
 
   /// Pebrel success tinted over the page, else `diffEditor.insertedLineBackground`
   /// or the inserted text's background. The tint leaves diff text readable.
   static Color get addedBackground =>
+      _render('addedFill') ??
       _pebrel('success')?.withValues(alpha: 0.12) ??
       _first([
         'diffEditor.insertedLineBackground',
@@ -220,11 +251,14 @@ abstract final class AppColors {
 
   /// `gitDecoration.deletedResourceForeground`.
   static Color get removed =>
-      _pebrel('error') ?? _colors['gitDecoration.deletedResourceForeground'];
+      _render('error') ??
+      _pebrel('error') ??
+      _colors['gitDecoration.deletedResourceForeground'];
 
   /// Pebrel error tinted over the page, else `diffEditor.removedLineBackground`
   /// or the removed text's background.
   static Color get removedBackground =>
+      _render('removedFill') ??
       _pebrel('error')?.withValues(alpha: 0.12) ??
       _first([
         'diffEditor.removedLineBackground',
@@ -234,7 +268,9 @@ abstract final class AppColors {
   /// `editorWarning.foreground`: a risky choice, e.g. running with no
   /// permission checks.
   static Color get caution =>
-      _pebrel('warning') ?? _colors['editorWarning.foreground'];
+      _render('warning') ??
+      _pebrel('warning') ??
+      _colors['editorWarning.foreground'];
 
   // Shell commands, in the terminal's colors: the program run, quoted
   // strings, options. As the terminal resolves them ([terminalColorTheme]):
@@ -374,7 +410,8 @@ abstract final class AppFonts {
 ThemeData buildAppTheme() {
   final colors = WorkbenchThemeService.instance.colors;
   final brightness = colors.dark ? Brightness.dark : Brightness.light;
-  final pebrelAccent = AppColors._pebrel('accent');
+  final pebrelAccent =
+      AppColors._render('accent') ?? AppColors._pebrel('accent');
   final scheme = ColorScheme.fromSeed(
     seedColor: colors['button.background'],
     brightness: brightness,
@@ -405,7 +442,10 @@ ThemeData buildAppTheme() {
             secondary: pebrelAccent,
             onSecondary: colors['button.foreground'],
             onSurface: AppColors.text,
-            error: AppColors._pebrel('error') ?? scheme.error,
+            error:
+                AppColors._render('error') ??
+                AppColors._pebrel('error') ??
+                scheme.error,
           ),
     dividerColor: AppColors.partBorder,
     visualDensity: VisualDensity.compact,

@@ -13,7 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../base/smooth_scroll.dart';
-import '../icons/brand_logos.dart';
+import '../icons/agent_brand_mark.dart';
 import '../l10n/l10n.dart';
 import '../theme/codicons.dart';
 import '../theme/workbench_theme.dart' show themeColors;
@@ -558,7 +558,7 @@ class _HistoryRowState extends State<_HistoryRow> {
     final title = Row(
       children: [
         if (thread.kernel.logo case final logo?) ...[
-          BrandLogo(logo, size: 12, color: color),
+          AgentBrandMark(logo, color: color),
           const SizedBox(width: 5),
         ],
         Flexible(

@@ -23,6 +23,12 @@ The adapter accepts BaoCode snapshots and Pebrel schema-v1 JSON documents;
 original documents and unknown fields are retained on export. Non-color effects
 and geometry are stored but not automatically applied.
 
+The refined BaoCode workbench uses a separate rendering palette for headings,
+emphasis, links, code, controls and surfaces. It adjusts small-text contrast
+and distinguishes hover, selection and input backgrounds. Neutral UI accents
+use the source palette's information color for actions. These adaptations do
+not modify original snapshots, exported documents or terminal ANSI colors.
+
 The pinned source excerpts are in tool/pebrel/upstream. Regenerate the built-in
 catalog offline with `python3 tool/pebrel/generate.py` from the repository root.
 
