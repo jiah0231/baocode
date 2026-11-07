@@ -60,5 +60,5 @@ jobs:
         run: |
           Remove-Item Env:BAO_BROWSER_LIVE -ErrorAction SilentlyContinue
           Remove-Item Env:BAOCODE_CODEX_OFFICIAL_SMOKE -ErrorAction SilentlyContinue
-          flutter test --no-pub --reporter expanded --timeout 2m test/quick_ask test/keybindings/window_keybindings_test.dart test/models/models_test.dart test/settings/models_page_test.dart test/chat/history_selection_test.dart test/chat/history_stream_batch_test.dart test/composer_test.dart test/update/version_test.dart
+          flutter test --no-pub --reporter expanded --timeout 2m test/quick_ask test/keybindings/window_keybindings_test.dart test/models/models_test.dart test/settings/models_page_test.dart test/chat/history_selection_test.dart test/chat/history_stream_batch_test.dart test/composer_test.dart test/update/version_test.dart packages/bao_editor/test/monaco/flutter/editor_surface_view_test.dart packages/bao_markdown/test/md_editor_test.dart
           if ($LASTEXITCODE -ne 0) { throw 'Quick Ask regressions failed' }

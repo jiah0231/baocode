@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../chat/chat_keys.dart';
-import '../ide/ide_hover.dart';
 import '../ide/ide_input.dart';
 import '../ide/ide_menu.dart';
 import '../kernel/claude_code/claude_haiku.dart';
@@ -111,7 +110,7 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
   bool _copied = false;
   bool _pickingModel = false;
   Rect? _lastAnchor;
-  final _geometryTick = ChangeNotifier();
+  final _geometryTick = ValueNotifier(0);
 
   @override
   void initState() {
@@ -128,7 +127,7 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
     }
     final previous = _lastAnchor;
     _anchor();
-    if (previous != _lastAnchor) _geometryTick.notifyListeners();
+    if (previous != _lastAnchor) _geometryTick.value++;
     // Observe frames already caused by source layout, without an idle ticker.
     WidgetsBinding.instance.addPostFrameCallback(_trackAnchor);
   }
@@ -409,8 +408,9 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
                                     ? null
                                     : () {
                                         final anchor = anchorOf(context);
-                                        if (anchor != null)
+                                        if (anchor != null) {
                                           unawaited(_pickModel(anchor));
+                                        }
                                       },
                               ),
                             ),

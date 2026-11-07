@@ -123,6 +123,8 @@ jobs:
           test/chat/history_stream_batch_test.dart
           test/composer_test.dart
           test/update/version_test.dart
+          packages/bao_editor/test/monaco/flutter/editor_surface_view_test.dart
+          packages/bao_markdown/test/md_editor_test.dart
       - name: Check formatting of combined lag and model fixes
         run: >-
           dart format --output=none --set-exit-if-changed
