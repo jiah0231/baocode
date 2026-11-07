@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:baocode/kernel/claude_code/claude_haiku.dart';
@@ -12,6 +13,41 @@ void main() {
       'index': 0,
       'delta': {'type': 'text_delta', 'text': text},
     },
+  });
+
+  test('stream-json split bytes and UTF-8 emit before final result', () async {
+    final input = StreamController<List<int>>();
+    final chunks = <String>[];
+    final timer = ClaudeAnswerTimer(onText: chunks.add);
+    final done = input.stream
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .forEach((line) => timer.add(line, Duration.zero));
+    final bytes = utf8.encode('${text('你')}\n${text('好')}\n');
+    for (final byte in bytes) {
+      input.add([byte]);
+    }
+    await Future<void>.delayed(Duration.zero);
+    expect(chunks, ['你', '你好']);
+    input.add(
+      utf8.encode(
+        '${jsonEncode({'type': 'result', 'is_error': false, 'result': '你好'})}\n',
+      ),
+    );
+    await input.close();
+    await done;
+    expect(timer.answer('', 0).text, '你好');
+    expect(chunks, ['你', '你好']);
+  });
+
+  test('stream accumulator stops retaining text after its size limit', () {
+    final chunks = <String>[];
+    final timer = ClaudeAnswerTimer(onText: chunks.add, maxTextLength: 4);
+    timer.add(text('abc'), Duration.zero);
+    timer.add(text('defghijkl'), Duration.zero);
+    timer.add(text('ignored'), Duration.zero);
+    expect(chunks, ['abc', 'abcde']);
+    expect(() => timer.answer('', 0), throwsA(isA<ClaudeHaikuException>()));
   });
 
   test('an answer is timed from Claude Code starting its request', () {

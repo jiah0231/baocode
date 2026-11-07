@@ -56,7 +56,7 @@ class QuickAskLayout extends SingleChildLayoutDelegate {
 }
 
 /// Icon-only workbench controls with keyboard access and screen-reader names.
-/// There are deliberately no text or hover hints in the compact popup.
+/// Labels stay in hover help and accessibility, never a permanent toolbar title.
 class QuickAskAction extends StatefulWidget {
   const QuickAskAction({
     super.key,
@@ -64,11 +64,13 @@ class QuickAskAction extends StatefulWidget {
     required this.icon,
     required this.onPressed,
     this.selected = false,
+    this.primary = false,
   });
   final String label;
   final IconData icon;
   final VoidCallback? onPressed;
   final bool selected;
+  final bool primary;
 
   @override
   State<QuickAskAction> createState() => _QuickAskActionState();
@@ -86,49 +88,57 @@ class _QuickAskActionState extends State<QuickAskAction> {
     selected: widget.selected,
     onTap: widget.onPressed,
     excludeSemantics: true,
-    child: FocusableActionDetector(
-      enabled: widget.onPressed != null,
-      mouseCursor: widget.onPressed == null
-          ? MouseCursor.defer
-          : SystemMouseCursors.click,
-      onShowFocusHighlight: (value) => setState(() => _focus = value),
-      onShowHoverHighlight: (value) => setState(() => _hover = value),
-      shortcuts: const {
-        SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
-        SingleActivator(LogicalKeyboardKey.space): ActivateIntent(),
-      },
-      actions: {
-        ActivateIntent: CallbackAction<ActivateIntent>(
-          onInvoke: (_) {
-            widget.onPressed?.call();
-            return null;
-          },
-        ),
-      },
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onPressed,
-        child: Container(
-          width: 26,
-          height: 26,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: widget.selected
-                ? IdeActionButton.activeBackground
-                : _hover || _focus
-                ? IdeActionButton.hoverBackground
-                : null,
-            border: _focus
-                ? Border.all(color: themeColors['focusBorder'])
-                : null,
-            borderRadius: BorderRadius.circular(4),
+    child: IdeHover(
+      message: widget.label,
+      excludeFromSemantics: true,
+      child: FocusableActionDetector(
+        enabled: widget.onPressed != null,
+        mouseCursor: widget.onPressed == null
+            ? MouseCursor.defer
+            : SystemMouseCursors.click,
+        onShowFocusHighlight: (value) => setState(() => _focus = value),
+        onShowHoverHighlight: (value) => setState(() => _hover = value),
+        shortcuts: const {
+          SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+          SingleActivator(LogicalKeyboardKey.space): ActivateIntent(),
+        },
+        actions: {
+          ActivateIntent: CallbackAction<ActivateIntent>(
+            onInvoke: (_) {
+              widget.onPressed?.call();
+              return null;
+            },
           ),
-          child: Icon(
-            widget.icon,
-            size: 15,
-            color: widget.onPressed == null
-                ? themeColors['disabledForeground']
-                : themeColors['editorWidget.foreground'],
+        },
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onPressed,
+          child: Container(
+            width: 30,
+            height: 30,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: widget.primary
+                  ? themeColors['button.background']
+                  : widget.selected
+                  ? IdeActionButton.activeBackground
+                  : _hover || _focus
+                  ? IdeActionButton.hoverBackground
+                  : null,
+              border: _focus
+                  ? Border.all(color: themeColors['focusBorder'])
+                  : null,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Icon(
+              widget.icon,
+              size: 15,
+              color: widget.onPressed == null
+                  ? themeColors['disabledForeground']
+                  : widget.primary
+                  ? themeColors['button.foreground']
+                  : themeColors['editorWidget.foreground'],
+            ),
           ),
         ),
       ),

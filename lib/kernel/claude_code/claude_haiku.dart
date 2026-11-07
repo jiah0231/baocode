@@ -50,6 +50,8 @@ Future<String> askClaudeHaiku(
   List<({String name, ImageAttachment image})> images = const [],
   ClaudeHaikuTools? tools,
   String? session,
+  void Function(String text)? onText,
+  int? maxAnswerLength,
 }) async {
   final host = location == null ? null : RemoteLocation.hostOf(location);
   final providers = ModelProviders.current;
@@ -75,6 +77,8 @@ Future<String> askClaudeHaiku(
       images: images,
       tools: tools,
       session: session,
+      onText: onText,
+      maxAnswerLength: maxAnswerLength,
     );
   }
   final (provider, info) = custom;
@@ -107,6 +111,8 @@ Future<String> askClaudeHaiku(
     env: env,
     images: images,
     tools: tools,
+    onText: onText,
+    maxAnswerLength: maxAnswerLength,
   );
 }
 
@@ -131,6 +137,7 @@ UsageCall? claudeHaikuCall(
   Map<String, Object?> result, {
   required DateTime at,
   String? session,
+  bool stream = false,
 }) {
   int count(Object? value) => value is num ? value.toInt() : 0;
   final usage = switch (result['usage']) {
@@ -160,7 +167,7 @@ UsageCall? claudeHaikuCall(
     model: model
         .replaceFirst(RegExp(r'\[[^\]]*\]$'), '')
         .replaceFirst(RegExp(r'-\d{8}$'), ''),
-    stream: false,
+    stream: stream,
     session: session,
     requestClass: UsageClass.auxiliary,
     input: input,
@@ -282,6 +289,13 @@ class ClaudeTimedAnswer {
 /// Times an answer from what Claude Code prints, as stream-json, each
 /// line as it comes ([add]); [answer] once it has exited.
 class ClaudeAnswerTimer {
+  ClaudeAnswerTimer({this.onText, this.maxTextLength});
+
+  /// Cumulative text from actual partial messages, never synthesized.
+  final void Function(String text)? onText;
+  final int? maxTextLength;
+  final StringBuffer _text = StringBuffer();
+  bool _overflow = false;
   Duration? _start;
   Duration? _firstText;
   Duration? _lastText;
@@ -309,6 +323,19 @@ class ClaudeAnswerTimer {
           when text.isNotEmpty:
         _firstText ??= at;
         _lastText = at;
+        if (onText != null && !_overflow) {
+          final limit = maxTextLength;
+          if (limit != null && _text.length + text.length > limit) {
+            // One extra code unit reports overflow to the caller without
+            // retaining an unbounded provider response.
+            final remaining = limit + 1 - _text.length;
+            _text.write(text.substring(0, remaining));
+            _overflow = true;
+          } else {
+            _text.write(text);
+          }
+          onText!(_text.toString());
+        }
       case {'type': 'result'}:
         _result = message as Map<String, Object?>;
     }
@@ -317,6 +344,9 @@ class ClaudeAnswerTimer {
   /// The answer, with what Claude Code wrote to [stderr] and exited with
   /// ([code]); throws [ClaudeHaikuException] for none.
   ClaudeTimedAnswer answer(String stderr, int code) {
+    if (_overflow) {
+      throw const ClaudeHaikuException('The answer exceeded its size limit.');
+    }
     final text = claudeHaikuAnswer(jsonEncode(_result), stderr, code);
     final start = _start ?? Duration.zero;
     final first = _firstText ?? _lastText ?? start;

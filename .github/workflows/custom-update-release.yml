@@ -111,6 +111,9 @@ jobs:
           test/keybindings/window_keybindings_test.dart
           test/models/models_test.dart
           test/quick_ask
+          test/claude_haiku_test.dart
+          test/kernel/claude_haiku_test.dart
+          test/models/proxy/quick_ask_streaming_test.dart
           test/settings/models_page_test.dart
       - name: Test global Quick Ask context, routing and safe editing
         run: >-
@@ -477,13 +480,13 @@ jobs:
         shell: pwsh
         run: |
           # Public versioned URL + verified hash and size; no expiring Actions artifact.
-          # Source: 05ced17ce1ec9ff784858df91fe95bc9f415fa5e, release custom-v1.9.1+41.
+          # Source: 470e651edca224042acdb24c9b638ef47e657932, release custom-v1.9.1+42.
           $baseline = Join-Path $env:RUNNER_TEMP 'baseline-installer'
           New-Item -ItemType Directory -Force $baseline | Out-Null
           $setup = Join-Path $baseline 'BaoCode-1.9.1-setup.exe'
-          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.9.1%2B41/BaoCode-1.9.1-setup.exe' -OutFile $setup
-          if ((Get-Item $setup).Length -ne 36829754) { throw 'Pinned release Setup size mismatch' }
-          if ((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() -ne '59e86c9043594a715dd6ea46f76660eb165e11be0443803b2accdfb6e68819d4') { throw 'Pinned release Setup checksum mismatch' }
+          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.9.1%2B42/BaoCode-1.9.1-setup.exe' -OutFile $setup
+          if ((Get-Item $setup).Length -ne 36833911) { throw 'Pinned release Setup size mismatch' }
+          if ((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() -ne 'cf3cb07e0b497bd6529b8e256266002ed1dd029de89109b988131b2ec3362e0f') { throw 'Pinned release Setup checksum mismatch' }
       - name: Install pinned release then replace in isolated per-user directory
         shell: pwsh
         run: |
@@ -491,7 +494,7 @@ jobs:
           $new = @(Get-ChildItem build/installers -Filter '*-setup.exe')
           if ($new.Count -ne 1) { throw 'Expected one new Setup' }
           $version = (Select-String -Path pubspec.yaml -Pattern '^version: (.+)$').Matches[0].Groups[1].Value
-          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.9.1+41
+          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.9.1+42
       - uses: actions/upload-artifact@v6
         with:
           name: custom-installer

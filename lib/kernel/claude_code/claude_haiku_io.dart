@@ -33,6 +33,8 @@ Future<String> askClaudeHaiku(
   List<({String name, ImageAttachment image})> images = const [],
   ClaudeHaikuTools? tools,
   String? session,
+  void Function(String text)? onText,
+  int? maxAnswerLength,
 }) async {
   void kept(String line) {
     if (env != null || !line.contains('"result"')) return;
@@ -42,6 +44,7 @@ Future<String> askClaudeHaiku(
           result.cast<String, Object?>(),
           at: DateTime.now(),
           session: session,
+          stream: onText != null || images.isNotEmpty,
         );
         if (call != null) UsageLedger.current.record(call);
       }
@@ -50,8 +53,11 @@ Future<String> askClaudeHaiku(
     }
   }
 
-  if (images.isNotEmpty) {
-    final timer = ClaudeAnswerTimer();
+  if (images.isNotEmpty || onText != null) {
+    final timer = ClaudeAnswerTimer(
+      onText: onText,
+      maxTextLength: maxAnswerLength,
+    );
     final clock = Stopwatch()..start();
     final (stderr, code) = await _run(
       system,
@@ -152,6 +158,13 @@ Future<(String, int)> _run(
       ? null
       : await ClaudeSettingsFile.write(settings);
   final proxy = await NetworkProxy.instance.environment();
+  var cancelled = false;
+  unawaited(cancel?.then((_) => cancelled = true));
+  await Future<void>.value();
+  if (cancelled) {
+    if (settingsFile != null) await ClaudeSettingsFile.delete(settingsFile);
+    throw const ClaudeHaikuCancelled();
+  }
   final Process process;
   try {
     process = await Process.start(
@@ -190,21 +203,34 @@ Future<(String, int)> _run(
       process.exitCode.then((_) => ClaudeSettingsFile.delete(settingsFile)),
     );
   }
-  var cancelled = false;
   unawaited(
     cancel?.then((_) {
       cancelled = true;
-      process.kill();
+      process.kill(ProcessSignal.sigkill);
     }),
   );
   final stdout = process.stdout
       .transform(const Utf8Decoder(allowMalformed: true))
       .transform(const LineSplitter())
-      .forEach(onLine);
+      .forEach((line) {
+        if (!cancelled) onLine(line);
+      });
+  final diagnostic = StringBuffer();
   final stderr = process.stderr
       .transform(const Utf8Decoder(allowMalformed: true))
-      .join();
-  process.stdin.add(utf8.encode(prompt));
+      .forEach((text) {
+        final room = 16000 - diagnostic.length;
+        if (room > 0) {
+          diagnostic.write(
+            text.substring(0, text.length < room ? text.length : room),
+          );
+        }
+      });
+  if (cancelled) {
+    process.kill(ProcessSignal.sigkill);
+  } else {
+    process.stdin.add(utf8.encode(prompt));
+  }
   unawaited(process.stdin.close().catchError((Object _) {}));
   final code = await process.exitCode.timeout(
     // Looking at files takes turns.
@@ -216,7 +242,8 @@ Future<(String, int)> _run(
   );
   if (cancelled) throw const ClaudeHaikuCancelled();
   await stdout;
-  return (await stderr, code);
+  await stderr;
+  return (diagnostic.toString(), code);
 }
 
 /// [_run] on BaoCode's own core: one turn of an engine in an isolate of its
@@ -267,18 +294,28 @@ Future<(String, int)> _runBuiltin(
     strictMcpConfig: true,
     slashCommands: false,
   );
+  var cancelled = false;
+  unawaited(cancel?.then((_) => cancelled = true));
+  await Future<void>.value();
+  if (cancelled) throw const ClaudeHaikuCancelled();
   final AgentIsolate agent;
   try {
     agent = await AgentIsolate.spawn(options, debugName: 'bao-agent-haiku');
   } on Object catch (error) {
     throw ClaudeHaikuException('The built-in core could not start: $error');
   }
+  if (cancelled) {
+    agent.close();
+    throw const ClaudeHaikuCancelled();
+  }
   onStart?.call();
   final ended = Completer<int>();
   final subscription = agent.messages.listen(
     (line) {
       final isResult = line['type'] == 'result';
-      if (stream || message || isResult) onLine(jsonEncode(line));
+      if (!cancelled && (stream || message || isResult)) {
+        onLine(jsonEncode(line));
+      }
       if (isResult && !ended.isCompleted) {
         ended.complete(line['is_error'] == true ? 1 : 0);
       }
@@ -287,7 +324,6 @@ Future<(String, int)> _runBuiltin(
       if (!ended.isCompleted) ended.complete(1);
     },
   );
-  var cancelled = false;
   unawaited(
     cancel?.then((_) {
       cancelled = true;

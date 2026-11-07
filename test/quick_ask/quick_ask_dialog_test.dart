@@ -1,5 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:ui' as ui;
+
+import 'package:flutter/rendering.dart';
+import 'package:baocode/chat/widgets/markdown_view.dart';
 
 import 'package:baocode/ide/ide_button.dart';
 import 'package:baocode/l10n/l10n.dart';
@@ -24,6 +29,19 @@ class _Request {
   Completer<String>? pending;
   Future<void>? cancelled;
   Object? error;
+  void Function(String)? emit;
+
+  Future<String> stream(
+    String system,
+    String prompt, {
+    String? model,
+    required bool exact,
+    Future<void>? cancel,
+    required void Function(String) onText,
+  }) {
+    emit = onText;
+    return call(system, prompt, model: model, exact: exact, cancel: cancel);
+  }
 
   Future<String> call(
     String system,
@@ -69,7 +87,11 @@ void main() {
       providers.dispose();
     });
     request = _Request();
-    service = QuickAskService(request: request.call, providers: providers);
+    service = QuickAskService(
+      request: request.call,
+      streamRequest: request.stream,
+      providers: providers,
+    );
   });
 
   Future<void> open(
@@ -292,6 +314,218 @@ void main() {
     expect(noSelection.onPressed, isNull);
   });
 
+  testWidgets(
+    'streams before completion and never applies a stopped partial edit',
+    (tester) async {
+      request.pending = Completer<String>();
+      var applications = 0;
+      await open(
+        tester,
+        source: QuickAskContext(
+          sourceLabel: 'file',
+          selectedText: 'original',
+          applyReplacement: (_) {
+            applications++;
+            return true;
+          },
+        ),
+      );
+      await tester.tap(find.bySemanticsLabel('Edit selection'));
+      await send(tester);
+      request.emit!('Partial replacement');
+      await tester.pump();
+      expect(find.text('Partial replacement'), findsOneWidget);
+      expect(find.byKey(const ValueKey('quick-ask-progress')), findsOneWidget);
+      QuickAskAction apply() => tester.widget<QuickAskAction>(
+        find.widgetWithIcon(QuickAskAction, Codicons.checkAll),
+      );
+      expect(apply().onPressed, isNull);
+      await tester.tap(find.bySemanticsLabel('Stop'));
+      await tester.pumpAndSettle();
+      expect(apply().onPressed, isNull);
+      request.emit!('stale chunk');
+      request.pending!.complete('stale final');
+      request.pending = null;
+      await tester.pumpAndSettle();
+      expect(find.text('stale chunk'), findsNothing);
+      expect(find.text('stale final'), findsNothing);
+      expect(applications, 0);
+      await send(tester);
+      expect(apply().onPressed, isNotNull);
+    },
+  );
+
+  testWidgets('streaming follows the bottom but preserves reading position', (
+    tester,
+  ) async {
+    request.pending = Completer<String>();
+    await open(tester);
+    await send(tester);
+    String answer(int count) => List.generate(
+      count,
+      (i) => 'Paragraph $i with enough text to wrap across the compact answer.',
+    ).join('\n\n');
+    request.emit!(answer(20));
+    await tester.pump();
+    await tester.pump();
+    final scroll = tester
+        .widget<SingleChildScrollView>(
+          find.byKey(const ValueKey('quick-ask-scroll')),
+        )
+        .controller!;
+    expect(scroll.position.extentAfter, lessThan(1));
+    scroll.jumpTo(80);
+    await tester.pump();
+    request.emit!(answer(25));
+    await tester.pump();
+    await tester.pump();
+    expect(scroll.offset, 80);
+    scroll.jumpTo(scroll.position.maxScrollExtent);
+    request.emit!(answer(30));
+    await tester.pump();
+    await tester.pump();
+    expect(scroll.position.extentAfter, lessThan(1));
+    request.pending!.complete(answer(30));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('markdown never loads remote images automatically', (
+    tester,
+  ) async {
+    request.pending = Completer<String>();
+    await open(tester);
+    await send(tester);
+    request.emit!(
+      '![remote image](https://example.invalid/tracker.png)\n\n[Reference](https://example.invalid/reference)',
+    );
+    await tester.pumpAndSettle();
+    // The shared renderer represents web images as alt text (or explicit
+    // links in a file scope), never fetching them on receiving model output.
+    expect(
+      find.descendant(
+        of: find.byType(QuickAskDialog),
+        matching: find.byType(Image),
+      ),
+      findsNothing,
+    );
+    expect(find.text('[remote image]'), findsOneWidget);
+    expect(find.bySemanticsLabel('Loading...'), findsOneWidget);
+    request.pending!.complete('Done');
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('failed streamed edits stay read only; close ignores chunks', (
+    tester,
+  ) async {
+    request.pending = Completer<String>();
+    await open(
+      tester,
+      source: QuickAskContext(
+        sourceLabel: 'file',
+        selectedText: 'original',
+        applyReplacement: (_) => true,
+      ),
+    );
+    await tester.tap(find.bySemanticsLabel('Edit selection'));
+    await send(tester);
+    request.emit!('Incomplete');
+    await tester.pump();
+    request.pending!.completeError(StateError('private'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<QuickAskAction>(
+            find.widgetWithIcon(QuickAskAction, Codicons.checkAll),
+          )
+          .onPressed,
+      isNull,
+    );
+    expect(find.textContaining('Could not get an answer.'), findsOneWidget);
+    request.pending = Completer<String>();
+    await send(tester);
+    final emit = request.emit!;
+    await tester.tap(find.bySemanticsLabel('Close Dialog'));
+    await tester.pumpAndSettle();
+    emit('late');
+    request.pending!.complete('late');
+    await tester.pumpAndSettle();
+    expect(find.byType(QuickAskDialog), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final theme in ['Bao Dark', 'Bao Light']) {
+    testWidgets('renders $theme compact and streamed markdown preview', (
+      tester,
+    ) async {
+      if (const bool.fromEnvironment('QUICK_ASK_PREVIEWS')) {
+        await tester.runAsync(() async {
+          final paths = [
+            '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+            '/System/Library/Fonts/Supplemental/Arial.ttf',
+            r'C:\Windows\Fonts\arial.ttf',
+          ];
+          final body = paths
+              .map(File.new)
+              .where((file) => file.existsSync())
+              .firstOrNull;
+          for (final (family, file) in [
+            if (body != null) ('Roboto', body),
+            (Codicons.fontFamily, File('assets/codicons/codicon.ttf')),
+          ]) {
+            await (FontLoader(family)..addFont(
+                  Future.value(ByteData.sublistView(file.readAsBytesSync())),
+                ))
+                .load();
+          }
+        });
+      }
+      final previous = WorkbenchThemeService.instance;
+      final themes = WorkbenchThemeService()..restore(setting: theme);
+      WorkbenchThemeService.instance = themes;
+      addTearDown(() => WorkbenchThemeService.instance = previous);
+      await open(
+        tester,
+        source: QuickAskContext(
+          sourceLabel: 'editor',
+          selectedText: 'selected',
+          contextText: 'nearby',
+          selectionAnchor: () => const Rect.fromLTWH(100, 100, 1, 18),
+        ),
+      );
+      Future<void> capture(String name) async {
+        if (!const bool.fromEnvironment('QUICK_ASK_PREVIEWS')) return;
+        final boundary = tester.renderObject<RenderRepaintBoundary>(
+          find.byType(RepaintBoundary).first,
+        );
+        await tester.runAsync(() async {
+          final image = await boundary.toImage();
+          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+          final file = File('build/quick-ask-previews/$name.png');
+          await file.parent.create(recursive: true);
+          await file.writeAsBytes(bytes!.buffer.asUint8List());
+          image.dispose();
+        });
+      }
+
+      await capture('$theme-composer');
+      request.pending = Completer<String>();
+      await send(tester);
+      request.emit!(
+        '**Selection explained**\n\nA compact answer with readable spacing.\n\n- Markdown stays readable.\n- The selection stays in view.',
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(MarkdownView), findsOneWidget);
+      expect(find.bySemanticsLabel('Stop'), findsOneWidget);
+      await capture('$theme-streaming');
+      request.pending!.complete(
+        '**Selection explained**\n\nA compact answer with readable spacing.\n\n- Markdown stays readable.\n- The selection stays in view.',
+      );
+      await tester.pumpAndSettle();
+      await capture('$theme-complete');
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('stop discards a late answer and permits a fresh request', (
     tester,
   ) async {
@@ -392,6 +626,45 @@ void main() {
     );
   });
 
+  testWidgets(
+    'narrow viewport with large text retains named keyboard controls',
+    (tester) async {
+      tester.view.physicalSize = const Size(220, 260);
+      tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = 2;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      await open(
+        tester,
+        source: const QuickAskContext(
+          sourceLabel: 'editor',
+          selectedText: 'selection',
+          contextText: 'nearby',
+        ),
+      );
+      for (final label in [
+        'Ask',
+        'Edit selection',
+        'Review context',
+        'Send',
+        'Close Dialog',
+      ]) {
+        expect(find.bySemanticsLabel(label), findsOneWidget);
+      }
+      final frame = tester.getRect(
+        find.byKey(const ValueKey('quick-ask-frame')),
+      );
+      expect(frame.left, greaterThanOrEqualTo(8));
+      expect(frame.right, lessThanOrEqualTo(212));
+      expect(frame.bottom, lessThanOrEqualTo(252));
+      expect(tester.takeException(), isNull);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byType(QuickAskDialog), findsNothing);
+    },
+  );
+
   testWidgets('opens beside the selected end without a modal scrim or hints', (
     tester,
   ) async {
@@ -408,7 +681,7 @@ void main() {
     expect(frame.left, 210);
     expect(frame.top, 144);
     expect(frame.width, 320);
-    expect(frame.height, lessThan(90));
+    expect(frame.height, lessThan(105));
     expect(
       find.descendant(
         of: find.byType(QuickAskDialog),

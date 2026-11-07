@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -8,8 +9,10 @@ import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/kernel/claude_code/claude_core_setting.dart';
 import 'package:baocode/kernel/claude_code/claude_environment.dart';
 import 'package:baocode/kernel/claude_code/claude_haiku.dart';
+import 'package:baocode/quick_ask/quick_ask_service.dart';
 import 'package:baocode/models/model_provider.dart';
 import 'package:baocode/models/model_providers.dart';
+import 'package:baocode/models/model_runtime.dart';
 import 'package:baocode/network/network_proxy_io.dart';
 import 'package:baocode/network/proxy_settings.dart';
 import 'package:path/path.dart' as p;
@@ -113,6 +116,7 @@ void main() {
     late Directory root;
     HttpOverrides? previousHttpOverrides;
     final previous = ModelProviders.current;
+    final previousCore = ClaudeCore.current;
 
     setUp(() async {
       previousHttpOverrides = HttpOverrides.current;
@@ -137,6 +141,7 @@ void main() {
 
     tearDown(() async {
       ModelProviders.current = previous;
+      ClaudeCore.current = previousCore;
       ClaudeEnvironment.use(null);
       try {
         await api.close();
@@ -145,6 +150,107 @@ void main() {
         HttpOverrides.global = previousHttpOverrides;
       }
     });
+
+    test('quick ask streams through the builtin engine and Chat proxy before completion', () async {
+      final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final release = Completer<void>();
+      final cancel = Completer<void>();
+      final first = Completer<String>();
+      final chunks = <String>[];
+      final requests = <Map<String, dynamic>>[];
+      final handlers = <Future<void>>[];
+      final subscription = upstream.listen((request) {
+        handlers.add(() async {
+          requests.add(
+            jsonDecode(await utf8.decodeStream(request))
+                as Map<String, dynamic>,
+          );
+          request.response.headers.contentType = ContentType(
+            'text',
+            'event-stream',
+          );
+          Future<void> chunk(String text, {bool end = false}) async {
+            request.response.write(
+              'data: ${jsonEncode({
+                'id': 'quick-stream',
+                'object': 'chat.completion.chunk',
+                'model': 'quick-exact',
+                'choices': [
+                  {
+                    'index': 0,
+                    'delta': {'content': text},
+                    'finish_reason': end ? 'stop' : null,
+                  },
+                ],
+              })}\n\n',
+            );
+            await request.response.flush();
+          }
+
+          try {
+            await chunk('你');
+            // The test releases this only after QuickAskService.onText runs.
+            await release.future;
+            await chunk('好');
+            await chunk('', end: true);
+            request.response.write('data: [DONE]\n\n');
+            await request.response.close();
+          } on SocketException {
+            // Cancellation after a failed assertion closes the peer.
+          } on HttpException {
+            // Same cleanup path on Windows HTTP sockets.
+          }
+        }());
+      });
+      final providers = ModelProviders.memory(
+        providers: [
+          ModelProvider(
+            id: 'stream',
+            name: 'Streaming',
+            protocol: ProviderProtocol.openaiChat,
+            baseUrl: 'http://127.0.0.1:${upstream.port}/v1',
+            auth: ProviderAuth.apiKey,
+            models: const [ProviderModel(id: 'quick-exact')],
+          ),
+        ],
+      );
+      ModelProviders.current = providers;
+      await providers.setKey('stream', 'mock-key');
+      await providers.setQuickAskModel('@stream/quick-exact');
+      final answer = QuickAskService().ask(
+        question: 'Translate hello',
+        selectedText: 'hello',
+        cancel: cancel.future,
+        onText: (text) {
+          chunks.add(text);
+          if (!first.isCompleted) first.complete(text);
+        },
+      );
+      final settled = answer.then<void>(
+        (_) {},
+        onError: (Object _, StackTrace _) {},
+      );
+      try {
+        expect(await first.future.timeout(const Duration(seconds: 20)), '你');
+        expect(release.isCompleted, isFalse);
+        release.complete();
+        expect(await answer, '你好');
+        expect(chunks, ['你', '你好']);
+        expect(requests, hasLength(1));
+        expect(requests.single['model'], 'quick-exact');
+        expect(requests.single['stream'], isTrue);
+        expect(requests.single['tools'] ?? [], isEmpty);
+      } finally {
+        if (!release.isCompleted) release.complete();
+        cancel.complete();
+        await settled;
+        await stopModelProxy();
+        await Future.wait(handlers);
+        await subscription.cancel();
+        await upstream.close(force: true);
+        providers.dispose();
+      }
+    }, timeout: const Timeout(Duration(minutes: 1)));
 
     test('no upstream: not asked of the machine\'s own setup', () async {
       ModelProviders.current = ModelProviders.memory();

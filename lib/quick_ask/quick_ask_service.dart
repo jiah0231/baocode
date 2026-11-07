@@ -44,6 +44,33 @@ typedef QuickAskRequester = Future<String> Function(
   Future<void>? cancel,
 });
 
+/// Streaming injection keeps existing non-streaming requesters compatible.
+typedef QuickAskStreamRequester = Future<String> Function(
+  String system,
+  String prompt, {
+  String? model,
+  required bool exact,
+  Future<void>? cancel,
+  required void Function(String text) onText,
+});
+
+Future<String> _streamRequest(
+  String system,
+  String prompt, {
+  String? model,
+  required bool exact,
+  Future<void>? cancel,
+  required void Function(String text) onText,
+}) => askClaudeHaiku(
+  system,
+  prompt,
+  model: model,
+  exact: exact,
+  cancel: cancel,
+  onText: onText,
+  maxAnswerLength: quickAskAnswerLimit,
+);
+
 Future<String> _request(
   String system,
   String prompt, {
@@ -59,11 +86,14 @@ class QuickAskService {
   QuickAskService({
     this._providers,
     QuickAskRequester? request,
+    QuickAskStreamRequester? streamRequest,
     this.timeout = const Duration(seconds: 90),
-  }) : _ask = request ?? _request;
+  }) : _ask = request ?? _request,
+       _stream = streamRequest ?? (request == null ? _streamRequest : null);
 
   final ModelProviders? _providers;
   final QuickAskRequester _ask;
+  final QuickAskStreamRequester? _stream;
   final Duration timeout;
 
   Future<String> ask({
@@ -75,6 +105,7 @@ class QuickAskService {
     String? sessionModel,
     QuickAskMode mode = QuickAskMode.ask,
     Future<void>? cancel,
+    void Function(String text)? onText,
   }) async {
     final instruction = question.trim();
     if (instruction.isEmpty) {
@@ -113,16 +144,41 @@ class QuickAskService {
       'context': _clip(surroundingText, quickAskContextLimit),
       'contextTruncated': surroundingText.length > quickAskContextLimit,
     });
+    var accepting = true;
+    final overflow = Completer<String>();
+    void receive(String text) {
+      if (!accepting || stopped.isCompleted || overflow.isCompleted) return;
+      if (text.length > quickAskAnswerLimit) {
+        overflow.completeError(
+          const QuickAskException(QuickAskFailure.answerTooLong),
+        );
+        stop();
+        return;
+      }
+      onText?.call(text);
+    }
+
     try {
       final answer =
           await Future.any<String>([
-            _ask(
-              mode == QuickAskMode.edit ? _editSystem : _askSystem,
-              prompt,
-              model: model.model,
-              exact: model.exact,
-              cancel: stopped.future,
-            ),
+            if (_stream case final stream?)
+              stream(
+                mode == QuickAskMode.edit ? _editSystem : _askSystem,
+                prompt,
+                model: model.model,
+                exact: model.exact,
+                cancel: stopped.future,
+                onText: receive,
+              )
+            else
+              _ask(
+                mode == QuickAskMode.edit ? _editSystem : _askSystem,
+                prompt,
+                model: model.model,
+                exact: model.exact,
+                cancel: stopped.future,
+              ),
+            overflow.future,
             stopped.future.then<String>(
               (_) => throw const ClaudeHaikuCancelled(),
             ),
@@ -149,6 +205,8 @@ class QuickAskService {
       rethrow;
     } on Object {
       throw const QuickAskException(QuickAskFailure.requestFailed);
+    } finally {
+      accepting = false;
     }
   }
 }
@@ -162,6 +220,7 @@ Future<String> askQuickQuestion({
   String? sessionModel,
   QuickAskMode mode = QuickAskMode.ask,
   Future<void>? cancel,
+  void Function(String text)? onText,
 }) => QuickAskService().ask(
   question: question,
   selectedText: selectedText,
@@ -171,6 +230,7 @@ Future<String> askQuickQuestion({
   sessionModel: sessionModel,
   mode: mode,
   cancel: cancel,
+  onText: onText,
 );
 
 /// Resolve only the automatic choice, never repair a stale explicit

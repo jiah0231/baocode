@@ -76,9 +76,9 @@ void main() {
       expect(v('1.2.0') == v('1.2.0+0'), isTrue);
     });
 
-    test('compact popup release upgrades the published +41 build', () {
-      expect(currentAppVersion, v('1.9.1+42'));
-      expect(currentAppVersion > v('1.9.1+41'), isTrue);
+    test('streaming popup release upgrades the published +42 build', () {
+      expect(currentAppVersion, v('1.9.1+43'));
+      expect(currentAppVersion > v('1.9.1+42'), isTrue);
     });
 
     test("is pubspec.yaml's version", () {

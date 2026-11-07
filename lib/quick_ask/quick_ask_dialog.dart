@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../chat/chat_keys.dart';
+import '../chat/widgets/markdown_view.dart';
 import '../ide/ide_input.dart';
 import '../ide/ide_menu.dart';
 import '../kernel/claude_code/claude_haiku.dart';
@@ -102,6 +103,7 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
   final _question = TextEditingController();
   final _replacement = TextEditingController();
   final _focus = FocusNode();
+  final _scroll = ScrollController();
   late final _service = widget.service ?? QuickAskService();
   late final _providers = ModelProviders.current;
   QuickAskMode _mode = QuickAskMode.ask;
@@ -113,6 +115,7 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
   bool _showContext = false;
   bool _applying = false;
   bool _applied = false;
+  bool _complete = false;
   bool _copied = false;
   bool _pickingModel = false;
   Rect? _lastAnchor;
@@ -163,6 +166,7 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
     _question.dispose();
     _replacement.dispose();
     _focus.dispose();
+    _scroll.dispose();
     widget.source?.selectionAnchorListenable?.removeListener(_scheduleAnchor);
     _anchorPosition.dispose();
     super.dispose();
@@ -173,6 +177,18 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
     final cancel = _cancel;
     _cancel = null;
     if (cancel != null && !cancel.isCompleted) cancel.complete();
+  }
+
+  // Follow new output only while the reader is already at the bottom.
+  // A user scrolling upward between receiving a chunk and layout wins.
+  void _followOutput(int generation) {
+    if (!_scroll.hasClients || _scroll.position.extentAfter > 32) return;
+    final before = _scroll.offset;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || generation != _generation || !_scroll.hasClients) return;
+      if (_scroll.offset < before - 1) return;
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+    });
   }
 
   Future<void> _send() async {
@@ -188,6 +204,7 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
     setState(() {
       _cancel = cancel;
       _answer = null;
+      _complete = false;
       _error = null;
       _applied = false;
       _copied = false;
@@ -205,10 +222,17 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
         sessionModel: widget.source?.sessionModel,
         mode: _mode,
         cancel: cancel.future,
+        onText: (text) {
+          if (!mounted || generation != _generation || text == _answer) return;
+          _followOutput(generation);
+          setState(() => _answer = text);
+        },
       );
       if (!mounted || generation != _generation) return;
+      _followOutput(generation);
       setState(() {
         _answer = answer;
+        _complete = true;
         _replacement.text = answer;
       });
     } on ClaudeHaikuCancelled {
@@ -236,6 +260,7 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
         _applying ||
         _busy ||
         _applied ||
+        !_complete ||
         _answer == null ||
         _mode != QuickAskMode.edit) {
       return;
@@ -259,7 +284,9 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
     try {
       await Clipboard.setData(
         ClipboardData(
-          text: _mode == QuickAskMode.edit ? _replacement.text : _answer ?? '',
+          text: _mode == QuickAskMode.edit && _complete
+              ? _replacement.text
+              : _answer ?? '',
         ),
       );
       if (mounted) setState(() => _copied = true);
@@ -273,6 +300,7 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
     setState(() {
       _mode = mode;
       _answer = null;
+      _complete = false;
       _error = null;
       _applied = false;
       _copied = false;
@@ -314,15 +342,19 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
     final hasContext = source?.contextText.isNotEmpty == true;
     final edit = _mode == QuickAskMode.edit;
     final textStyle = TextStyle(
-      fontSize: 12,
-      height: 1.5,
+      fontSize: 13,
+      height: 1.55,
+      fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily,
       color: colors['editorWidget.foreground'],
     );
     Widget preview(String label, String text) => Semantics(
       label: label,
       child: Container(
-        padding: const EdgeInsets.all(6),
-        color: colors['textCodeBlock.background'],
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: colors['editorWidget.foreground'].withValues(alpha: 0.035),
+          borderRadius: BorderRadius.circular(6),
+        ),
         child: SelectableText(text, style: textStyle),
       ),
     );
@@ -349,20 +381,30 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
               type: MaterialType.transparency,
               child: Container(
                 key: const ValueKey('quick-ask-frame'),
-                padding: const EdgeInsets.all(6),
+                padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
                   color: colors['editorWidget.background'],
                   border: Border.all(
-                    color: colors.get('widget.border') ?? colors['focusBorder'],
+                    color:
+                        colors.get('widget.border') ??
+                        colors['editorWidget.foreground'].withValues(
+                          alpha: 0.18,
+                        ),
                   ),
-                  borderRadius: BorderRadius.circular(7),
+                  borderRadius: BorderRadius.circular(12),
                   boxShadow: [
-                    BoxShadow(color: colors['widget.shadow'], blurRadius: 12),
+                    BoxShadow(
+                      color: colors['widget.shadow'].withValues(alpha: 0.18),
+                      blurRadius: 24,
+                      offset: const Offset(0, 8),
+                    ),
                   ],
                 ),
                 child: DefaultTextStyle(
                   style: textStyle,
                   child: SingleChildScrollView(
+                    key: const ValueKey('quick-ask-scroll'),
+                    controller: _scroll,
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -374,6 +416,11 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
                           autofocus: true,
                           minLines: 1,
                           maxLines: 4,
+                          radius: 7,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
                           semanticsLabel: edit
                               ? l10n.quickAskEditHint
                               : l10n.quickAskQuestionHint,
@@ -390,25 +437,39 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
                                 unawaited(_send()),
                           },
                         ),
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 8),
                         Wrap(
+                          spacing: 4,
+                          runSpacing: 4,
                           alignment: WrapAlignment.spaceBetween,
                           children: [
-                            QuickAskAction(
-                              label: l10n.quickAskAsk,
-                              icon: Codicons.comment,
-                              selected: !edit,
-                              onPressed: _busy || _applying
-                                  ? null
-                                  : () => _setMode(QuickAskMode.ask),
-                            ),
-                            QuickAskAction(
-                              label: l10n.quickAskEdit,
-                              icon: Codicons.edit,
-                              selected: edit,
-                              onPressed: _busy || _applying || !_canEdit
-                                  ? null
-                                  : () => _setMode(QuickAskMode.edit),
+                            Container(
+                              decoration: BoxDecoration(
+                                color: colors['editorWidget.foreground']
+                                    .withValues(alpha: 0.045),
+                                borderRadius: BorderRadius.circular(7),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  QuickAskAction(
+                                    label: l10n.quickAskAsk,
+                                    icon: Codicons.comment,
+                                    selected: !edit,
+                                    onPressed: _busy || _applying
+                                        ? null
+                                        : () => _setMode(QuickAskMode.ask),
+                                  ),
+                                  QuickAskAction(
+                                    label: l10n.quickAskEdit,
+                                    icon: Codicons.edit,
+                                    selected: edit,
+                                    onPressed: _busy || _applying || !_canEdit
+                                        ? null
+                                        : () => _setMode(QuickAskMode.edit),
+                                  ),
+                                ],
+                              ),
                             ),
                             Builder(
                               builder: (context) => QuickAskAction(
@@ -466,6 +527,7 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
                                   : () => widget.onClose(true),
                             ),
                             QuickAskAction(
+                              primary: true,
                               label: _busy
                                   ? l10n.quickAskStop
                                   : l10n.quickAskSend,
@@ -482,6 +544,26 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
                             ),
                           ],
                         ),
+                        if (_busy)
+                          Semantics(
+                            label: l10n.langLoading,
+                            liveRegion: true,
+                            child: Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: Align(
+                                alignment: Alignment.centerLeft,
+                                child: Container(
+                                  key: const ValueKey('quick-ask-progress'),
+                                  width: 32,
+                                  height: 2,
+                                  decoration: BoxDecoration(
+                                    color: colors['button.background'],
+                                    borderRadius: BorderRadius.circular(1),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
                         if (_showContext && source != null) ...[
                           if (source.selectedText.isNotEmpty) ...[
                             const SizedBox(height: 6),
@@ -503,14 +585,23 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
                           ),
                         ],
                         if (_answer case final answer?) ...[
-                          const SizedBox(height: 6),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            child: Container(
+                              height: 1,
+                              color: colors['editorWidget.foreground']
+                                  .withValues(alpha: 0.08),
+                            ),
+                          ),
                           if (edit) ...[
                             preview(
                               l10n.quickAskOriginal,
                               source!.selectedText,
                             ),
                             const SizedBox(height: 6),
-                            if (_applied || _applying)
+                            if (!_complete)
+                              SelectableText(answer, style: textStyle)
+                            else if (_applied || _applying)
                               SelectableText(
                                 _replacement.text,
                                 style: textStyle,
@@ -527,7 +618,12 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
                                 },
                               ),
                           ] else
-                            preview(l10n.quickAskAnswer, answer),
+                            Semantics(
+                              label: l10n.quickAskAnswer,
+                              child: SelectionArea(
+                                child: MarkdownView(answer, style: textStyle),
+                              ),
+                            ),
                           const SizedBox(height: 4),
                           Row(
                             mainAxisAlignment: MainAxisAlignment.end,
@@ -546,7 +642,11 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
                                       : l10n.quickAskApply,
                                   icon: Codicons.checkAll,
                                   selected: _applied,
-                                  onPressed: _applied || _applying
+                                  onPressed:
+                                      !_complete ||
+                                          _busy ||
+                                          _applied ||
+                                          _applying
                                       ? null
                                       : () => unawaited(_apply()),
                                 ),
