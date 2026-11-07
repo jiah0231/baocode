@@ -145,7 +145,9 @@ class _QuickAskActionState extends State<QuickAskAction> {
                     widget.label,
                     style: TextStyle(
                       fontSize: 12,
-                      color: themeColors['editorWidget.foreground'],
+                      color: widget.primary
+                          ? themeColors['button.foreground']
+                          : themeColors['editorWidget.foreground'],
                     ),
                   ),
                   const SizedBox(width: 5),

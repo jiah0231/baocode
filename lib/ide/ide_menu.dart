@@ -126,6 +126,7 @@ Future<void> showIdeMenu(
   bool alignRight = false,
   bool iconsInCheckColumn = false,
   bool speedSearch = false,
+  void Function(List<OverlayEntry> entries)? onOpened,
   required List<IdeMenuEntry> entries,
 }) async {
   assert(position != null || anchor != null);
@@ -159,10 +160,34 @@ Future<void> showIdeMenu(
   for (final scope in scopes) {
     scope.onMenu(true);
   }
+  void orderOverlay() {
+    if (route.isCurrent) onOpened?.call(route.overlayEntries);
+  }
+
+  void afterEntrance(AnimationStatus status) {
+    if (status != AnimationStatus.completed) return;
+    // Navigator rearranges its route entries again when didPush completes.
+    // Reassert the owner's overlay order after that frame, without a ticker.
+    WidgetsBinding.instance.addPostFrameCallback((_) => orderOverlay());
+  }
+
+  Animation<double>? entrance;
   final VoidCallback? chosen;
   try {
-    chosen = await navigator.push(route);
+    final selection = navigator.push(route);
+    // A non-route overlay (Quick Ask) otherwise stays above Navigator routes.
+    // Let its owner order this menu above that surface after installation.
+    if (onOpened != null) {
+      orderOverlay();
+      entrance = route.animation;
+      entrance?.addStatusListener(afterEntrance);
+      if (entrance?.status == AnimationStatus.completed) {
+        afterEntrance(AnimationStatus.completed);
+      }
+    }
+    chosen = await selection;
   } finally {
+    entrance?.removeStatusListener(afterEntrance);
     for (final scope in scopes) {
       scope.onMenu(false);
     }

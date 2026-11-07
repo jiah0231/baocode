@@ -1076,6 +1076,10 @@ void main() {
               .firstOrNull;
           for (final (family, file) in [
             if (body != null) ('Roboto', body),
+            (
+              'monospace',
+              File('assets/fonts/maple/MapleMonoNormal-NF-CN-Regular.ttf'),
+            ),
             (Codicons.fontFamily, File('assets/codicons/codicon.ttf')),
           ]) {
             await (FontLoader(family)..addFont(
@@ -1155,6 +1159,13 @@ void main() {
       await send(tester);
       await capture('$theme-edit-review');
       expect(find.byType(QuickAskReview), findsOneWidget);
+      final applyLabel = tester.widget<Text>(
+        find.descendant(
+          of: find.byKey(const ValueKey('quick-ask-apply')),
+          matching: find.text('Apply replacement'),
+        ),
+      );
+      expect(applyLabel.style!.color, themeColors['button.foreground']);
       expect(tester.takeException(), isNull);
     });
   }

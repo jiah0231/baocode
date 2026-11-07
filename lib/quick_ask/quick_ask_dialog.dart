@@ -64,6 +64,10 @@ Future<void> showQuickAsk(
       overlayContext: overlay.context,
       ownerContext: context,
       ownerRoute: route,
+      onMenuOpened: (entries) {
+        if (done.isCompleted || !entry.mounted || !overlay.mounted) return;
+        overlay.rearrange([entry, ...entries], below: entry);
+      },
       onClose: close,
     ),
   );
@@ -92,6 +96,7 @@ class QuickAskDialog extends StatefulWidget {
     required this.overlayContext,
     this.ownerContext,
     this.ownerRoute,
+    this.onMenuOpened,
     required this.onClose,
   });
 
@@ -104,6 +109,7 @@ class QuickAskDialog extends StatefulWidget {
   final BuildContext overlayContext;
   final BuildContext? ownerContext;
   final ModalRoute<dynamic>? ownerRoute;
+  final void Function(List<OverlayEntry> entries)? onMenuOpened;
   final void Function(bool restoreFocus) onClose;
 
   @override
@@ -445,6 +451,7 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
     try {
       await showIdeMenu(
         context,
+        onOpened: widget.onMenuOpened,
         anchor: position == null ? anchor : null,
         position: position,
         entries: modes
