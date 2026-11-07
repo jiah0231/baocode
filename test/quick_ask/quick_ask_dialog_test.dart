@@ -1328,6 +1328,9 @@ void main() {
       await mode(tester, 'Chat');
       await choose(tester, 'Add file…');
       await capture('$theme-file-context');
+      await tester.ensureVisible(find.text('int helper() => 42;'));
+      await tester.pumpAndSettle();
+      await capture('$theme-file-context-details');
       expect(tester.takeException(), isNull);
     });
   }

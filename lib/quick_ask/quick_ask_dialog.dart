@@ -909,6 +909,11 @@ class _QuickAskDialogState extends State<QuickAskDialog> {
                               Text(l10n.quickAskFilesHint),
                               for (final file in _files.values) ...[
                                 const SizedBox(height: 6),
+                                Text(
+                                  file.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                                 preview(file.name, file.text),
                               ],
                             ],

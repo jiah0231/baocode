@@ -213,8 +213,15 @@ void main() {
       // `print` as a class: not the color TextMate gives it.
       LspSemanticToken(2, 4, 5, 'class', {}),
     ];
+    var semanticAnswers = 0;
     final languages = FakeLanguageFeatures()
-      ..onSemanticTokens = (path) => path.endsWith(_a) ? answer : null;
+      ..onSemanticTokens = (path) {
+        // Workbench paths use the host separator, including backslashes on
+        // Windows. Match the fixture's actual path, not a POSIX suffix.
+        if (path != inRoot(_a)) return null;
+        if (answer != null) semanticAnswers++;
+        return answer;
+      };
     const b = 'lib/b.dart';
     final workspace = await pumpLanguageWorkbench(
       tester,
@@ -236,16 +243,17 @@ void main() {
       return null;
     }
 
+    expect(semanticAnswers, greaterThan(0));
     expect(printColor(), classColor);
 
     workspace.select(
-      workspace.documents.firstWhere((d) => d.path.endsWith(b)).key,
+      workspace.documents.firstWhere((d) => d.path == inRoot(b)).key,
     );
     await settle(tester, const Duration(milliseconds: 350));
     // The server has no answer yet when the tab is shown again.
     answer = null;
     workspace.select(
-      workspace.documents.firstWhere((d) => d.path.endsWith(_a)).key,
+      workspace.documents.firstWhere((d) => d.path == inRoot(_a)).key,
     );
     await tester.pump();
     expect(printColor(), classColor);
