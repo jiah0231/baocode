@@ -22,6 +22,7 @@ void main() {
         final upstream = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
         final finish = Completer<void>();
         final firstText = Completer<String>();
+        firstText.future.ignore();
         final provider = ModelProvider(
           id: 'p',
           name: 'P',
@@ -39,10 +40,12 @@ void main() {
         Future<void>? handler;
         final serverSubscription = upstream.listen((request) {
           handler = () async {
-            await request.drain<void>();
+            await request.drain<void>().timeout(const Duration(seconds: 10));
+            request.response.bufferOutput = false;
             request.response.headers.contentType = ContentType(
               'text',
               'event-stream',
+              charset: 'utf-8',
             );
             final events = switch (protocol) {
               ProviderProtocol.openaiChat => [
@@ -95,25 +98,51 @@ void main() {
               );
               await request.response.flush();
             }
-            // Split inside both SSE fields and multi-byte characters.
+            // Split the SSE field and the first multi-byte character, but
+            // avoid hundreds of tiny TCP writes unrelated to framing coverage.
             for (final event in events) {
-              for (final byte in utf8.encode(
-                'data: ${jsonEncode(event)}\r\n\r\n',
-              )) {
-                request.response.add([byte]);
-                await request.response.flush();
+              final bytes = utf8.encode('data: ${jsonEncode(event)}\r\n\r\n');
+              final multibyte = bytes.indexWhere((byte) => byte >= 0x80);
+              final cuts = <int>{
+                0,
+                3,
+                if (multibyte >= 0) multibyte + 1,
+                bytes.length - 1,
+                bytes.length,
+              }.toList()..sort();
+              for (var i = 1; i < cuts.length; i++) {
+                request.response.add(bytes.sublist(cuts[i - 1], cuts[i]));
+                await request.response.flush().timeout(
+                  const Duration(seconds: 10),
+                );
               }
             }
-            await finish.future;
-            await request.response.close();
+            await finish.future.timeout(const Duration(seconds: 20));
+            await request.response.close().timeout(const Duration(seconds: 10));
           }();
-        });
-        Future<void>? reading;
-        try {
-          final endpoint = await proxy.endpoint('p');
-          final request = await client.postUrl(
-            Uri.parse('${endpoint.baseUrl}/v1/messages'),
+          // Observe failures immediately rather than leaving the consumer
+          // awaiting headers until the entire test times out.
+          unawaited(
+            handler!.then<void>(
+              (_) {},
+              onError: (Object error, StackTrace stack) {
+                if (!firstText.isCompleted) {
+                  firstText.completeError(error, stack);
+                }
+              },
+            ),
           );
+        });
+        StreamSubscription<String>? reading;
+        final readDone = Completer<void>();
+        readDone.future.ignore();
+        try {
+          final endpoint = await proxy
+              .endpoint('p')
+              .timeout(const Duration(seconds: 10));
+          final request = await client
+              .postUrl(Uri.parse('${endpoint.baseUrl}/v1/messages'))
+              .timeout(const Duration(seconds: 10));
           request.headers.set('authorization', 'Bearer test-token');
           request.headers.contentType = ContentType.json;
           request.write(
@@ -126,42 +155,68 @@ void main() {
               ],
             }),
           );
-          final response = await request.close();
+          final response = await request.close().timeout(
+            const Duration(seconds: 10),
+            onTimeout: () => throw TimeoutException(
+              'Waiting for proxy response headers: $protocol',
+            ),
+          );
           reading = response
               .transform(utf8.decoder)
               .transform(const LineSplitter())
-              .forEach((line) {
-                if (!line.startsWith('data: ')) return;
-                final data = jsonDecode(line.substring(6));
-                if (data case {
-                  'delta': {'type': 'text_delta', 'text': final String text},
-                }) {
-                  if (!firstText.isCompleted) firstText.complete(text);
-                }
-              });
+              .listen(
+                (line) {
+                  if (!line.startsWith('data: ')) return;
+                  final data = jsonDecode(line.substring(6));
+                  if (data case {
+                    'delta': {'type': 'text_delta', 'text': final String text},
+                  }) {
+                    if (!firstText.isCompleted) firstText.complete(text);
+                  }
+                },
+                onDone: () {
+                  if (!readDone.isCompleted) readDone.complete();
+                },
+                onError: (Object error, StackTrace stack) {
+                  if (!firstText.isCompleted) {
+                    firstText.completeError(error, stack);
+                  }
+                  if (!readDone.isCompleted) {
+                    readDone.completeError(error, stack);
+                  }
+                },
+              );
           expect(
-            await firstText.future.timeout(const Duration(seconds: 5)),
+            await firstText.future.timeout(
+              const Duration(seconds: 5),
+              onTimeout: () => throw TimeoutException(
+                'Waiting for first translated text: $protocol',
+              ),
+            ),
             '你好',
           );
           expect(finish.isCompleted, isFalse);
           finish.complete();
-          await reading;
-          await handler;
+          await readDone.future.timeout(const Duration(seconds: 10));
+          await handler?.timeout(const Duration(seconds: 10));
         } finally {
           if (!finish.isCompleted) finish.complete();
-          // Release and drain the producer/consumer before closing sockets,
-          // including failed first-text assertions.
+          // Close peers first on failure so a producer's blocked flush or
+          // consumer's read cannot prevent teardown. Every drain is bounded.
+          client.close(force: true);
+          await reading?.cancel().timeout(const Duration(seconds: 5));
+          await upstream.close(force: true).timeout(const Duration(seconds: 5));
+          await serverSubscription.cancel().timeout(const Duration(seconds: 5));
           try {
-            await handler;
-            await reading;
-          } finally {
-            client.close(force: true);
-            await proxy.close();
-            await serverSubscription.cancel();
-            await upstream.close(force: true);
+            await handler?.timeout(const Duration(seconds: 5));
+          } on Object {
+            // A failed phase already reports the error above; peer closure
+            // may additionally interrupt an outstanding write.
           }
+          await proxy.close().timeout(const Duration(seconds: 5));
         }
       },
+      timeout: const Timeout(Duration(seconds: 60)),
     );
   }
 }

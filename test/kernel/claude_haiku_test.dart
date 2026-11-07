@@ -168,7 +168,9 @@ void main() {
           request.response.headers.contentType = ContentType(
             'text',
             'event-stream',
+            charset: 'utf-8',
           );
+          request.response.bufferOutput = false;
           Future<void> chunk(String text, {bool end = false}) async {
             request.response.write(
               'data: ${jsonEncode({
@@ -184,13 +186,13 @@ void main() {
                 ],
               })}\n\n',
             );
-            await request.response.flush();
+            await request.response.flush().timeout(const Duration(seconds: 10));
           }
 
           try {
             await chunk('你');
             // The test releases this only after QuickAskService.onText runs.
-            await release.future;
+            await release.future.timeout(const Duration(seconds: 25));
             await chunk('好');
             await chunk('', end: true);
             request.response.write('data: [DONE]\n\n');
@@ -234,7 +236,7 @@ void main() {
         expect(await first.future.timeout(const Duration(seconds: 20)), '你');
         expect(release.isCompleted, isFalse);
         release.complete();
-        expect(await answer, '你好');
+        expect(await answer.timeout(const Duration(seconds: 20)), '你好');
         expect(chunks, ['你', '你好']);
         expect(requests, hasLength(1));
         expect(requests.single['model'], 'quick-exact');
@@ -243,11 +245,11 @@ void main() {
       } finally {
         if (!release.isCompleted) release.complete();
         cancel.complete();
-        await settled;
-        await stopModelProxy();
-        await Future.wait(handlers);
-        await subscription.cancel();
-        await upstream.close(force: true);
+        await settled.timeout(const Duration(seconds: 5));
+        await stopModelProxy().timeout(const Duration(seconds: 5));
+        await upstream.close(force: true).timeout(const Duration(seconds: 5));
+        await subscription.cancel().timeout(const Duration(seconds: 5));
+        await Future.wait(handlers).timeout(const Duration(seconds: 5));
         providers.dispose();
       }
     }, timeout: const Timeout(Duration(minutes: 1)));

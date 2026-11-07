@@ -55,14 +55,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Changed-file enumeration failed' }
           dart format --output=none --set-exit-if-changed @files
           if ($LASTEXITCODE -ne 0) { throw 'Feature source needs formatting' }
-      - name: Test quick ask and related regressions
-        shell: pwsh
-        run: |
-          Remove-Item Env:BAO_BROWSER_LIVE -ErrorAction SilentlyContinue
-          Remove-Item Env:BAOCODE_CODEX_OFFICIAL_SMOKE -ErrorAction SilentlyContinue
-          flutter test --no-pub --reporter expanded --timeout 2m test/quick_ask test/claude_haiku_test.dart test/kernel/claude_haiku_test.dart test/models/proxy/quick_ask_streaming_test.dart test/keybindings/window_keybindings_test.dart test/models/models_test.dart test/settings/models_page_test.dart test/chat/history_selection_test.dart test/chat/history_stream_batch_test.dart test/composer_test.dart test/update/version_test.dart packages/bao_editor/test/monaco/flutter/editor_surface_view_test.dart packages/bao_markdown/test/md_editor_test.dart
-          if ($LASTEXITCODE -ne 0) { throw 'Quick Ask regressions failed' }
-
       - name: Capture rendered inline popup previews
         run: flutter test --no-pub --reporter expanded test/quick_ask/quick_ask_dialog_test.dart --dart-define=QUICK_ASK_PREVIEWS=true --plain-name "compact and streamed markdown preview"
       - uses: actions/upload-artifact@v6
@@ -71,3 +63,11 @@ jobs:
           name: quick-ask-visual-previews
           if-no-files-found: warn
           path: build/quick-ask-previews/*.png
+
+      - name: Test quick ask and related regressions
+        shell: pwsh
+        run: |
+          Remove-Item Env:BAO_BROWSER_LIVE -ErrorAction SilentlyContinue
+          Remove-Item Env:BAOCODE_CODEX_OFFICIAL_SMOKE -ErrorAction SilentlyContinue
+          flutter test --no-pub --reporter expanded --timeout 2m test/quick_ask test/claude_haiku_test.dart test/kernel/claude_haiku_test.dart test/models/proxy/quick_ask_streaming_test.dart test/keybindings/window_keybindings_test.dart test/models/models_test.dart test/settings/models_page_test.dart test/chat/history_selection_test.dart test/chat/history_stream_batch_test.dart test/composer_test.dart test/update/version_test.dart packages/bao_editor/test/monaco/flutter/editor_surface_view_test.dart packages/bao_markdown/test/md_editor_test.dart
+          if ($LASTEXITCODE -ne 0) { throw 'Quick Ask regressions failed' }
