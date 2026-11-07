@@ -117,14 +117,15 @@ final class JsonStateStore {
 Future<void> writeAtomically(String path, String contents) async {
   final dir = Directory(p.dirname(path));
   await dir.create(recursive: true);
-  final temp = File(
-    '$path.${pid}_${DateTime.now().microsecondsSinceEpoch}.tmp',
-  );
+  // Independent stores can flush this path in the same clock tick. Reserve
+  // a unique directory beside it, rather than sharing a timestamp filename.
+  // Keeping it beside the destination preserves same-filesystem rename.
+  final staging = await dir.createTemp('${p.basename(path)}.');
+  final temp = File(p.join(staging.path, 'value.tmp'));
   try {
     await temp.writeAsString(contents, flush: true);
     await temp.rename(path);
-  } on Object {
-    if (await temp.exists()) await temp.delete();
-    rethrow;
+  } finally {
+    await staging.delete(recursive: true);
   }
 }

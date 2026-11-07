@@ -121,6 +121,11 @@ class _PreviewKernel with KernelEventSource implements AgentKernel {
 }
 
 Future<void> _loadPreviewFonts() async {
+  // Flutter adds this real icon asset when uses-material-design is true.
+  // Load its own family so ordinary controls do not render as Ahem boxes.
+  await (FontLoader(
+    'MaterialIcons',
+  )..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
   // Use the shipped CJK font rather than a host-dependent substitution or
   // Flutter tests' Ahem boxes. This exercises the real bundled-font setting.
   for (final (family, path) in [
