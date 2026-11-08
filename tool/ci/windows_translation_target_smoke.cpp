@@ -1,4 +1,5 @@
 #include "../../windows/runner/translation_selection_target.h"
+#include "../../windows/runner/translation_action_budget.h"
 #include <array>
 #include <cstdio>
 #include <stdexcept>
@@ -36,6 +37,18 @@ struct Fixture {
   bool Empty() { return target.NoteEmpty(tree, [&] { return !tree.stopped; }); }
 };
 void Tests() {
+  using namespace translation_action_budget;
+  const auto initial = RequestDeadline(false, 1000, 1120);
+  Check(initial == 2500, "Cold discovery extended the original gesture budget");
+  Check(!Expired(1821, initial), "Cold discovery was incorrectly cut off at refresh 700ms");
+  Check(!Expired(2499, initial) && Expired(2500, initial), "Discovery deadline boundary is inconsistent");
+  Check(RequestDeadline(false, 1000, 2300) == initial,
+        "A retry or delayed worker renewed the cold discovery budget");
+  Check(Expired(2501, RequestDeadline(false, 1000, 2501)),
+        "A late queued first request received a new budget");
+  const auto refresh = RequestDeadline(true, 1000, 5000);
+  Check(refresh == 5700 && !Expired(5699, refresh) && Expired(5700, refresh),
+        "Visible-entry refresh no longer uses its strict 700ms budget");
   Fixture warm;
   Check(warm.Resolve(&warm.group) && warm.target.Get() == &warm.inner, "Warm Group did not bind nearest safe Document");
   const unsigned calls = warm.tree.calls;

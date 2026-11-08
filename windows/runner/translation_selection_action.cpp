@@ -11,6 +11,7 @@
 #include <cstdint>
 #include "translation_panel_geometry.h"
 #include "translation_capture_retry.h"
+#include "translation_action_budget.h"
 #include "translation_console_binding.h"
 #include "translation_selection_target.h"
 
@@ -300,6 +301,7 @@ struct TranslationSelectionAction::Worker {
   bool retryable = false;
   HWND source = nullptr;
   unsigned generation = 0, active_generation = 0;
+  ULONGLONG deadline = 0;
   std::optional<RECT> result;
 };
 
@@ -319,7 +321,6 @@ TranslationSelectionAction::TranslationSelectionAction(HWND dispatcher,
     HANDLE previous_source_process = nullptr;
     translation_selection::SelectionTarget selection_target;
     auto console_binding = std::make_unique<translation_selection::ConsoleBinding>();
-    ULONGLONG discovery_deadline = 0;
     bool require_text_control = false;
     std::unique_lock<std::mutex> lock(worker->mutex);
     while (true) {
@@ -357,6 +358,7 @@ TranslationSelectionAction::TranslationSelectionAction(HWND dispatcher,
       }
       const HWND source = worker->source;
       const unsigned generation = worker->generation;
+      const ULONGLONG deadline = worker->deadline;
       worker->pending = false;
       lock.unlock();
       if (generation != previous_generation) {
@@ -369,10 +371,8 @@ TranslationSelectionAction::TranslationSelectionAction(HWND dispatcher,
         require_text_control = false;
         selection_target.Reset();
         console_binding = std::make_unique<translation_selection::ConsoleBinding>();
-        discovery_deadline = GetTickCount64() + 1500;
         previous_generation = generation;
       }
-      const ULONGLONG deadline = previous_range ? GetTickCount64() + 700 : discovery_deadline;
       const auto stopped = [&] {
         if (GetTickCount64() >= deadline) return true;
         std::lock_guard<std::mutex> guard(worker->mutex);
@@ -541,6 +541,7 @@ void TranslationSelectionAction::Request() {
   worker_->pending = true;
   worker_->ready = false;
   started_ = GetTickCount64();
+  worker_->deadline = translation_action_budget::RequestDeadline(shown_, discovery_started_, started_);
   if (!shown_) ++discovery_attempts_;
   worker_->wake.notify_one();
 }
@@ -548,7 +549,8 @@ void TranslationSelectionAction::Request() {
 void TranslationSelectionAction::Tick() {
   const ULONGLONG now = GetTickCount64();
   if (!candidate_) return;
-  if (!shown_ && now - discovery_started_ >= 1500) { Hide(); return; }
+  if (!shown_ && translation_action_budget::Expired(now,
+          translation_action_budget::DiscoveryDeadline(discovery_started_))) { Hide(); return; }
   if (GetForegroundWindow() != source_ || now >= expires_) { Hide(); return; }
   std::optional<RECT> bounds;
   bool ready = false, busy = false, retryable = false;
@@ -561,15 +563,16 @@ void TranslationSelectionAction::Tick() {
       worker_->ready = false;
     }
   }
+  const ULONGLONG deadline = translation_action_budget::RequestDeadline(shown_, discovery_started_, started_);
   if (ready) {
     ACTION_TRACE("ACTION_RESULT|generation=%u|bounds=%d|retryable=%d|elapsedMs=%llu\n",
         generation_, bounds ? 1 : 0, retryable ? 1 : 0, now - started_);
-    if (now - started_ > 700) { Hide(); return; }
+    if (translation_action_budget::Expired(now, deadline)) { Hide(); return; }
     if (!bounds) {
       // Only incomplete first discovery retries. Once visible, a changed or
       // vanished selection dismisses immediately. Never read selected text.
       if (!shown_ && translation_retry::CanRetry(retryable, discovery_attempts_,
-                                                 now, discovery_started_ + 1500)) {
+                                                 now, translation_action_budget::DiscoveryDeadline(discovery_started_))) {
         due_ = now + translation_retry::Delay(discovery_attempts_);
         return;
       }
@@ -580,7 +583,7 @@ void TranslationSelectionAction::Tick() {
     shown_ = true;
     Show(*bounds);
     due_ = now + 250;
-  } else if (busy && now - started_ > 700) { Hide(); return; }
+  } else if (busy && translation_action_budget::Expired(now, deadline)) { Hide(); return; }
   if (!busy && now >= due_) Request();
 }
 
