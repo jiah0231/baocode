@@ -143,12 +143,12 @@ class TranslationHost extends ChangeNotifier {
     }
   }
 
-  void _clearPanel() {
+  void _clearPanel({bool notify = true}) {
     panelGeneration++;
     panelCapture = null;
     panelShown = false;
     panelModelSettings = null;
-    notifyListeners();
+    if (notify) notifyListeners();
   }
 
   Future<void> _hideNative() async {
@@ -214,7 +214,7 @@ class TranslationHost extends ChangeNotifier {
 
   void _changed() => unawaited(_sync());
 
-  Future<void> _sync() {
+  Future<void> _sync({bool notify = true}) {
     if (!supported || (!_started && _requested == null)) return _queue;
     final running = _started && !_paused;
     final wanted = running ? hotkey : '';
@@ -230,7 +230,7 @@ class TranslationHost extends ChangeNotifier {
     _requestedConfiguration = configuration;
     if (register) hotkeyTaken = null;
     if (configure) selectionActionTaken = null;
-    notifyListeners();
+    if (notify) notifyListeners();
     return _queue = _queue.then((_) async {
       if (configure) {
         bool? installed;
@@ -288,8 +288,16 @@ class TranslationHost extends ChangeNotifier {
     _settings = null;
     onPressed = null;
     defaultModelSettings = null;
-    unawaited(hidePanel());
+    // Workbench calls stop from dispose. Clear and invalidate immediately,
+    // but don't mark its listening ancestors dirty halfway through unmount.
+    _clearPanel(notify: false);
+    if (panelViewId != null) unawaited(_hideNative());
     _channel.setMethodCallHandler(null);
-    unawaited(_sync());
+    unawaited(_sync(notify: false));
+    scheduleMicrotask(() {
+      // A surviving app still needs to remove the panel; an unmounted (or
+      // disposed) listener needs no notification after the teardown stack.
+      if (hasListeners) notifyListeners();
+    });
   }
 }

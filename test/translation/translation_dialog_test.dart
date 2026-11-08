@@ -21,6 +21,63 @@ import 'translation_service_test.dart' show configured;
 
 void main() {
   testWidgets(
+    'stopping a workbench during unmount never notifies a disposing ancestor',
+    (tester) async {
+      const channel = MethodChannel('test/translation-dispose');
+      final calls = <MethodCall>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+        call,
+      ) async {
+        calls.add(call);
+        return call.method == 'createPanel' ? 9 : true;
+      });
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          null,
+        ),
+      );
+      final host = TranslationHost(
+        channel: channel,
+        supported: true,
+        engineId: 42,
+      )..start(null);
+      await host.configureAppearance(true);
+      await host.openPanel(
+        const TranslationCapture(text: 'private source', requestId: 1),
+      );
+      await host.panelRendered(host.panelGeneration);
+      final generation = host.panelGeneration;
+      await tester.pumpWidget(
+        ListenableBuilder(
+          listenable: host,
+          builder: (context, _) => _StopTranslationOnDispose(host: host),
+        ),
+      );
+      calls.clear();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await host.configureAppearance(
+        true,
+      ); // Drain native cleanup without timers.
+      expect(tester.takeException(), isNull);
+      expect(host.panelCapture, isNull);
+      expect(host.panelShown, isFalse);
+      expect(host.panelGeneration, greaterThan(generation));
+      expect(calls.where((call) => call.method == 'hidePanel'), hasLength(1));
+      expect(
+        calls.where((call) => call.method == 'setHotkey').single.arguments,
+        '',
+      );
+      expect(
+        calls.where((call) => call.method == 'configure').single.arguments,
+        {'selectionAction': false, 'clipboardFallback': false, 'dark': true},
+      );
+      host.dispose();
+    },
+  );
+
+  testWidgets(
     'hidden panel cannot focus; successful show enables immediate Escape',
     (tester) async {
       const channel = MethodChannel('test/translation-focus');
@@ -789,4 +846,23 @@ void main() {
       }
     });
   }
+}
+
+class _StopTranslationOnDispose extends StatefulWidget {
+  const _StopTranslationOnDispose({required this.host});
+  final TranslationHost host;
+  @override
+  State<_StopTranslationOnDispose> createState() =>
+      _StopTranslationOnDisposeState();
+}
+
+class _StopTranslationOnDisposeState extends State<_StopTranslationOnDispose> {
+  @override
+  void dispose() {
+    widget.host.stop();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
 }

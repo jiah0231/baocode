@@ -142,9 +142,18 @@ void main() {
     await chord(LogicalKeyboardKey.keyW, control: true, shift: true);
     expect(windows.chat.shown, isFalse);
     expect(host.log, contains('hide 0'));
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: 'shortcut handling before app teardown',
+    );
     await tester.pumpWidget(const SizedBox.shrink());
     translation.panelViewId = null;
     windows.dispose();
-    expect(tester.takeException(), isNull);
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: 'app teardown must not notify disposing ancestors',
+    );
   }, semanticsEnabled: false);
 }
