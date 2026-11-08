@@ -17,13 +17,18 @@ inline bool CanRetry(bool incomplete, unsigned completed_attempts,
       completed_attempts < kMaxAttempts && now < deadline &&
       deadline - now > Delay(completed_attempts) + 200;
 }
-// Windows UIA's timeout HRESULT. This pre-identity retry
-// repeats only GetFocusedElement, before any text or control was accepted.
+// Two observed GetFocusedElement timeout encodings: UIA_E_TIMEOUT and
+// HRESULT_FROM_WIN32(ERROR_TIMEOUT). Do not generalize other provider failures.
+// Initial retry is still limited to before any identity/text was accepted.
 constexpr uint32_t kInitialFocusTimeout = 0x80131505u;
+constexpr uint32_t kWin32FocusTimeout = 0x800705B4u;
+constexpr bool IsFocusTimeout(uint32_t hresult) {
+  return hresult == kInitialFocusTimeout || hresult == kWin32FocusTimeout;
+}
 inline bool CanRetryInitialFocus(uint32_t hresult, bool identity_bound,
                                  bool same_foreground, unsigned completed_attempts,
                                  uint64_t now, uint64_t deadline, bool canceled = false) {
-  return hresult == kInitialFocusTimeout && !identity_bound && same_foreground &&
+  return IsFocusTimeout(hresult) && !identity_bound && same_foreground &&
       CanRetry(true, completed_attempts, now, deadline, canceled);
 }
 // A Chromium accessibility root may exist before its actual focused text

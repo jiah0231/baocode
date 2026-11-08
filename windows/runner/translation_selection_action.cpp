@@ -82,7 +82,7 @@ std::optional<RECT> SelectionBounds(HWND source,
     // discovery timeout may retry; Tick supplies the shared attempt/deadline
     // budget. Once identity is bound, this never reacquires a different one.
     retryable = !previous_element && GetForegroundWindow() == source &&
-        static_cast<uint32_t>(focus_result) == translation_retry::kInitialFocusTimeout;
+        translation_retry::IsFocusTimeout(static_cast<uint32_t>(focus_result));
     return std::nullopt;
   }
   if (GetForegroundWindow() != source) return std::nullopt;

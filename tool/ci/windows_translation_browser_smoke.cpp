@@ -182,6 +182,54 @@ void PrintNativeFocus(const char* selection, const char* phase,
   PrintNativeWindow(selection, phase, "foreground", snapshot.foreground);
   PrintNativeWindow(selection, phase, "sourceFocus", snapshot.focus);
 }
+bool VerifyPointerPlacement(const char* selection, POINT pointer, UINT dpi) {
+  // Match ShowPanel's pointer-anchor path using the real capture pointer and
+  // monitor work area. This checks placement math, not a rendered panel window.
+  const RECT anchor{pointer.x, pointer.y, pointer.x, pointer.y};
+  const HMONITOR monitor = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
+  MONITORINFO info{}; info.cbSize = sizeof(info);
+  const bool monitor_ok = monitor &&
+      monitor == MonitorFromPoint(pointer, MONITOR_DEFAULTTONULL) &&
+      monitor == MonitorFromWindow(browser, MONITOR_DEFAULTTONEAREST) &&
+      GetMonitorInfoW(monitor, &info) && dpi > 0;
+  if (!monitor_ok || info.rcWork.right <= info.rcWork.left ||
+      info.rcWork.bottom <= info.rcWork.top) {
+    std::printf("DEFAULT_EDGE_PLACEMENT|%s|placement=pointer_fallback|pointer=%ld,%ld|dpi=%u|reason=invalid_source_monitor|FAIL\n",
+        selection, pointer.x, pointer.y, dpi);
+    return false;
+  }
+  // The pointer is required to remain on the source monitor, so the source
+  // window's effective DPI is also the placement monitor's effective DPI.
+  const double scale = dpi / 96.0;
+  const int requested_width = static_cast<int>(480 * scale);
+  const int requested_height = static_cast<int>(560 * scale);
+  const int gap = static_cast<int>(10 * scale);
+  const RECT& work = info.rcWork;
+  const auto placed = translation_panel::Place(
+      {static_cast<int>(pointer.x), static_cast<int>(pointer.y),
+       static_cast<int>(pointer.x), static_cast<int>(pointer.y)},
+      {static_cast<int>(work.left), static_cast<int>(work.top),
+       static_cast<int>(work.right), static_cast<int>(work.bottom)},
+      requested_width, requested_height, gap);
+  const RECT panel{placed.left, placed.top, placed.right, placed.bottom};
+  RECT clipped{};
+  const int width = std::min(requested_width, static_cast<int>(work.right - work.left));
+  const int height = std::min(requested_height, static_cast<int>(work.bottom - work.top));
+  const LONG expected_left = std::clamp(pointer.x, work.left, work.right - width);
+  LONG expected_top = pointer.y + gap;
+  if (expected_top + height > work.bottom) expected_top = pointer.y - gap - height;
+  expected_top = std::clamp(expected_top, work.top, work.bottom - height);
+  const bool passed = panel.right > panel.left && panel.bottom > panel.top &&
+      panel.right - panel.left == width && panel.bottom - panel.top == height &&
+      panel.left == expected_left && panel.top == expected_top &&
+      IntersectRect(&clipped, &panel, &work) && EqualRect(&clipped, &panel) &&
+      MonitorFromRect(&panel, MONITOR_DEFAULTTONULL) == monitor;
+  std::printf("DEFAULT_EDGE_PLACEMENT|%s|placement=pointer_fallback|pointer=%ld,%ld|dpi=%u|gap=%d|work=%ld,%ld,%ld,%ld|panel=%ld,%ld,%ld,%ld|contract=optional_bounds|%s\n",
+      selection, pointer.x, pointer.y, dpi, gap,
+      work.left, work.top, work.right, work.bottom,
+      panel.left, panel.top, panel.right, panel.bottom, passed ? "PASS" : "FAIL");
+  return passed;
+}
 void FocusDiagnostics() {
   const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   if (FAILED(initialized)) return;
@@ -257,9 +305,12 @@ int wmain(int argc, wchar_t** argv) {
       // launch, Chromium accessibility flag, CDP, or script-created selection.
       translation_selection::CaptureDiagnostics diagnostics;
       const NativeFocusSnapshot before = ReadNativeFocus();
+      POINT capture_pointer{}, after_pointer{};
+      const bool have_pointer = GetCursorPos(&capture_pointer) != 0;
       const ULONGLONG capture_started = GetTickCount64();
       const auto capture = translation_selection::Capture(browser, true, nullptr, 0, &diagnostics);
       const ULONGLONG capture_elapsed = GetTickCount64() - capture_started;
+      const bool have_after_pointer = GetCursorPos(&after_pointer) != 0;
       const NativeFocusSnapshot after = ReadNativeFocus();
       PrintNativeFocus(line ? "repeat" : "cold", "before", before);
       PrintNativeFocus(line ? "repeat" : "cold", "after", after);
@@ -284,30 +335,49 @@ int wmain(int argc, wchar_t** argv) {
       std::wstring actual = capture.text;
       while (!actual.empty() && (actual.back() == L'\r' || actual.back() == L'\n')) actual.pop_back();
       const std::wstring expected = line ? L"Browser synthetic selection Foxtrot" : L"Browser synthetic selection Echo";
-      const bool sourcePassed = capture.status == "ok" && actual == expected && !capture.self;
-      bool geometryPassed = line == 0; // Cold capture may use documented pointer fallback.
+      const bool sourcePassed = capture.status == "ok" && actual == expected &&
+          !capture.self && !capture.copy_proof;
+      const bool pointerUnchanged = have_pointer && have_after_pointer &&
+          capture_pointer.x == after_pointer.x && capture_pointer.y == after_pointer.y;
+      const bool sourceUnchanged = before.foreground.window == browser &&
+          after.foreground.window == browser && before.source.process == after.source.process &&
+          before.source.thread == after.source.thread && before.source.dpi == after.source.dpi &&
+          before.content.process == after.content.process && before.content.thread == after.content.thread &&
+          before.content.root == browser && after.content.root == browser &&
+          before.source.rect_ok && after.source.rect_ok &&
+          before.content.rect_ok && after.content.rect_ok &&
+          EqualRect(&before.source.rect, &after.source.rect) &&
+          EqualRect(&before.content.rect, &after.content.rect) &&
+          before.source_gui_ok && after.source_gui_ok &&
+          before.source_gui.hwndActive == browser && after.source_gui.hwndActive == browser &&
+          before.source_gui.hwndFocus == after.source_gui.hwndFocus &&
+          before.focus.root == browser && after.focus.root == browser &&
+          !before.source_gui.hwndCapture && !after.source_gui.hwndCapture;
+      bool geometryPassed = false;
       if (capture.bounds) {
         const RECT& bounds = *capture.bounds;
         RECT frame{}, clipped{};
         geometryPassed = bounds.right > bounds.left && bounds.bottom > bounds.top &&
             GetWindowRect(browser, &frame) && IntersectRect(&clipped, &bounds, &frame) &&
             EqualRect(&clipped, &bounds) && MonitorFromRect(&bounds, MONITOR_DEFAULTTONULL);
+      } else if (pointerUnchanged) {
+        geometryPassed = VerifyPointerPlacement(line ? "repeat" : "cold",
+            capture_pointer, before.source.dpi);
       }
       const bool clipboardPassed = GetClipboardSequenceNumber() == sequence;
-      // Require valid selection geometry on repeat to retain browser geometry
-      // coverage, but do not conflate optional cold bounds with failed capture.
-      const bool passed = sourcePassed && geometryPassed && clipboardPassed;
+      // ReadBounds is optional on every capture, including repeats. When Edge
+      // legitimately supplies no rectangles, verify the existing pointer path
+      // rather than requiring a stronger provider contract than the product.
+      const bool passed = sourcePassed && sourceUnchanged && pointerUnchanged &&
+          geometryPassed && clipboardPassed;
       const char* placement = capture.bounds ? (geometryPassed ? "selection_bounds" : "invalid_geometry") :
-          (line == 0 ? "pointer_fallback" : "missing_repeat_bounds");
+          (geometryPassed ? "pointer_fallback" : "invalid_pointer_fallback");
+      std::printf("DEFAULT_EDGE_IMMUTABILITY|%s|source=%d|pointer=%d|clipboard=%d|capturePointer=%ld,%ld|afterPointer=%ld,%ld\n",
+        line ? "repeat" : "cold", sourceUnchanged ? 1 : 0, pointerUnchanged ? 1 : 0,
+        clipboardPassed ? 1 : 0, capture_pointer.x, capture_pointer.y, after_pointer.x, after_pointer.y);
       std::printf("DEFAULT_EDGE_CAPTURE|%s|status=%s|units=%zu|bounds=%d|copyProof=%d|placement=%s|%s\n",
         line ? "repeat" : "cold", capture.status.c_str(), capture.text.size(),
         capture.bounds.has_value() ? 1 : 0, capture.copy_proof.has_value() ? 1 : 0, placement, passed ? "PASS" : "FAIL");
-      if (sourcePassed && geometryPassed && !capture.bounds) {
-        POINT pointer{};
-        Check(GetCursorPos(&pointer) != 0, "Cold capture fallback pointer unavailable");
-        std::printf("DEFAULT_EDGE_PLACEMENT|cold|placement=pointer_fallback|pointer=%ld,%ld|contract=optional_bounds\n",
-          pointer.x, pointer.y);
-      }
       if (!passed) {
         allPassed = false;
         if (!sourcePassed) SyntheticMismatch(capture.text, expected);
@@ -321,7 +391,7 @@ int wmain(int argc, wchar_t** argv) {
       Check(GetClipboardSequenceNumber() == sequence, "Browser capture changed clipboard");
     }
     Check(allPassed, "Default Edge UIA selection failed (see cold/repeat diagnostics); no accessibility override or Document Ctrl+C fallback used");
-    std::puts("PASS: default Edge real mouse selections, production Capture, exact fresh source, optional cold bounds/pointer fallback, required repeat bounds, clipboard unchanged");
+    std::puts("PASS: default Edge real mouse selections, production Capture, exact fresh source, supplied bounds or verified pointer placement, source/focus/pointer/clipboard unchanged");
   } catch (const std::exception& error) { std::fprintf(stderr, "FAIL: %s\n", error.what()); result = 1; }
   if (browser) PostMessageW(browser, WM_CLOSE, 0, 0);
   return result;

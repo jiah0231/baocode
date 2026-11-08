@@ -103,6 +103,31 @@ int wmain(int argc, wchar_t** argv) {
       CanRetry(true, 1, 100, 1500, true) || CanRetry(true, 1, 1500, 1500) ||
       CanRetry(true, 2, 1200, 1500) || CanRetry(true, 0, 100, 1500))
     return Fail("Cold-provider retry policy exceeded attempts/deadline or retried denial");
+  // Both observed timeout encodings use identical bounded identity policy.
+  for (const uint32_t observed_timeout : {translation_retry::kInitialFocusTimeout,
+                                         translation_retry::kWin32FocusTimeout}) {
+    if (!translation_retry::IsFocusTimeout(observed_timeout) ||
+        !translation_retry::CanRetryInitialFocus(observed_timeout, false, true, 2, 859, 1500) ||
+        translation_retry::CanRetryInitialFocus(observed_timeout, true, true, 2, 859, 1500) ||
+        translation_retry::CanRetryInitialFocus(observed_timeout, false, false, 2, 859, 1500) ||
+        translation_retry::CanRetryInitialFocus(observed_timeout, false, true, 2, 859, 1500, true) ||
+        translation_retry::CanRetryInitialFocus(observed_timeout, false, true, 4, 859, 1500) ||
+        translation_retry::CanRetryInitialFocus(observed_timeout, false, true, 2, 1499, 1500) ||
+        !translation_retry::CanRetryFinalFocus(true, true,
+            translation_retry::IsFocusTimeout(observed_timeout), false, 1, 859, 1500) ||
+        translation_retry::CanRetryFinalFocus(false, true,
+            translation_retry::IsFocusTimeout(observed_timeout), false, 1, 859, 1500) ||
+        translation_retry::CanRetryFinalFocus(true, false,
+            translation_retry::IsFocusTimeout(observed_timeout), false, 1, 859, 1500) ||
+        translation_retry::CanRetryFinalFocus(true, true,
+            translation_retry::IsFocusTimeout(observed_timeout), false, 1, 859, 1500, true))
+      return Fail("Observed timeout encoding bypassed the shared focus retry boundaries");
+  }
+  for (const uint32_t other_result : {0u, 1u, 0x80004005u, 0x80070005u, 0x80040201u, 0x800705B5u}) {
+    if (translation_retry::IsFocusTimeout(other_result) ||
+        translation_retry::CanRetryInitialFocus(other_result, false, true, 1, 500, 1500))
+      return Fail("An unrelated HRESULT was treated as a focus timeout");
+  }
   using translation_retry::CanRetryInitialFocus;
   constexpr uint32_t timeout_hr = translation_retry::kInitialFocusTimeout;
   if (!CanRetryInitialFocus(timeout_hr, false, true, 1, 500, 1500) ||

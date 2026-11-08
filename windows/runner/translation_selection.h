@@ -414,8 +414,8 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
               diagnostics->last_failure = S_FALSE;
             }
           }
-          const bool exact_timeout = static_cast<uint32_t>(final_result) ==
-              translation_retry::kInitialFocusTimeout;
+          const bool exact_timeout = translation_retry::IsFocusTimeout(
+              static_cast<uint32_t>(final_result));
           if (!translation_retry::CanRetryFinalFocus(true, GetForegroundWindow() == foreground,
                   exact_timeout, transient_pane, check + 1, GetTickCount64(), deadline,
                   canceled && canceled->load())) break;
