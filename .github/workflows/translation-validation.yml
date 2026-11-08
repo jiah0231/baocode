@@ -23,6 +23,14 @@ jobs:
       - name: Test cross-process selection and clipboard protection
         shell: pwsh
         run: ./tool/ci/windows_translation_smoke.ps1
+      - name: Test guarded explicit selection copying
+        shell: pwsh
+        run: ./tool/ci/windows_translation_clipboard_smoke.ps1
+      - name: Test nonactivating selection action entry
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+        run: ./tool/ci/windows_translation_action_smoke.ps1
       - name: Restore unchanged bundled assets
         shell: pwsh
         run: |

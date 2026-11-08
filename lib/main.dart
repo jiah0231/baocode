@@ -1020,6 +1020,7 @@ class _BaoCodeAppState extends State<BaoCodeApp>
     if (dark == _darkAppearance) return;
     _darkAppearance = dark;
     unawaited(WindowControls.setDarkAppearance(dark));
+    unawaited(TranslationHost.instance.configureAppearance(dark));
   }
 
   @override
@@ -1065,10 +1066,15 @@ class _BaoCodeAppState extends State<BaoCodeApp>
                           QuietView(
                             key: ValueKey(id),
                             view: view,
-                            child: _app(
-                              _windows.chat,
-                              translation: true,
-                              viewId: id,
+                            // Navigator and input autofocus must not request
+                            // native focus while the tool window is hidden.
+                            child: ExcludeFocus(
+                              excluding: !TranslationHost.instance.panelShown,
+                              child: _app(
+                                _windows.chat,
+                                translation: true,
+                                viewId: id,
+                              ),
                             ),
                           ),
                       for (final window in [
@@ -1103,8 +1109,10 @@ class _BaoCodeAppState extends State<BaoCodeApp>
         : TranslationDialog(
             key: ValueKey(generation),
             embedded: true,
+            active: host.panelShown,
             selectedText: capture.text,
             captureStatus: capture.status,
+            captureWarning: host.lastCaptureWarning,
             onRendered: () => unawaited(host.panelRendered(generation)),
             onClose: () => unawaited(host.hidePanel()),
             onModelSettings: settings,

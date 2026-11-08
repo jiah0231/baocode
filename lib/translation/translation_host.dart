@@ -6,7 +6,8 @@ import 'package:flutter/widgets.dart';
 import '../platform/app_platform.dart';
 import '../settings/user_settings.dart';
 
-/// A single explicitly requested native selection snapshot. Never clipboard text.
+/// One explicitly requested selection snapshot, including a guarded temporary
+/// clipboard capture where direct accessibility selection is unavailable.
 @immutable
 class TranslationCapture {
   const TranslationCapture({
@@ -41,7 +42,8 @@ class TranslationCapture {
 }
 
 /// One native hotkey for the whole process, owned by the main workbench.
-/// No clipboard listener, selection poller, persistence or network access.
+/// Configures metadata-only selection discovery; no clipboard listener,
+/// translation persistence or network access.
 class TranslationHost extends ChangeNotifier {
   TranslationHost({
     MethodChannel? channel,
@@ -54,6 +56,8 @@ class TranslationHost extends ChangeNotifier {
   static final instance = TranslationHost(panelEnabled: false);
   static const hotkeyKey = 'translation.globalHotkey';
   static const defaultHotkey = 'ctrl+alt+y';
+  static const selectionActionKey = 'translation.selectionAction.enabled';
+  static const clipboardFallbackKey = 'translation.clipboardFallback';
   final MethodChannel _channel;
   final bool supported;
   final int? engineId;
@@ -64,11 +68,16 @@ class TranslationHost extends ChangeNotifier {
   bool _started = false;
   bool _paused = false;
   String? _requested;
+  (bool, bool, bool)? _requestedConfiguration;
+  bool _dark = true;
   Future<void> _queue = Future<void>.value();
   bool? hotkeyTaken;
+  bool? selectionActionTaken;
+  String? lastCaptureWarning;
   void Function(TranslationCapture capture)? onPressed;
 
   int? panelViewId;
+  bool panelShown = false;
   TranslationCapture? panelCapture;
   VoidCallback? panelModelSettings;
   VoidCallback? defaultModelSettings;
@@ -83,6 +92,7 @@ class TranslationHost extends ChangeNotifier {
     if (!supported || !panelEnabled) return false;
     final generation = ++panelGeneration;
     panelCapture = null;
+    panelShown = false;
     panelModelSettings = null;
     notifyListeners();
     // Hide old pixels before asynchronously preparing a different selection.
@@ -113,13 +123,21 @@ class TranslationHost extends ChangeNotifier {
 
   /// Called by the panel after its new content has been laid out and painted.
   Future<void> panelRendered(int generation) async {
-    if (generation != panelGeneration || panelCapture == null) return;
+    if (generation != panelGeneration || panelCapture == null || panelShown) {
+      return;
+    }
     final requestId = panelCapture!.requestId;
     try {
       final shown = await _channel.invokeMethod<bool>('showPanel', {
         'requestId': ?requestId,
       });
-      if (shown != true && generation == panelGeneration) _clearPanel();
+      if (generation != panelGeneration || panelCapture == null) return;
+      if (shown == true) {
+        panelShown = true;
+        notifyListeners();
+      } else {
+        _clearPanel();
+      }
     } on Object {
       if (generation == panelGeneration) _clearPanel();
     }
@@ -128,6 +146,7 @@ class TranslationHost extends ChangeNotifier {
   void _clearPanel() {
     panelGeneration++;
     panelCapture = null;
+    panelShown = false;
     panelModelSettings = null;
     notifyListeners();
   }
@@ -147,6 +166,15 @@ class TranslationHost extends ChangeNotifier {
     if (panelViewId != null) await _hideNative();
   }
 
+  bool get selectionActionEnabled => _settings?[selectionActionKey] != false;
+  bool get clipboardFallback => _settings?[clipboardFallbackKey] != false;
+
+  /// Updates native button colors independently of hotkey registration.
+  Future<void> configureAppearance(bool dark) {
+    _dark = dark;
+    return _sync();
+  }
+
   String get hotkey => switch (_settings?[hotkeyKey]) {
     final String value => value,
     _ => defaultHotkey,
@@ -158,6 +186,15 @@ class TranslationHost extends ChangeNotifier {
     _settings = settings;
     settings?.addListener(_changed);
     _channel.setMethodCallHandler((call) async {
+      if (call case MethodCall(
+        method: 'captureWarning',
+        arguments: {'status': 'clipboardRestoreFailed'},
+      )) {
+        // Late clipboard cleanup failures must not reopen a stale panel or
+        // activate the workspace. Show this in any current/next panel/settings.
+        lastCaptureWarning = 'clipboardRestoreFailed';
+        notifyListeners();
+      }
       if (call.method == 'panelHidden') {
         final args = call.arguments;
         final hiddenId = args is Map ? args['requestId'] : null;
@@ -178,17 +215,51 @@ class TranslationHost extends ChangeNotifier {
   void _changed() => unawaited(_sync());
 
   Future<void> _sync() {
-    final wanted = supported && _started && !_paused ? hotkey : '';
-    if (_requested == wanted) return _queue;
+    if (!supported || (!_started && _requested == null)) return _queue;
+    final running = _started && !_paused;
+    final wanted = running ? hotkey : '';
+    final configuration = (
+      running && selectionActionEnabled,
+      running && clipboardFallback,
+      _dark,
+    );
+    final register = _requested != wanted;
+    final configure = _requestedConfiguration != configuration;
+    if (!register && !configure) return _queue;
     _requested = wanted;
-    hotkeyTaken = null;
+    _requestedConfiguration = configuration;
+    if (register) hotkeyTaken = null;
+    if (configure) selectionActionTaken = null;
     notifyListeners();
     return _queue = _queue.then((_) async {
+      if (configure) {
+        bool? installed;
+        try {
+          final reply = await _channel.invokeMethod<Object?>('configure', {
+            'selectionAction': configuration.$1,
+            'clipboardFallback': configuration.$2,
+            'dark': configuration.$3,
+          });
+          installed = switch (reply) {
+            {'selectionAction': final bool enabled} => enabled,
+            final bool enabled => enabled,
+            _ => null,
+          };
+        } on MissingPluginException {
+          // Older hosts still support their hotkey and modal translation.
+        } on PlatformException {
+          // Configuration failure must not prevent hotkey registration.
+          installed = false;
+        }
+        if (_requestedConfiguration == configuration) {
+          selectionActionTaken = configuration.$1 ? installed : null;
+          notifyListeners();
+        }
+      }
+      if (!register) return;
       bool? taken;
       try {
-        taken = supported
-            ? await _channel.invokeMethod<bool>('setHotkey', wanted)
-            : null;
+        taken = await _channel.invokeMethod<bool>('setHotkey', wanted);
       } on MissingPluginException {
         taken = null;
       } on PlatformException {

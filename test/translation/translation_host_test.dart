@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:baocode/translation/translation_host.dart';
+import 'package:baocode/settings/user_settings.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -50,13 +51,16 @@ void main() {
       isTrue,
     );
     expect(host.panelViewId, 9);
+    expect(host.panelShown, isFalse);
     expect(calls.map((c) => c.method), ['createPanel']);
     expect(calls.single.arguments, {'engineId': 42});
     await host.panelRendered(host.panelGeneration);
+    expect(host.panelShown, isTrue);
     expect(calls.last.method, 'showPanel');
     expect(calls.last.arguments, {'requestId': 7});
     await host.hidePanel();
     expect(host.panelCapture, isNull);
+    expect(host.panelShown, isFalse);
     expect(host.panelModelSettings, isNull);
   });
 
@@ -145,6 +149,59 @@ void main() {
     },
   );
 
+  test(
+    'late show success cannot focus a replacement or reopen after close',
+    () async {
+      final pending = <Completer<bool>>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'createPanel') return 9;
+        if (call.method == 'showPanel') {
+          final result = Completer<bool>();
+          pending.add(result);
+          return result.future;
+        }
+        return null;
+      });
+      final host = TranslationHost(
+        channel: channel,
+        supported: true,
+        engineId: 42,
+      );
+      await host.openPanel(const TranslationCapture(text: 'old', requestId: 1));
+      final first = host.panelRendered(host.panelGeneration);
+      await Future<void>.delayed(Duration.zero);
+      await host.openPanel(const TranslationCapture(text: 'new', requestId: 2));
+      pending.first.complete(true);
+      await first;
+      expect(host.panelCapture?.text, 'new');
+      expect(host.panelShown, isFalse);
+      final second = host.panelRendered(host.panelGeneration);
+      await Future<void>.delayed(Duration.zero);
+      await host.hidePanel();
+      pending.last.complete(true);
+      await second;
+      expect(host.panelShown, isFalse);
+      expect(host.panelCapture, isNull);
+    },
+  );
+
+  test(
+    'late clipboard warning stays observable without reopening or focusing',
+    () async {
+      final host = TranslationHost(channel: channel, supported: true)
+        ..start(null);
+      await host.configureAppearance(true);
+      calls.clear();
+      await nativeEvent('captureWarning', {'status': 'clipboardRestoreFailed'});
+      expect(host.lastCaptureWarning, 'clipboardRestoreFailed');
+      expect(host.panelCapture, isNull);
+      expect(host.panelShown, isFalse);
+      expect(calls, isEmpty);
+      host.stop();
+      await host.configureAppearance(true);
+    },
+  );
+
   test('failed or oversized capture cannot carry text', () {
     expect(
       TranslationCapture.fromJson({'status': 'password', 'text': 'secret'})
@@ -168,6 +225,12 @@ void main() {
       }).text,
       '  chosen  ',
     );
+    final failedRestore = TranslationCapture.fromJson({
+      'status': 'clipboardRestoreFailed',
+      'text': 'do not submit',
+    });
+    expect(failedRestore.status, 'clipboardRestoreFailed');
+    expect(failedRestore.text, isEmpty);
     expect(TranslationCapture.fromJson(null).status, 'unsupported');
   });
 
@@ -182,13 +245,79 @@ void main() {
       await host.resume();
       host.stop();
       await Future<void>.delayed(Duration.zero);
-      expect(calls.map((call) => call.method), everyElement('setHotkey'));
-      expect(calls.map((call) => call.arguments), [
-        'ctrl+alt+y',
-        '',
-        'ctrl+alt+y',
-        '',
-      ]);
+      expect(
+        calls.map((call) => call.method),
+        everyElement(isIn(['configure', 'setHotkey'])),
+      );
+      expect(
+        calls
+            .where((call) => call.method == 'configure')
+            .map((call) => (call.arguments as Map)['selectionAction']),
+        [true, false, true, false],
+      );
+      expect(
+        calls
+            .where((call) => call.method == 'setHotkey')
+            .map((call) => call.arguments),
+        ['ctrl+alt+y', '', 'ctrl+alt+y', ''],
+      );
+    },
+  );
+
+  test('native defaults do not persist and theme/settings never re-register hotkey', () async {
+    final settings = _MemorySettings();
+    final host = TranslationHost(channel: channel, supported: true)
+      ..start(settings);
+    await host.configureAppearance(true);
+    expect(settings.values, isEmpty);
+    expect(host.selectionActionEnabled, isTrue);
+    expect(host.clipboardFallback, isTrue);
+    expect(calls.first.method, 'configure');
+    expect(calls.first.arguments, {
+      'selectionAction': true,
+      'clipboardFallback': true,
+      'dark': true,
+    });
+    await host.configureAppearance(false);
+    await settings.update(TranslationHost.selectionActionKey, false);
+    await settings.update(TranslationHost.clipboardFallbackKey, false);
+    await host.configureAppearance(false);
+    expect(calls.where((call) => call.method == 'setHotkey'), hasLength(1));
+    expect(calls.last.arguments, {
+      'selectionAction': false,
+      'clipboardFallback': false,
+      'dark': false,
+    });
+    expect(host.hotkeyTaken, isTrue);
+    final count = calls.length;
+    await host.configureAppearance(false);
+    expect(calls, hasLength(count));
+    expect(settings.values, {
+      TranslationHost.selectionActionKey: false,
+      TranslationHost.clipboardFallbackKey: false,
+    });
+    host.stop();
+    await host.configureAppearance(false);
+    settings.dispose();
+  });
+
+  test(
+    'failed selection registration is visible without breaking hotkey',
+    () async {
+      messenger.setMockMethodCallHandler(
+        channel,
+        (call) async =>
+            call.method == 'configure' ? {'selectionAction': false} : true,
+      );
+      final host = TranslationHost(channel: channel, supported: true)
+        ..start(null);
+      await host.configureAppearance(true);
+      expect(host.selectionActionTaken, isFalse);
+      expect(host.hotkeyTaken, isTrue);
+      await host.pause();
+      expect(host.selectionActionTaken, isNull);
+      host.stop();
+      await host.configureAppearance(true);
     },
   );
 
@@ -218,4 +347,15 @@ void main() {
     host.stop();
     await Future<void>.delayed(Duration.zero);
   });
+}
+
+class _MemorySettings extends UserSettings {
+  _MemorySettings() : super('unused-translation-settings.json');
+  @override
+  final Map<String, Object?> values = {};
+  @override
+  Future<void> update(String key, Object? value) async {
+    values[key] = value;
+    notifyListeners();
+  }
 }

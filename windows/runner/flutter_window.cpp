@@ -173,6 +173,11 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     return 0;
   }
 
+  LRESULT translation_result = 0;
+  if (translation_ && translation_->HandleMessage(message, wparam, lparam,
+                                                  &translation_result)) {
+    return translation_result;
+  }
   if (message == WM_TIMER && wparam == TranslationChannel::kTimer) {
     if (translation_) translation_->Poll();
     return 0;

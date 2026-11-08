@@ -130,7 +130,10 @@ int wmain(int argc, wchar_t** argv) {
     }
     Sleep(100);
     if (mode != 5 && GetForegroundWindow() != fixture) { result = Fail("Fixture could not acquire foreground"); break; }
-    const auto selected = translation_selection::Capture(fixture);
+    const auto selected = translation_selection::Capture(fixture, true);
+    // An explicit gesture alone never authorizes clipboard fallback for a
+    // supported/collapsed selection, password, unknown control or stale focus.
+    if (selected.copy_proof) result = Fail("Ineligible fixture minted clipboard-copy proof");
     if (mode == 5 && GetForegroundWindow() == fixture) { result = Fail("Fixture failed to switch focus"); break; }
     if (selected.self) result = Fail("External fixture incorrectly marked self");
     if (mode == 0 && (selected.status != "ok" || selected.text != L"Selected words"))

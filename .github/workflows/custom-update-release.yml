@@ -92,6 +92,14 @@ jobs:
       - name: Verify cross-app translation selection privacy
         shell: pwsh
         run: ./tool/ci/windows_translation_smoke.ps1
+      - name: Test guarded explicit selection copying
+        shell: pwsh
+        run: ./tool/ci/windows_translation_clipboard_smoke.ps1
+      - name: Test nonactivating selection action entry
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+        run: ./tool/ci/windows_translation_action_smoke.ps1
       - name: Check translation source formatting
         run: dart format --output=none --set-exit-if-changed lib/translation test/translation lib/settings/pages/language_page.dart lib/settings/pages/stash_hotkey_field.dart lib/settings/app_settings.dart
       - name: Test translation routing, cancellation and theme layouts

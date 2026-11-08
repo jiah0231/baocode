@@ -455,7 +455,10 @@ Win32Window::MessageHandler(HWND hwnd,
       return 0;
 
     case WM_ACTIVATE:
-      if (child_content_ != nullptr) {
+      // Losing activation must never focus this view again. In particular,
+      // the source IDE must let a translation panel take focus, and a panel
+      // being hidden must not reactivate its invisible child.
+      if (LOWORD(wparam) != WA_INACTIVE && child_content_ != nullptr) {
         SetFocus(child_content_);
       }
       // Back in front: a resync that gave up tries again.
@@ -559,7 +562,13 @@ void Win32Window::SetChildContent(HWND content) {
   // before the first frame.
   AskForSystemFrame(window_handle_);
 
-  SetFocus(child_content_);
+  // Secondary views are created hidden, before Dart paints their contents.
+  // Focusing a child here would activate its top-level window prematurely.
+  // Visible windows receive normal keyboard focus through WM_ACTIVATE.
+  if (IsWindowVisible(window_handle_) &&
+      GetForegroundWindow() == window_handle_) {
+    SetFocus(child_content_);
+  }
 }
 
 void Win32Window::SetFullScreen(bool full_screen) {

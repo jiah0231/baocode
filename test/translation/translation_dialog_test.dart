@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/rendering.dart';
 import 'package:baocode/theme/workbench_theme.dart';
+import 'package:baocode/theme/app_theme.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -12,48 +13,228 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/ide/ide_button.dart';
 import 'package:baocode/l10n/l10n.dart';
 import 'package:baocode/translation/translation_dialog.dart';
+import 'package:baocode/translation/translation_host.dart';
 import 'package:baocode/translation/translation_service.dart';
 import 'package:baocode/usage/usage_ledger.dart';
 
 import 'translation_service_test.dart' show configured;
 
 void main() {
-  for (final brightness in Brightness.values) {
-    testWidgets(
-      'embedded panel fits small viewport at 200% text in $brightness',
-      (tester) async {
-        tester.view.physicalSize = const Size(280, 340);
-        tester.view.devicePixelRatio = 1;
-        addTearDown(tester.view.resetPhysicalSize);
-        addTearDown(tester.view.resetDevicePixelRatio);
-        var frames = 0;
-        var closed = false;
-        await tester.pumpWidget(
-          MaterialApp(
-            theme: ThemeData(brightness: brightness),
-            builder: (context, child) => MediaQuery(
-              data: MediaQuery.of(context)
-                  .copyWith(textScaler: const TextScaler.linear(2)),
-              child: child!,
-            ),
-            home: TranslationDialog(
-              embedded: true,
-              selectedText: 'hello',
-              onRendered: () => frames++,
-              onClose: () => closed = true,
-            ),
+  testWidgets(
+    'hidden panel cannot focus; successful show enables immediate Escape',
+    (tester) async {
+      const channel = MethodChannel('test/translation-focus');
+      final shown = Completer<bool>();
+      var showCalls = 0;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+        call,
+      ) async {
+        if (call.method == 'createPanel') return 9;
+        if (call.method == 'showPanel') {
+          showCalls++;
+          return shown.future;
+        }
+        return null;
+      });
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          null,
+        ),
+      );
+      final host = TranslationHost(
+        channel: channel,
+        supported: true,
+        engineId: 42,
+      );
+      await host.openPanel(
+        const TranslationCapture(text: 'selected', status: 'ok', requestId: 1),
+      );
+      tester.platformDispatcher.resetFocusedViewTestValues();
+      addTearDown(tester.platformDispatcher.resetFocusedViewTestValues);
+      await tester.pumpWidget(
+        ListenableBuilder(
+          listenable: host,
+          builder: (context, _) {
+            final generation = host.panelGeneration;
+            return ExcludeFocus(
+              excluding: !host.panelShown,
+              child: MaterialApp(
+                key: ValueKey(generation),
+                home: host.panelCapture == null
+                    ? const SizedBox.shrink()
+                    : TranslationDialog(
+                        embedded: true,
+                        active: host.panelShown,
+                        selectedText: host.panelCapture!.text,
+                        onRendered: () =>
+                            unawaited(host.panelRendered(generation)),
+                        onClose: () => unawaited(host.hidePanel()),
+                      ),
+              ),
+            );
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(showCalls, 1); // ExcludeFocus never prevents the first frame.
+      expect(host.panelShown, isFalse);
+      expect(
+        tester
+            .widget<EditableText>(
+              find.descendant(
+                of: find.byKey(const ValueKey('translation-source')),
+                matching: find.byType(EditableText),
+              ),
+            )
+            .focusNode
+            .hasFocus,
+        isFalse,
+      );
+      expect(tester.platformDispatcher.testFocusEvents, isEmpty);
+      shown.complete(true);
+      await tester.pumpAndSettle();
+      expect(host.panelShown, isTrue);
+      expect(
+        tester
+            .widget<EditableText>(
+              find.descendant(
+                of: find.byKey(const ValueKey('translation-source')),
+                matching: find.byType(EditableText),
+              ),
+            )
+            .focusNode
+            .hasFocus,
+        isTrue,
+      );
+      // No click, pointer event or main-window activation is required.
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(host.panelCapture, isNull);
+      expect(host.panelShown, isFalse);
+      expect(find.byType(EditableText), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'mounting and replacing a hidden panel preserves the source focus',
+    (tester) async {
+      final sourceFocus = FocusNode();
+      addTearDown(sourceFocus.dispose);
+      var panel = false;
+      var generation = 0;
+      late StateSetter rebuild;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: StatefulBuilder(
+            builder: (context, setState) {
+              rebuild = setState;
+              return Stack(
+                children: [
+                  TextField(focusNode: sourceFocus, autofocus: true),
+                  if (panel)
+                    ExcludeFocus(
+                      child: MaterialApp(
+                        key: ValueKey(generation),
+                        home: const TranslationDialog(
+                          embedded: true,
+                          active: false,
+                          selectedText: 'hidden',
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
-        );
-        await tester.pumpAndSettle();
-        expect(frames, 1);
-        expect(tester.takeException(), isNull);
-        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-        await tester.pump();
-        expect(closed, isTrue);
-        expect(tester.takeException(), isNull);
-      },
-    );
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(sourceFocus.hasFocus, isTrue);
+      rebuild(() => panel = true);
+      await tester.pumpAndSettle();
+      expect(sourceFocus.hasFocus, isTrue);
+      rebuild(() => generation++);
+      await tester.pumpAndSettle();
+      expect(sourceFocus.hasFocus, isTrue);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final theme in ['Bao Dark', 'Bao Light']) {
+    testWidgets('embedded panel fits small viewport at 200% text in $theme', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(280, 340);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final previous = WorkbenchThemeService.instance;
+      final themes = WorkbenchThemeService()..restore(setting: theme);
+      WorkbenchThemeService.instance = themes;
+      addTearDown(() {
+        WorkbenchThemeService.instance = previous;
+        themes.dispose();
+      });
+      var frames = 0;
+      var closed = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildAppTheme(),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: const TextScaler.linear(2)),
+            child: child!,
+          ),
+          home: TranslationDialog(
+            embedded: true,
+            selectedText: 'hello',
+            onModelSettings: () {},
+            onRendered: () => frames++,
+            onClose: () => closed = true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(frames, 1);
+      expect(tester.takeException(), isNull);
+      final settings = find.widgetWithText(IdeButton, 'Model settings');
+      await tester.ensureVisible(settings);
+      await tester.pumpAndSettle();
+      expect(settings.hitTestable(), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(closed, isTrue);
+      expect(tester.takeException(), isNull);
+    });
   }
+
+  testWidgets(
+    'clipboard restore failure is explicit and persists while typing',
+    (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: TranslationDialog(captureStatus: 'clipboardRestoreFailed'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final warning = find.textContaining(
+        'Could not restore the previous clipboard contents',
+      );
+      expect(warning, findsOneWidget);
+      await tester.enterText(
+        find.descendant(
+          of: find.byKey(const ValueKey('translation-source')),
+          matching: find.byType(EditableText),
+        ),
+        'manual source',
+      );
+      await tester.pumpAndSettle();
+      expect(warning, findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('warns live when optional usage debug tracing is enabled', (
     tester,
@@ -494,7 +675,13 @@ void main() {
     },
   );
   for (final theme in ['Bao Dark', 'Bao Light']) {
-    testWidgets('renders $theme translation preview', (tester) async {
+    testWidgets('renders $theme embedded preview with default footer visible', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(480, 560);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
       final previous = WorkbenchThemeService.instance;
       final themes = WorkbenchThemeService()..restore(setting: theme);
       WorkbenchThemeService.instance = themes;
@@ -532,13 +719,19 @@ void main() {
       }
       await tester.pumpWidget(
         MaterialApp(
-          theme: ThemeData(fontFamily: 'TranslationPreview'),
+          theme: buildAppTheme().copyWith(
+            textTheme: buildAppTheme().textTheme.apply(
+              fontFamily: 'TranslationPreview',
+            ),
+          ),
           locale: const Locale('zh'),
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
           home: RepaintBoundary(
             key: boundaryKey,
             child: TranslationDialog(
+              embedded: true,
+              onModelSettings: () {},
               service: service,
               selectedText:
                   'A lightweight translator, built into your workspace.',
@@ -547,8 +740,28 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      // No ensureVisible or scrolling: these are immediately available at
+      // the native window's default 480×560 size, before and after translating.
+      for (final label in ['翻译', '复制译文', '模型设置']) {
+        expect(
+          find.widgetWithText(IdeButton, label).hitTestable(),
+          findsOneWidget,
+        );
+      }
       await tester.tap(find.widgetWithText(IdeButton, '翻译'));
       await tester.pumpAndSettle();
+      for (final label in ['翻译', '复制译文', '模型设置']) {
+        expect(
+          find.widgetWithText(IdeButton, label).hitTestable(),
+          findsOneWidget,
+        );
+      }
+      expect(
+        tester
+            .widget<IdeButton>(find.widgetWithText(IdeButton, '复制译文'))
+            .onPressed,
+        isNotNull,
+      );
       expect(tester.takeException(), isNull);
       expect(
         DefaultTextStyle.of(tester.element(find.text('原文'))).style.fontFamily,

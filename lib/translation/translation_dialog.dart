@@ -66,19 +66,25 @@ class TranslationDialog extends StatefulWidget {
     super.key,
     this.selectedText = '',
     this.captureStatus,
+    this.captureWarning,
     this.service,
     this.onModelSettings,
     this.onClose,
     this.embedded = false,
+    this.active = true,
     this.onRendered,
   });
   final String selectedText;
   final bool embedded;
+
+  /// A native panel may receive focus only after its host confirms it is shown.
+  final bool active;
   final VoidCallback? onRendered;
 
   /// 'tooLong' means the capture was truncated: discard it, never translate a
   /// clipped selection. Any other non-null status shows manual-entry guidance.
   final String? captureStatus;
+  final String? captureWarning;
   final TranslationService? service;
   final VoidCallback? onModelSettings;
   final VoidCallback? onClose;
@@ -91,6 +97,7 @@ class _TranslationDialogState extends State<TranslationDialog> {
   late final _input = TextEditingController(
     text: widget.captureStatus == 'tooLong' ? '' : widget.selectedText,
   );
+  final _sourceFocus = FocusNode(debugLabel: 'Translation source');
   String _source = 'auto';
   String _target = 'zh';
   String _answer = '';
@@ -106,14 +113,32 @@ class _TranslationDialogState extends State<TranslationDialog> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) widget.onRendered?.call();
+      if (!mounted) return;
+      widget.onRendered?.call();
+      _focusActivePanel();
     });
+  }
+
+  void _focusActivePanel() {
+    if (mounted && widget.embedded && widget.active) {
+      _sourceFocus.requestFocus();
+    }
+  }
+
+  @override
+  void didUpdateWidget(TranslationDialog oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active && !oldWidget.active) {
+      // Wait for the host's ExcludeFocus to permit the panel's subtree again.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _focusActivePanel());
+    }
   }
 
   @override
   void dispose() {
     _stop();
     _input.dispose();
+    _sourceFocus.dispose();
     super.dispose();
   }
 
@@ -253,6 +278,9 @@ class _TranslationDialogState extends State<TranslationDialog> {
           _input.text.length > translationSourceLimit ||
           (!_edited && widget.captureStatus == 'tooLong');
       final error = tooLong ? TranslationFailure.sourceTooLong : _error;
+      final restoreFailed =
+          widget.captureStatus == 'clipboardRestoreFailed' ||
+          widget.captureWarning == 'clipboardRestoreFailed';
       final viewport = MediaQuery.sizeOf(context);
       return CallbackShortcuts(
         bindings: {const SingleActivator(LogicalKeyboardKey.escape): _close},
@@ -283,7 +311,7 @@ class _TranslationDialogState extends State<TranslationDialog> {
                       color: themeColors['foreground'],
                     ),
                     child: SingleChildScrollView(
-                      padding: const EdgeInsets.all(18),
+                      padding: EdgeInsets.all(widget.embedded ? 12 : 18),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -325,7 +353,7 @@ class _TranslationDialogState extends State<TranslationDialog> {
                               color: themeColors['descriptionForeground'],
                             ),
                           ),
-                          const SizedBox(height: 12),
+                          SizedBox(height: widget.embedded ? 8 : 12),
                           Wrap(
                             spacing: 8,
                             runSpacing: 8,
@@ -350,15 +378,21 @@ class _TranslationDialogState extends State<TranslationDialog> {
                               _language(false),
                             ],
                           ),
-                          const SizedBox(height: 14),
-                          if (!_edited &&
-                              widget.captureStatus != null &&
-                              widget.captureStatus != 'ok' &&
-                              !tooLong) ...[
+                          SizedBox(height: widget.embedded ? 10 : 14),
+                          if (restoreFailed ||
+                              (!_edited &&
+                                  widget.captureStatus != null &&
+                                  widget.captureStatus != 'ok' &&
+                                  !tooLong)) ...[
                             Text(
-                              l.translationNoSelection,
+                              restoreFailed
+                                  ? l.translationClipboardRestoreFailed
+                                  : l.translationNoSelection,
                               style: TextStyle(
-                                color: themeColors['descriptionForeground'],
+                                color:
+                                    themeColors[restoreFailed
+                                        ? 'errorForeground'
+                                        : 'descriptionForeground'],
                               ),
                             ),
                             const SizedBox(height: 8),
@@ -383,12 +417,15 @@ class _TranslationDialogState extends State<TranslationDialog> {
                                   IdeInputBox(
                                     key: const ValueKey('translation-source'),
                                     controller: _input,
-                                    autofocus: true,
+                                    focusNode: _sourceFocus,
+                                    autofocus: !widget.embedded,
                                     semanticsLabel: l.translationSource,
                                     placeholder: l.translationPlaceholder,
-                                    minLines: 7,
-                                    maxLines: 10,
-                                    padding: const EdgeInsets.all(10),
+                                    minLines: widget.embedded ? 3 : 7,
+                                    maxLines: widget.embedded ? 6 : 10,
+                                    padding: EdgeInsets.all(
+                                      widget.embedded ? 8 : 10,
+                                    ),
                                     onChanged: (_) =>
                                         _change(() => _edited = true),
                                   ),
@@ -404,8 +441,10 @@ class _TranslationDialogState extends State<TranslationDialog> {
                                   ),
                                   const SizedBox(height: 6),
                                   Container(
-                                    height: 200,
-                                    padding: const EdgeInsets.all(10),
+                                    height: widget.embedded ? 120 : 200,
+                                    padding: EdgeInsets.all(
+                                      widget.embedded ? 8 : 10,
+                                    ),
                                     decoration: BoxDecoration(
                                       color: themeColors['input.background'],
                                       borderRadius: BorderRadius.circular(4),
@@ -433,7 +472,9 @@ class _TranslationDialogState extends State<TranslationDialog> {
                                   ? Column(
                                       children: [
                                         source,
-                                        const SizedBox(height: 14),
+                                        SizedBox(
+                                          height: widget.embedded ? 10 : 14,
+                                        ),
                                         result,
                                       ],
                                     )
@@ -458,7 +499,7 @@ class _TranslationDialogState extends State<TranslationDialog> {
                             ),
                           ],
                           if (_copyFailed) Text(l.translationCopyFailed),
-                          const SizedBox(height: 14),
+                          SizedBox(height: widget.embedded ? 10 : 14),
                           Wrap(
                             spacing: 8,
                             runSpacing: 8,
@@ -495,7 +536,7 @@ class _TranslationDialogState extends State<TranslationDialog> {
                                 ),
                             ],
                           ),
-                          const SizedBox(height: 12),
+                          SizedBox(height: widget.embedded ? 8 : 12),
                           Text(
                             l.translationPrivacy,
                             style: TextStyle(

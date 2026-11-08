@@ -33,6 +33,9 @@ extension TranslationStrings on AppLocalizations {
   String get translationNoSelection => _zh
       ? '未取得选中文字，请在下方输入或粘贴。'
       : 'No selected text was captured. Type or paste below.';
+  String get translationClipboardRestoreFailed => _zh
+      ? '未能恢复原剪贴板内容，请检查剪贴板。本次取词失败的内容未发送；可手动输入原文后再翻译。'
+      : 'Could not restore the previous clipboard contents. Please check your clipboard. No text from this failed capture was sent; you can enter the source manually to translate.';
   String translationLanguage(String code) => switch (code) {
     'auto' => _zh ? '自动检测' : 'Detect language',
     'zh' => '中文',

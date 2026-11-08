@@ -27,9 +27,12 @@ LRESULT CALLBACK Fixture(HWND w, UINT m, WPARAM a, LPARAM b) {
     return 0;
   }
   if (m == kPrepare) {
-    SetWindowTextW(edit, a ? L"Fresh synthetic selection Bravo" : L"Synthetic selection Alpha");
+    const wchar_t* text = a == 2 ? L"Mouse selection Charlie" :
+        a == 3 ? L"Mouse selection Delta" :
+        a ? L"Fresh synthetic selection Bravo" : L"Synthetic selection Alpha";
+    SetWindowTextW(edit, text);
     ShowWindow(w, SW_SHOW); SetForegroundWindow(w); SetFocus(edit);
-    SendMessageW(edit, EM_SETSEL, 0, -1); return 1;
+    SendMessageW(edit, EM_SETSEL, 0, b ? 0 : -1); return 1;
   }
   if (m == WM_DESTROY) { PostQuitMessage(0); return 0; }
   return DefWindowProcW(w, m, a, b);
@@ -47,6 +50,32 @@ void Keys(std::initializer_list<WORD> keys) {
   for (auto k : keys) { INPUT i{}; i.type = INPUT_KEYBOARD; i.ki.wVk = k; input.push_back(i); }
   for (auto i = keys.end(); i != keys.begin();) { INPUT k{}; k.type = INPUT_KEYBOARD; k.ki.wVk = *--i; k.ki.dwFlags = KEYEVENTF_KEYUP; input.push_back(k); }
   Check(SendInput(static_cast<UINT>(input.size()), input.data(), sizeof(INPUT)) == input.size(), "SendInput failed");
+}
+void Mouse(POINT point, DWORD flags) {
+  const int left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+  const int top = GetSystemMetrics(SM_YVIRTUALSCREEN);
+  const int width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+  const int height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+  Check(width > 1 && height > 1, "Interactive runner desktop unavailable");
+  INPUT input{}; input.type = INPUT_MOUSE;
+  input.mi.dx = MulDiv(point.x - left, 65535, width - 1);
+  input.mi.dy = MulDiv(point.y - top, 65535, height - 1);
+  input.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK | flags;
+  Check(SendInput(1, &input, sizeof(INPUT)) == 1, "Real mouse input failed");
+}
+void DragFixture(HWND fixture) {
+  HWND rich = FindWindowExW(fixture, nullptr, L"RICHEDIT50W", nullptr);
+  RECT bounds{};
+  Check(rich && GetWindowRect(rich, &bounds), "External mouse fixture control unavailable");
+  // One ASCII line, with room to drag beyond its end. No EM_SETSEL selects it:
+  // only genuine SendInput mouse down/moves/up can create this selection.
+  POINT start{bounds.left + 1, bounds.top + 8};
+  POINT end{bounds.right - 20, bounds.top + 8};
+  Mouse(start, 0); Sleep(80); Mouse(start, MOUSEEVENTF_LEFTDOWN);
+  for (int step = 1; step <= 12; ++step) {
+    Mouse(POINT{start.x + (end.x - start.x) * step / 12, start.y}, 0); Sleep(20);
+  }
+  Mouse(end, MOUSEEVENTF_LEFTUP);
 }
 std::wstring AccessibleText(IUIAutomation* uia, HWND w) {
   IUIAutomationElement* root = nullptr;
@@ -160,11 +189,59 @@ int wmain(int argc, wchar_t** argv) {
         Check(GetClipboardSequenceNumber() == sequence, "Translation modified clipboard");
       }
     }
-    // Native application quit route, not forced termination; registration must be released.
+    // Exercise the passive selection entry with real cross-process mouse input.
+    // Return to tray-hidden state, independently of the earlier minimized cases.
+    ShowWindow(mainWindow, SW_RESTORE);
+    PostMessageW(mainWindow, WM_CLOSE, 0, 0);
+    Check(Wait([] { return IsWindow(mainWindow) && !IsWindowVisible(mainWindow); }), "Main did not return to tray for mouse test");
+    for (int selection = 0; selection < 2; ++selection) {
+      AllowSetForegroundWindow(fixtureProcess.dwProcessId);
+      SendMessageW(fixture, kPrepare, 2 + selection, 1);
+      Check(Wait([&] { return GetForegroundWindow() == fixture; }), "Mouse fixture could not take foreground");
+      DragFixture(fixture);
+      HWND action = nullptr;
+      Check(Wait([&] {
+        action = FindWindowW(L"BaoCodeTranslationSelectionAction", nullptr);
+        DWORD pid = 0; if (action) GetWindowThreadProcessId(action, &pid);
+        return action && pid == appPid && IsWindowVisible(action);
+      }), "Real mouse drag did not expose translation selection entry");
+      Check(GetForegroundWindow() == fixture, "Selection entry stole external app focus");
+      Check(!IsWindowVisible(mainWindow), "Selection entry activated hidden main window");
+      Check(!popup || !IsWindowVisible(popup), "Mouse selection translated without entry click");
+      Check(GetClipboardSequenceNumber() == sequence, "Passive selection entry touched clipboard");
+      const auto actionStyle = GetWindowLongPtrW(action, GWL_EXSTYLE);
+      Check((actionStyle & WS_EX_NOACTIVATE) && (actionStyle & WS_EX_TOOLWINDOW), "Selection entry is activating or taskbar eligible");
+      RECT bounds{}; Check(GetWindowRect(action, &bounds) != 0, "Selection entry bounds missing");
+      const POINT center{(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2};
+      Mouse(center, 0); Mouse(center, MOUSEEVENTF_LEFTDOWN); Sleep(50); Mouse(center, MOUSEEVENTF_LEFTUP);
+      Check(Wait([] { EnumWindows(FindApp, 0); return popup && IsWindowVisible(popup); }), "Clicking selection entry did not open independent popup");
+      Check(popup != mainWindow && !IsWindowVisible(mainWindow), "Selection entry reused or revealed main window");
+      Check(Wait([&] { return !IsWindowVisible(action); }), "Clicked selection entry did not dismiss");
+      const std::wstring expected = selection ? L"Mouse selection Delta" : L"Mouse selection Charlie";
+      const std::wstring stale = selection ? L"Mouse selection Charlie" : L"Synthetic selection Alpha";
+      Check(Wait([&] {
+        const auto text = AccessibleText(uia, popup);
+        return text.find(expected) != std::wstring::npos && text.find(stale) == std::wstring::npos &&
+            text.find(L"Synthetic clipboard decoy") == std::wstring::npos;
+      }), "Mouse popup missing drag-selected source or retaining prior source");
+      Check(Wait([] { return GetForegroundWindow() == popup; }), "Mouse popup did not receive focus");
+      if (selection == 0) {
+        Sleep(500);
+        Screenshot(popup, std::wstring(argv[2]) + L".mouse.bmp");
+      }
+      Keys({VK_ESCAPE});
+      Check(Wait([] { return !IsWindowVisible(popup); }), "Mouse popup Escape failed");
+      Check(Wait([&] { return GetForegroundWindow() == fixture; }), "Mouse popup failed to restore external focus");
+      Check(!IsWindowVisible(mainWindow), "Closing mouse popup revealed main window");
+      Check(GetClipboardSequenceNumber() == sequence, "Mouse translation changed clipboard");
+      Check(Wait([&] { return AccessibleText(uia, popup).find(expected) == std::wstring::npos; }), "Dismissed mouse popup retained accessible source text");
+    }
+    // Native application cleanup route, not full Dart graceful-quit confirmation.
+    // Registration must be released without forcibly terminating the process.
     PostMessageW(mainWindow, WM_APP + 0x42, 0, 0);
     Check(Wait([] { return !IsWindow(mainWindow); }), "Native quit did not close main");
     Check(Wait([] { if (!RegisterHotKey(nullptr, 0x6123, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'Y')) return false; UnregisterHotKey(nullptr, 0x6123); return true; }), "Quit leaked global hotkey");
-    std::puts("PASS actual release app: selection UIA, hidden/minimized independence, toolwindow, positioning, Escape/X/Alt+F4/blur/hotkey toggle, fresh reopen, clipboard sequence, native quit and hotkey release");
+    std::puts("PASS actual release app: selection UIA, hidden/minimized independence, toolwindow, positioning, Escape/X/Alt+F4/blur/hotkey toggle, fresh reopen, clipboard sequence, mouse drag/entry click/fresh reopen/focus, native cleanup and hotkey release");
   } catch (const std::exception& e) { std::fprintf(stderr, "FAIL: %s\n", e.what()); result = 1; }
   if (fixture) PostMessageW(fixture, WM_CLOSE, 0, 0);
   if (fixtureProcess.hProcess) { if (WaitForSingleObject(fixtureProcess.hProcess, 3000) == WAIT_TIMEOUT) TerminateProcess(fixtureProcess.hProcess, 1); CloseHandle(fixtureProcess.hProcess); CloseHandle(fixtureProcess.hThread); }

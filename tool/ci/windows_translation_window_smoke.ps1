@@ -31,6 +31,7 @@ try {
       'window.autoDetectColorScheme' = $false
       'workbench.colorTheme' = "Bao $theme"
       'translation.globalHotkey' = 'ctrl+alt+y'
+      'translation.selectionAction.enabled' = $true
       'models.providers' = @()
       'update.mode' = 'none'
     } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $user 'settings.json') -Encoding utf8
@@ -48,11 +49,14 @@ try {
     $app.Dispose(); $app = $null
     if (!(Test-Path -LiteralPath $screenshot)) { throw 'Required real-app screenshot missing' }
     Add-Type -AssemblyName System.Drawing
-    $bitmap = [System.Drawing.Bitmap]::FromFile($screenshot)
-    $png = [IO.Path]::ChangeExtension($screenshot, '.png')
-    try { $bitmap.Save($png, [System.Drawing.Imaging.ImageFormat]::Png) }
-    finally { $bitmap.Dispose() }
-    Write-Output ('TRANSLATION_WINDOW_PREVIEW|' + [IO.Path]::GetFileNameWithoutExtension($png) + '|' + [Convert]::ToBase64String([IO.File]::ReadAllBytes($png)))
+    foreach ($capture in @($screenshot, "$screenshot.mouse.bmp")) {
+      if (!(Test-Path -LiteralPath $capture)) { throw "Required real-app screenshot missing: $capture" }
+      $bitmap = [System.Drawing.Bitmap]::FromFile($capture)
+      $png = [IO.Path]::ChangeExtension($capture, '.png')
+      try { $bitmap.Save($png, [System.Drawing.Imaging.ImageFormat]::Png) }
+      finally { $bitmap.Dispose() }
+      Write-Output ('TRANSLATION_WINDOW_PREVIEW|' + [IO.Path]::GetFileNameWithoutExtension($png) + '|' + [Convert]::ToBase64String([IO.File]::ReadAllBytes($png)))
+    }
   }
 } finally {
   foreach ($process in @($test, $app)) {

@@ -7,6 +7,7 @@
 #include <optional>
 #include <cstdint>
 #include "translation_panel_geometry.h"
+#include "translation_clipboard_capture.h"
 
 namespace translation_selection {
 struct Selection {
@@ -14,6 +15,7 @@ struct Selection {
   std::string status = "unsupported";
   bool self = false;
   std::optional<RECT> bounds;
+  std::optional<translation_clipboard::Proof> copy_proof;
 };
 // Bounding rectangles are optional. A broken geometry provider must neither
 // expose arbitrary data nor invalidate otherwise valid selected text.
@@ -62,7 +64,7 @@ inline void RejectEmbeddedNull(Selection& selection) {
 }
 // Call only on an MTA worker after an explicit user action. Never reads the
 // clipboard, ValuePattern, document range, or arbitrary window captions.
-inline Selection Capture(HWND foreground) {
+inline Selection Capture(HWND foreground, bool explicit_shortcut = false) {
   Selection out;
   DWORD process = 0;
   GetWindowThreadProcessId(foreground, &process);
@@ -97,8 +99,33 @@ inline Selection Capture(HWND foreground) {
             out.status = "password";
           } else {
             ComPtr<IUIAutomationTextPattern> pattern;
-            if (SUCCEEDED(focused->GetCurrentPatternAs(UIA_TextPatternId,
-                                                       IID_PPV_ARGS(&pattern))) && pattern) {
+            const HRESULT pattern_result = focused->GetCurrentPatternAs(
+                UIA_TextPatternId, IID_PPV_ARGS(&pattern));
+            // Only an explicitly unsupported pattern can qualify for copying.
+            // Provider failures, timeouts and collapsed selections never do.
+            if (explicit_shortcut &&
+                (pattern_result == UIA_E_NOTSUPPORTED || pattern_result == E_NOINTERFACE ||
+                 (SUCCEEDED(pattern_result) && !pattern))) {
+              CONTROLTYPEID type = 0;
+              UIA_HWND native = {};
+              DWORD source_process = 0, focus_process = 0;
+              const DWORD thread = GetWindowThreadProcessId(foreground, &source_process);
+              GUITHREADINFO info = {};
+              info.cbSize = sizeof(info);
+              if (SUCCEEDED(focused->get_CurrentControlType(&type)) &&
+                  type == UIA_EditControlTypeId &&
+                  SUCCEEDED(focused->get_CurrentNativeWindowHandle(&native)) && native &&
+                  GetGUIThreadInfo(thread, &info) &&
+                  info.hwndFocus == reinterpret_cast<HWND>(native) &&
+                  GetWindowThreadProcessId(info.hwndFocus, &focus_process) == thread &&
+                  source_process == process && focus_process == process &&
+                  GetAncestor(info.hwndFocus, GA_ROOT) == foreground &&
+                  GetForegroundWindow() == foreground) {
+                out.copy_proof = translation_clipboard::Proof{
+                    foreground, info.hwndFocus, process, thread, true, true, true};
+              }
+            }
+            if (SUCCEEDED(pattern_result) && pattern) {
               ComPtr<IUIAutomationTextRangeArray> ranges;
               if (SUCCEEDED(pattern->GetSelection(&ranges)) && ranges) {
                 int length = 0;
@@ -157,6 +184,7 @@ inline Selection Capture(HWND foreground) {
     out.status = "focusChanged";
   }
   if (out.status != "ok") out.bounds.reset();
+  if (out.status != "unsupported") out.copy_proof.reset();
   return out;
 }
 }  // namespace translation_selection

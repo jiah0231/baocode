@@ -1,6 +1,7 @@
 #include "translation_channel.h"
 #include <flutter/standard_method_codec.h>
 #include <functional>
+#include <atomic>
 #include <mutex>
 #include <thread>
 #include <system_error>
@@ -8,6 +9,7 @@
 #include "app_windows.h"
 #include "stash_channel.h"
 #include "translation_selection.h"
+#include "translation_selection_action.h"
 #include "utils.h"
 
 namespace {
@@ -19,6 +21,14 @@ flutter::EncodableValue Encode(const translation_selection::Selection& selection
       {flutter::EncodableValue("status"), flutter::EncodableValue(selection.status)},
       {flutter::EncodableValue("self"), flutter::EncodableValue(selection.self)},
       {flutter::EncodableValue("requestId"), flutter::EncodableValue(request_id)}});
+}
+bool BoolArgument(const flutter::EncodableValue* arguments, const char* key) {
+  const auto* map = arguments ? std::get_if<flutter::EncodableMap>(arguments) : nullptr;
+  if (!map) return false;
+  const auto found = map->find(flutter::EncodableValue(key));
+  if (found == map->end()) return false;
+  const auto* value = std::get_if<bool>(&found->second);
+  return value && *value;
 }
 std::optional<int64_t> Argument(const flutter::EncodableValue* arguments,
                                const char* key) {
@@ -59,6 +69,7 @@ class TranslationPanelWindow : public IdeWindow {
 struct TranslationChannel::Pending {
   std::mutex mutex;
   bool done = false;
+  std::atomic<bool> canceled{false};
   int64_t request_id = 0;
   HWND foreground = nullptr;
   translation_selection::Selection selection;
@@ -67,8 +78,25 @@ TranslationChannel::TranslationChannel(flutter::BinaryMessenger* messenger, HWND
     : messenger_(messenger), window_(window),
       channel_(std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
           messenger, "baocode/translation", &flutter::StandardMethodCodec::GetInstance())) {
+  selection_action_ = std::make_unique<TranslationSelectionAction>(window_,
+      [this](HWND source) {
+        if (source && GetForegroundWindow() == source) Capture(nullptr);
+      });
   channel_->SetMethodCallHandler([this](const auto& call, auto result) {
-    if (call.method_name() == "setHotkey") {
+    if (call.method_name() == "configure") {
+      const bool fallback = BoolArgument(call.arguments(), "clipboardFallback");
+      const bool action = BoolArgument(call.arguments(), "selectionAction");
+      if (((clipboard_fallback_ && !fallback) ||
+           (selection_action_enabled_ && !action)) && pending_) {
+        pending_->canceled.store(true);
+      }
+      clipboard_fallback_ = fallback;
+      selection_action_enabled_ = action;
+      const bool installed = selection_action_->Configure(
+          action, BoolArgument(call.arguments(), "dark"));
+      result->Success(flutter::EncodableValue(flutter::EncodableMap{
+          {flutter::EncodableValue("selectionAction"), flutter::EncodableValue(installed)}}));
+    } else if (call.method_name() == "setHotkey") {
       const auto* spec = call.arguments() ? std::get_if<std::string>(call.arguments()) : nullptr;
       result->Success(flutter::EncodableValue(spec && Register(*spec)));
     } else if (call.method_name() == "captureSelection") {
@@ -90,6 +118,8 @@ TranslationChannel::TranslationChannel(flutter::BinaryMessenger* messenger, HWND
   });
 }
 TranslationChannel::~TranslationChannel() {
+  if (pending_) pending_->canceled.store(true);
+  selection_action_.reset();
   channel_->SetMethodCallHandler(nullptr);
   if (registered_) UnregisterHotKey(window_, kHotkey);
   KillTimer(window_, kTimer);
@@ -121,6 +151,7 @@ std::optional<int64_t> TranslationChannel::CreatePanel(int64_t engine_id) {
   return view_id;
 }
 void TranslationChannel::BeginRequest(HWND foreground) {
+  if (pending_) pending_->canceled.store(true);
   ++request_id_;
   request_started_ = GetTickCount64();
   foreground_ = foreground;
@@ -185,6 +216,7 @@ bool TranslationChannel::ShowPanel(std::optional<int64_t> request_id) {
   return panel_shown_;
 }
 void TranslationChannel::HidePanel(bool restore_focus, bool invalidate, bool notify) {
+  if (pending_) pending_->canceled.store(true);
   const bool shown = std::exchange(panel_shown_, false);
   const HWND panel = panel_ ? panel_->GetHandle() : nullptr;
   const bool was_front = panel && GetForegroundWindow() == panel;
@@ -214,6 +246,10 @@ bool TranslationChannel::Register(const std::string& spec) {
                                parsed->second) != FALSE;
   return registered_;
 }
+bool TranslationChannel::HandleMessage(UINT message, WPARAM wparam, LPARAM lparam,
+                                        LRESULT* result) {
+  return selection_action_ && selection_action_->HandleMessage(message, wparam, lparam, result);
+}
 bool TranslationChannel::HandleHotkey(WPARAM id) {
   if (id != static_cast<WPARAM>(kHotkey)) return false;
   if (panel_shown_) HidePanel(true);
@@ -222,6 +258,8 @@ bool TranslationChannel::HandleHotkey(WPARAM id) {
 }
 void TranslationChannel::Capture(
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  selection_action_->Hide();
+  const bool explicit_shortcut = result == nullptr;
   const HWND foreground = GetForegroundWindow();
   BeginRequest(foreground);
   if (result_) {
@@ -260,9 +298,20 @@ void TranslationChannel::Capture(
     return;
   }
   const auto pending = pending_;
+  const bool allow_copy = explicit_shortcut && clipboard_fallback_;
+  const HWND owner = window_;
+  const ULONGLONG deadline = started_ + 1500;
   try {
-    std::thread([pending, foreground]() {
-      auto selection = translation_selection::Capture(foreground);
+    std::thread([pending, foreground, allow_copy, owner, deadline]() {
+      auto selection = translation_selection::Capture(foreground, allow_copy);
+      if (allow_copy && selection.status == "unsupported" && selection.copy_proof &&
+          !pending->canceled.load() && GetTickCount64() < deadline) {
+        auto copied = translation_clipboard::CopySelection(
+            owner, *selection.copy_proof, &pending->canceled, deadline);
+        selection.text = std::move(copied.text);
+        selection.status = std::move(copied.status);
+      }
+      selection.copy_proof.reset();
       std::lock_guard<std::mutex> lock(pending->mutex);
       pending->selection = std::move(selection);
       pending->done = true;
@@ -282,15 +331,27 @@ void TranslationChannel::Poll() {
     done = pending_->done;
     selection = pending_->selection;
   }
+  // Restoration is a separate user-visible outcome, even if the source
+  // request was canceled/timed out. Never reopen or deliver its stale text.
+  if (done && selection.status == "clipboardRestoreFailed" &&
+      (delivered_ || pending_->canceled.load() ||
+       pending_->request_id != request_id_ ||
+       GetForegroundWindow() != pending_->foreground)) {
+    channel_->InvokeMethod("captureWarning", std::make_unique<flutter::EncodableValue>(
+        flutter::EncodableMap{{flutter::EncodableValue("status"),
+                               flutter::EncodableValue("clipboardRestoreFailed")}}));
+  }
   if (!delivered_ && (done || GetTickCount64() - started_ >= 1500)) {
+    const bool canceled = pending_->canceled.load();
     if (!done) {
+      pending_->canceled.store(true);
       selection.text.clear();
       selection.bounds.reset();
       selection.status = "timeout";
       SetTimer(window_, kTimer, 1000, nullptr);
     }
     delivered_ = true;
-    const bool changed = pending_->request_id != request_id_ ||
+    const bool changed = canceled || pending_->request_id != request_id_ ||
         !pending_->foreground || GetForegroundWindow() != pending_->foreground;
     if (changed) {
       selection.text.clear();

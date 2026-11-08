@@ -9,12 +9,14 @@
 #include <string>
 
 class TranslationPanelWindow;
+class TranslationSelectionAction;
 class TranslationChannel {
  public:
   static constexpr UINT_PTR kTimer = 0x4254;
   TranslationChannel(flutter::BinaryMessenger* messenger, HWND window);
   ~TranslationChannel();
   bool HandleHotkey(WPARAM id);
+  bool HandleMessage(UINT message, WPARAM wparam, LPARAM lparam, LRESULT* result);
   void Poll();
  private:
   struct Pending;
@@ -35,11 +37,14 @@ class TranslationChannel {
   int64_t panel_request_id_ = 0;
   bool panel_shown_ = false;
   bool registered_ = false;
+  bool clipboard_fallback_ = false;
+  bool selection_action_enabled_ = false;
   bool delivered_ = false;
   ULONGLONG started_ = 0;
   std::shared_ptr<Pending> pending_;
   std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result_;
   std::unique_ptr<TranslationPanelWindow> panel_;
+  std::unique_ptr<TranslationSelectionAction> selection_action_;
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> channel_;
 };
 #endif
