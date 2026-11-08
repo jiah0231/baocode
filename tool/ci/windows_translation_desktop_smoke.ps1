@@ -148,6 +148,10 @@ function Run-DesktopCase([string]$Id, [string]$Application, [string]$Path, [stri
     $result | Add-Member -NotePropertyName availability -NotePropertyValue 'installed' -Force
     $actualVersion = Get-FileVersion $result.sourceImagePath
     $versionSource = if ($actualVersion) { 'capturedSourceProcess' } else { 'unavailable' }
+    if ($Id -eq 'console' -and $result.hostIdentityVerified -and $result.hostImagePath) {
+      $actualVersion = Get-FileVersion $result.hostImagePath
+      $versionSource = if ($actualVersion) { 'verifiedConsoleHost' } else { 'unavailable' }
+    }
     $result | Add-Member -NotePropertyName version -NotePropertyValue $actualVersion -Force
     $result | Add-Member -NotePropertyName versionSource -NotePropertyValue $versionSource -Force
     $result | Add-Member -NotePropertyName launcherVersion -NotePropertyValue (Get-FileVersion $Path) -Force

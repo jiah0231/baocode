@@ -2,6 +2,7 @@
 // documents, production read-only selection capture. Never injects Ctrl+C.
 #include "../../windows/runner/translation_selection.h"
 #include <dwmapi.h>
+#include <tlhelp32.h>
 #include <algorithm>
 #include <cstdio>
 #include <cwctype>
@@ -10,6 +11,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <vector>
+#include <utility>
 
 namespace {
 constexpr wchar_t kNotepadText[] = L"Notepad selected synthetic Echo";
@@ -42,7 +44,8 @@ std::string Quote(const std::wstring& value) {
 struct Result {
   std::string id, outcome = "failed", status = "notRun", detail;
   std::string fallback = "notEligible";
-  std::wstring source_image_path;
+  std::wstring source_image_path, host_image_path;
+  bool host_identity_verified = false;
   bool selected = false, clipboard = false, proof = false;
   unsigned long long elapsed = 0;
   size_t units = 0;
@@ -53,6 +56,8 @@ struct Result {
     Check(file.good(), "Cannot write desktop result JSON");
     file << "{\n  \"id\":" << Quote(id) << ",\n  \"outcome\":" << Quote(outcome)
          << ",\n  \"sourceImagePath\":" << Quote(source_image_path)
+         << ",\n  \"hostImagePath\":" << Quote(host_image_path)
+         << ",\n  \"hostIdentityVerified\":" << (host_identity_verified ? "true" : "false")
          << ",\n  \"captureStatus\":" << Quote(status) << ",\n  \"detail\":" << Quote(detail)
          << ",\n  \"gestureAttempts\":" << gesture_attempts
          << ",\n  \"selectionVerified\":" << (selected ? "true" : "false")
@@ -72,6 +77,19 @@ std::wstring Lower(std::wstring value) {
     return static_cast<wchar_t>(towlower(c));
   });
   return value;
+}
+DWORD ParentProcessId(DWORD pid) {
+  HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snapshot == INVALID_HANDLE_VALUE) return 0;
+  PROCESSENTRY32W entry{}; entry.dwSize = sizeof(entry); DWORD parent = 0;
+  if (Process32FirstW(snapshot, &entry)) do {
+    if (entry.th32ProcessID == pid) { parent = entry.th32ParentProcessID; break; }
+  } while (Process32NextW(snapshot, &entry));
+  CloseHandle(snapshot); return parent;
+}
+std::wstring ProcessImagePath(HANDLE process) {
+  wchar_t path[32768]{}; DWORD length = 32768;
+  return QueryFullProcessImageNameW(process, 0, path, &length) ? std::wstring(path, length) : std::wstring{};
 }
 std::wstring ImagePath(HWND window) {
   DWORD pid = 0; GetWindowThreadProcessId(window, &pid);
@@ -228,10 +246,36 @@ bool VisiblePdfSelection(const Frame& before, const Frame& after, RECT area) {
     if (before.pixels[i] > 240 && before.pixels[i+1] > 240 && before.pixels[i+2] > 240) {
       ++white;
       const int b = after.pixels[i], g = after.pixels[i+1], r = after.pixels[i+2];
-      if (b > 90 && g > 90 && r > 70 && (255-b)+(255-g)+(255-r) >= 35) ++highlighted;
+      if (b > 90 && g > 90 && r > 70 && (static_cast<int>(before.pixels[i])-b)+(static_cast<int>(before.pixels[i+1])-g)+(static_cast<int>(before.pixels[i+2])-r) >= 35) ++highlighted;
     }
   }
   return white >= 200 && highlighted >= white/8;
+}
+// A broad highlight can still omit the final character. Require substantial
+// background highlight in BOTH edge cells and no highlight in the decoy row.
+bool CompletePdfSelection(const Frame& before, const Frame& after, RECT line, double scale) {
+  if (!VisiblePdfSelection(before, after, line)) return false;
+  const LONG cell = std::max<LONG>(1, static_cast<LONG>(10.8*scale));
+  const auto fraction = [&](RECT area) {
+    size_t white = 0, highlighted = 0;
+    for (LONG y = area.top; y < area.bottom; ++y) for (LONG x = area.left; x < area.right; ++x) {
+      if (x < 0 || y < 0 || x >= before.width || y >= before.height) continue;
+      const auto i = (static_cast<size_t>(y)*before.width+x)*4;
+      if (before.pixels[i] > 240 && before.pixels[i+1] > 240 && before.pixels[i+2] > 240) {
+        ++white; const int b = after.pixels[i], g = after.pixels[i+1], r = after.pixels[i+2];
+        if (b > 90 && g > 90 && r > 70 && (static_cast<int>(before.pixels[i])-b)+(static_cast<int>(before.pixels[i+1])-g)+(static_cast<int>(before.pixels[i+2])-r) >= 35) ++highlighted;
+      }
+    }
+    return std::pair<size_t, size_t>{white, highlighted};
+  };
+  const auto first = fraction(RECT{line.left, line.top, line.left+cell, line.bottom});
+  const auto last = fraction(RECT{line.right-cell, line.top, line.right, line.bottom});
+  const LONG dy = static_cast<LONG>(60*scale);
+  const auto decoy = fraction(RECT{line.left, line.top+dy, line.right, line.bottom+dy});
+  std::printf("DESKTOP_PDF_HIGHLIGHT|first=%zu/%zu|last=%zu/%zu|decoy=%zu/%zu\n",
+      first.second, first.first, last.second, last.first, decoy.second, decoy.first);
+  return first.first >= 40 && last.first >= 40 && first.second*5 >= first.first*3 &&
+      last.second*5 >= last.first*3 && decoy.first >= 200 && decoy.second == 0;
 }
 // Find an actual dark pixel in the leading half of the first Courier glyph.
 // PDF viewers can ignore a drag starting in the font's left side-bearing even
@@ -296,6 +340,177 @@ bool NotepadSelectionMetadata(HWND window, size_t units) {
   }
   CoUninitialize(); return selected;
 }
+void PointParentMetadata(std::ofstream& out, IUIAutomation* uia,
+                         IUIAutomationElement* original_focus, HWND source,
+                         DWORD source_pid, bool original_focus_safe) {
+  POINT point{}; const bool have_point = GetCursorPos(&point) != 0;
+  out << ",\n  \"pointer\":[" << point.x << ',' << point.y << ']'
+      << ",\n  \"pointerAvailable\":" << (have_point ? "true" : "false");
+  Microsoft::WRL::ComPtr<IUIAutomationElement> hit;
+  const HRESULT hit_hr = have_point && GetForegroundWindow() == source ? uia->ElementFromPoint(point, &hit) : E_ABORT;
+  out << ",\n  \"pointHRESULT\":" << static_cast<unsigned long>(hit_hr);
+  if (FAILED(hit_hr) || !hit) return;
+  for (int view = 0; view < 2; ++view) {
+    Microsoft::WRL::ComPtr<IUIAutomationTreeWalker> walker;
+    const HRESULT walker_hr = view ? uia->get_ControlViewWalker(&walker) : uia->get_RawViewWalker(&walker);
+    out << (view ? ",\n  \"controlParentChain\":[" : ",\n  \"rawParentChain\":[");
+    Microsoft::WRL::ComPtr<IUIAutomationElement> element = hit;
+    const ULONGLONG deadline = GetTickCount64()+4000;
+    for (int depth = 0; SUCCEEDED(walker_hr) && walker && element && depth < 8 &&
+        GetTickCount64() < deadline && GetForegroundWindow() == source; ++depth) {
+      int pid = 0; CONTROLTYPEID type = 0; BOOL has_focus = FALSE, password = TRUE, same = FALSE;
+      const HRESULT pid_hr = element->get_CurrentProcessId(&pid);
+      const HRESULT type_hr = element->get_CurrentControlType(&type);
+      const HRESULT focus_hr = element->get_CurrentHasKeyboardFocus(&has_focus);
+      const HRESULT password_hr = element->get_CurrentIsPassword(&password);
+      const HRESULT same_hr = uia->CompareElements(original_focus, element.Get(), &same);
+      BSTR cls = nullptr, framework = nullptr;
+      const HRESULT class_hr = element->get_CurrentClassName(&cls);
+      const HRESULT framework_hr = element->get_CurrentFrameworkId(&framework);
+      if (depth) out << ',';
+      out << "{\"depth\":" << depth << ",\"pid\":" << pid
+          << ",\"pidHRESULT\":" << static_cast<unsigned long>(pid_hr)
+          << ",\"controlType\":" << type << ",\"typeHRESULT\":" << static_cast<unsigned long>(type_hr)
+          << ",\"hasKeyboardFocus\":" << (has_focus ? "true" : "false")
+          << ",\"focusHRESULT\":" << static_cast<unsigned long>(focus_hr)
+          << ",\"isPassword\":" << (password ? "true" : "false")
+          << ",\"passwordHRESULT\":" << static_cast<unsigned long>(password_hr)
+          << ",\"sameAsOriginalFocus\":" << (same ? "true" : "false")
+          << ",\"compareFocusHRESULT\":" << static_cast<unsigned long>(same_hr)
+          << ",\"className\":" << Quote(cls ? std::wstring(cls, SysStringLen(cls)) : std::wstring{})
+          << ",\"classHRESULT\":" << static_cast<unsigned long>(class_hr)
+          << ",\"frameworkId\":" << Quote(framework ? std::wstring(framework, SysStringLen(framework)) : std::wstring{})
+          << ",\"frameworkHRESULT\":" << static_cast<unsigned long>(framework_hr);
+      SysFreeString(cls); SysFreeString(framework);
+      int count = -1, noncollapsed = 0;
+      const bool metadata_safe = original_focus_safe && SUCCEEDED(pid_hr) && static_cast<DWORD>(pid) == source_pid &&
+          SUCCEEDED(password_hr) && !password && GetForegroundWindow() == source;
+      // Children need not own keyboard focus. These are endpoint/count metadata
+      // diagnostics only, never authority to read text from a child or its tree.
+      if (metadata_safe) {
+        Microsoft::WRL::ComPtr<IUIAutomationTextPattern> pattern;
+        const HRESULT pattern_hr = element->GetCurrentPatternAs(UIA_TextPatternId, IID_PPV_ARGS(&pattern));
+        out << ",\"patternHRESULT\":" << static_cast<unsigned long>(pattern_hr);
+        if (SUCCEEDED(pattern_hr) && pattern) {
+          Microsoft::WRL::ComPtr<IUIAutomationTextRangeArray> ranges;
+          const HRESULT selection_hr = pattern->GetSelection(&ranges);
+          const HRESULT count_hr = ranges ? ranges->get_Length(&count) : E_POINTER;
+          out << ",\"selectionHRESULT\":" << static_cast<unsigned long>(selection_hr)
+              << ",\"selectionCountHRESULT\":" << static_cast<unsigned long>(count_hr);
+          for (int i = 0; SUCCEEDED(selection_hr) && SUCCEEDED(count_hr) && count <= 16 && i < count; ++i) {
+            Microsoft::WRL::ComPtr<IUIAutomationTextRange> range; int difference = 0;
+            if (SUCCEEDED(ranges->GetElement(i, &range)) && range &&
+                SUCCEEDED(range->CompareEndpoints(TextPatternRangeEndpoint_Start, range.Get(), TextPatternRangeEndpoint_End, &difference)) && difference != 0) ++noncollapsed;
+          }
+        }
+      }
+      out << ",\"selectionCount\":" << count << ",\"nonCollapsedRanges\":" << noncollapsed;
+      std::printf("DESKTOP_POST_CAPTURE_POINT|view=%s|depth=%d|pid=%d|type=%d|hasFocus=%d|password=%d|sameFocus=%d|ranges=%d|nonCollapsed=%d\n",
+          view ? "control" : "raw", depth, pid, type, has_focus, password, same, count, noncollapsed);
+      if ((SUCCEEDED(same_hr) && same) || FAILED(pid_hr) || static_cast<DWORD>(pid) != source_pid ||
+          FAILED(password_hr) || password) { out << '}'; break; }
+      Microsoft::WRL::ComPtr<IUIAutomationElement> parent;
+      const HRESULT parent_hr = walker->GetParentElement(element.Get(), &parent);
+      out << ",\"parentHRESULT\":" << static_cast<unsigned long>(parent_hr) << '}';
+      if (FAILED(parent_hr) || !parent) break;
+      element = parent;
+    }
+    out << ']';
+  }
+}
+// Post-capture diagnostics only: never call before the measured production
+// capture, never read Name/Value/DocumentRange/GetText, and never change focus.
+void SourceSelectionMetadata(HWND source, const std::wstring& path) {
+  std::ofstream out(path.c_str());
+  if (!out) return;
+  DWORD source_pid = 0; GetWindowThreadProcessId(source, &source_pid);
+  out << "{\n  \"phase\":\"afterOnlyProductionCapture\",\n  \"focusReference\":\"postCaptureGetFocusedElement\",\n  \"sourcePid\":" << source_pid
+      << ",\n  \"foregroundMatches\":" << (GetForegroundWindow() == source ? "true" : "false");
+  const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+  out << ",\n  \"initializeHRESULT\":" << static_cast<unsigned long>(initialized);
+  if (SUCCEEDED(initialized)) {
+    {
+      Microsoft::WRL::ComPtr<IUIAutomation> uia;
+      const HRESULT created = CoCreateInstance(CLSID_CUIAutomation8, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&uia));
+      out << ",\n  \"automationHRESULT\":" << static_cast<unsigned long>(created);
+      if (SUCCEEDED(created) && uia && GetForegroundWindow() == source) {
+        Microsoft::WRL::ComPtr<IUIAutomation2> bounded;
+        if (SUCCEEDED(uia.As(&bounded))) { bounded->put_ConnectionTimeout(200); bounded->put_TransactionTimeout(300); }
+        Microsoft::WRL::ComPtr<IUIAutomationElement> focus;
+        const HRESULT focused = uia->GetFocusedElement(&focus);
+        out << ",\n  \"focusHRESULT\":" << static_cast<unsigned long>(focused);
+        if (SUCCEEDED(focused) && focus) {
+          int pid = 0; CONTROLTYPEID type = 0; BOOL has_focus = FALSE, password = TRUE;
+          UIA_HWND native = {}; RECT rect{};
+          const HRESULT pid_hr = focus->get_CurrentProcessId(&pid);
+          const HRESULT type_hr = focus->get_CurrentControlType(&type);
+          const HRESULT focus_hr = focus->get_CurrentHasKeyboardFocus(&has_focus);
+          const HRESULT password_hr = focus->get_CurrentIsPassword(&password);
+          const HRESULT native_hr = focus->get_CurrentNativeWindowHandle(&native);
+          const HRESULT bounds_hr = focus->get_CurrentBoundingRectangle(&rect);
+          BSTR cls = nullptr, framework = nullptr;
+          const HRESULT class_hr = focus->get_CurrentClassName(&cls);
+          const HRESULT framework_hr = focus->get_CurrentFrameworkId(&framework);
+          out << ",\n  \"focusedPid\":" << pid << ",\n  \"pidHRESULT\":" << static_cast<unsigned long>(pid_hr)
+              << ",\n  \"controlType\":" << type << ",\n  \"typeHRESULT\":" << static_cast<unsigned long>(type_hr)
+              << ",\n  \"hasKeyboardFocus\":" << (has_focus ? "true" : "false")
+              << ",\n  \"focusPropertyHRESULT\":" << static_cast<unsigned long>(focus_hr)
+              << ",\n  \"isPassword\":" << (password ? "true" : "false")
+              << ",\n  \"passwordHRESULT\":" << static_cast<unsigned long>(password_hr)
+              << ",\n  \"nativeHandle\":" << reinterpret_cast<uintptr_t>(reinterpret_cast<HWND>(native))
+              << ",\n  \"nativeHandleHRESULT\":" << static_cast<unsigned long>(native_hr)
+              << ",\n  \"bounds\":[" << rect.left << ',' << rect.top << ',' << rect.right << ',' << rect.bottom << ']'
+              << ",\n  \"boundsHRESULT\":" << static_cast<unsigned long>(bounds_hr)
+              << ",\n  \"className\":" << Quote(cls ? std::wstring(cls, SysStringLen(cls)) : std::wstring{})
+              << ",\n  \"classHRESULT\":" << static_cast<unsigned long>(class_hr)
+              << ",\n  \"frameworkId\":" << Quote(framework ? std::wstring(framework, SysStringLen(framework)) : std::wstring{})
+              << ",\n  \"frameworkHRESULT\":" << static_cast<unsigned long>(framework_hr);
+          SysFreeString(cls); SysFreeString(framework);
+          const bool safe = SUCCEEDED(pid_hr) && static_cast<DWORD>(pid) == source_pid &&
+              SUCCEEDED(focus_hr) && has_focus && SUCCEEDED(password_hr) && !password && GetForegroundWindow() == source;
+          out << ",\n  \"selectionMetadataEligible\":" << (safe ? "true" : "false");
+          if (safe) {
+            Microsoft::WRL::ComPtr<IUIAutomationTextPattern> pattern;
+            const HRESULT pattern_hr = focus->GetCurrentPatternAs(UIA_TextPatternId, IID_PPV_ARGS(&pattern));
+            out << ",\n  \"textPatternHRESULT\":" << static_cast<unsigned long>(pattern_hr)
+                << ",\n  \"textPatternPresent\":" << (pattern ? "true" : "false");
+            if (SUCCEEDED(pattern_hr) && pattern) {
+              SupportedTextSelection supported = SupportedTextSelection_None;
+              const HRESULT support_hr = pattern->get_SupportedTextSelection(&supported);
+              Microsoft::WRL::ComPtr<IUIAutomationTextRangeArray> ranges;
+              const HRESULT selection_hr = pattern->GetSelection(&ranges);
+              int count = -1, noncollapsed = 0;
+              const HRESULT count_hr = ranges ? ranges->get_Length(&count) : E_POINTER;
+              out << ",\n  \"supportedTextSelection\":" << static_cast<int>(supported)
+                  << ",\n  \"supportedSelectionHRESULT\":" << static_cast<unsigned long>(support_hr)
+                  << ",\n  \"getSelectionHRESULT\":" << static_cast<unsigned long>(selection_hr)
+                  << ",\n  \"selectionCount\":" << count
+                  << ",\n  \"selectionCountHRESULT\":" << static_cast<unsigned long>(count_hr)
+                  << ",\n  \"ranges\":[";
+              for (int i = 0; SUCCEEDED(selection_hr) && SUCCEEDED(count_hr) && count <= 16 && i < count; ++i) {
+                Microsoft::WRL::ComPtr<IUIAutomationTextRange> range; int difference = 0;
+                const HRESULT range_hr = ranges->GetElement(i, &range);
+                const HRESULT compare_hr = SUCCEEDED(range_hr) && range ?
+                    range->CompareEndpoints(TextPatternRangeEndpoint_Start, range.Get(), TextPatternRangeEndpoint_End, &difference) : E_POINTER;
+                if (SUCCEEDED(compare_hr) && difference != 0) ++noncollapsed;
+                if (i) out << ',';
+                out << "{\"elementHRESULT\":" << static_cast<unsigned long>(range_hr)
+                    << ",\"compareHRESULT\":" << static_cast<unsigned long>(compare_hr)
+                    << ",\"endpointDifference\":" << difference << '}';
+              }
+              out << "],\n  \"nonCollapsedRanges\":" << noncollapsed;
+              std::printf("DESKTOP_POST_CAPTURE_UIA|pid=%d|type=%d|hasFocus=%d|password=%d|patternHRESULT=0x%08lX|selectionHRESULT=0x%08lX|ranges=%d|nonCollapsed=%d\n",
+                  pid, type, has_focus, password, static_cast<unsigned long>(pattern_hr), static_cast<unsigned long>(selection_hr), count, noncollapsed);
+            }
+          }
+          PointParentMetadata(out, uia.Get(), focus.Get(), source, source_pid, safe);
+        }
+      }
+    }
+    CoUninitialize();
+  }
+  out << "\n}\n";
+}
 translation_selection::Selection Capture(HWND window, Result& result) {
   const ULONGLONG began = GetTickCount64();
   auto capture = translation_selection::Capture(window, true, nullptr, 0, &result.diagnostics);
@@ -347,7 +562,19 @@ int ConsoleFixture(const std::wstring& token, const std::wstring& root) {
   if (attached_count != 1 || attached[0] != GetCurrentProcessId()) {
     trace << "exit=6 consoleNotExclusiveToFixture" << std::endl; return 6;
   }
-  if (!HasImage(window, L"conhost.exe")) { trace << "exit=7 unexpectedHost" << std::endl; return 7; }
+  DWORD expected_host = 0;
+  for (int i = 0; i < 60 && !expected_host; ++i) {
+    std::ifstream expected((root+L".expected-host").c_str()); expected >> expected_host;
+    if (!expected_host) Sleep(50);
+  }
+  const DWORD parent = ParentProcessId(GetCurrentProcessId());
+  DWORD owner = 0; GetWindowThreadProcessId(window, &owner);
+  wchar_t cls[128]{}; GetClassNameW(window, cls, 128);
+  const bool host_proof = expected_host && parent == expected_host && GetAncestor(window, GA_ROOT) == window &&
+      _wcsicmp(cls, L"ConsoleWindowClass") == 0 && (owner == expected_host || owner == GetCurrentProcessId());
+  trace << "expectedHost=" << expected_host << " parentPid=" << parent << " windowOwner=" << owner
+        << " windowClass=" << Quote(std::wstring(cls)) << " hostIdentityVerified=" << host_proof << std::endl;
+  if (!host_proof) { trace << "exit=7 consoleHostIdentityMismatch" << std::endl; return 7; }
   SetConsoleTitleW(token.c_str());
   HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE), input = GetStdHandle(STD_INPUT_HANDLE);
   CONSOLE_FONT_INFOEX font{}; font.cbSize = sizeof(font); font.dwFontSize.Y = 20;
@@ -373,7 +600,7 @@ int ConsoleFixture(const std::wstring& token, const std::wstring& root) {
   trace << "ready cell=" << size.X << ',' << size.Y << std::endl;
   {
     std::ofstream ready((root+L".ready").c_str());
-    ready << reinterpret_cast<uintptr_t>(window) << ' ' << size.X << ' ' << size.Y << '\n';
+    ready << reinterpret_cast<uintptr_t>(window) << ' ' << size.X << ' ' << size.Y << ' ' << GetCurrentProcessId() << '\n';
   }
   const auto end = GetTickCount64()+60000;
   while (GetTickCount64() < end && GetFileAttributesW((root+L".stop").c_str()) == INVALID_FILE_ATTRIBUTES) {
@@ -388,10 +615,16 @@ int ConsoleFixture(const std::wstring& token, const std::wstring& root) {
   return 0;
 }
 struct Child {
-  PROCESS_INFORMATION value{}; std::wstring root;
+  PROCESS_INFORMATION value{}; std::wstring root; HANDLE fixture = nullptr;
   ~Child() {
     if (value.hProcess) {
       if (!root.empty()) { std::ofstream stop((root+L".stop").c_str()); stop << "stop\n"; }
+      if (fixture) {
+        if (WaitForSingleObject(fixture, 2000) == WAIT_TIMEOUT) {
+          TerminateProcess(fixture, 1); WaitForSingleObject(fixture, 1000);
+        }
+        CloseHandle(fixture);
+      }
       if (WaitForSingleObject(value.hProcess, 2000) == WAIT_TIMEOUT) {
         // This handle belongs only to the explicit conhost process launched
         // for our synthetic fixture. Its child also observes the stop file.
@@ -401,7 +634,7 @@ struct Child {
     }
   }
 };
-HWND ConsoleSource(const std::wstring& token, const std::wstring& root, Child& child, int& cell_x, int& cell_y) {
+HWND ConsoleSource(const std::wstring& token, const std::wstring& root, Child& child, int& cell_x, int& cell_y, Result& result) {
   wchar_t executable[32768]{}; Check(GetModuleFileNameW(nullptr, executable, 32768) != 0, "Cannot locate console fixture executable");
   wchar_t system[32768]{};
   const UINT length = GetSystemDirectoryW(system, 32768);
@@ -418,20 +651,37 @@ HWND ConsoleSource(const std::wstring& token, const std::wstring& root, Child& c
   std::printf("DESKTOP_CONSOLE_LAUNCH|explicitSystemConhost=1|created=%d|error=%lu|hostPid=%lu\n",
       created ? 1 : 0, create_error, child.value.dwProcessId);
   Check(created != 0, "Cannot launch the official system conhost.exe with the synthetic client");
-  uintptr_t handle = 0;
+  result.host_image_path = ProcessImagePath(child.value.hProcess);
+  Check(Lower(result.host_image_path) == Lower(host), "Launched host process identity does not match the official system conhost path");
+  { std::ofstream expected((root+L".expected-host").c_str()); expected << child.value.dwProcessId << '\n'; }
+  uintptr_t handle = 0; DWORD fixture_pid = 0; int fixture_exit = -1;
   for (int i = 0; i < 150 && !handle; ++i) {
     std::ifstream ready((root+L".ready").c_str());
-    uintptr_t candidate = 0; int x = 0, y = 0;
-    if (ready >> candidate >> x >> y) { handle = candidate; cell_x = x; cell_y = y; }
-    if (WaitForSingleObject(child.value.hProcess, 0) == WAIT_OBJECT_0 && !handle) break;
+    uintptr_t candidate = 0; int x = 0, y = 0; DWORD pid = 0;
+    if (ready >> candidate >> x >> y >> pid) { handle = candidate; cell_x = x; cell_y = y; fixture_pid = pid; }
+    // A launcher exit is not evidence that its client failed. Wait for the
+    // fixture's own ready/exit protocol instead of racing the conhost launcher.
+    std::ifstream exited((root+L".exit").c_str());
+    if (!handle && (exited >> fixture_exit)) break;
     if (!handle) Sleep(100);
   }
   DWORD exit_code = STILL_ACTIVE; GetExitCodeProcess(child.value.hProcess, &exit_code);
-  std::printf("DESKTOP_CONSOLE_READY|window=%llu|cell=%d,%d|hostExit=%lu\n",
-      static_cast<unsigned long long>(handle), cell_x, cell_y, exit_code);
+  std::printf("DESKTOP_CONSOLE_READY|window=%llu|cell=%d,%d|hostExit=%lu|fixturePid=%lu|fixtureExit=%d\n",
+      static_cast<unsigned long long>(handle), cell_x, cell_y, exit_code, fixture_pid, fixture_exit);
   HWND window = reinterpret_cast<HWND>(handle);
   Check(window && IsWindowVisible(window) && cell_x > 0 && cell_y > 0, "Classic console host unavailable or fixture initialization failed; Windows Terminal is not substituted");
-  Check(HasImage(window, L"conhost.exe"), "Console fixture window is not the real Windows conhost.exe");
+  wchar_t cls[128]{}; GetClassNameW(window, cls, 128);
+  DWORD owner = 0; GetWindowThreadProcessId(window, &owner);
+  Check(fixture_pid && ParentProcessId(fixture_pid) == child.value.dwProcessId &&
+      _wcsicmp(cls, L"ConsoleWindowClass") == 0 && GetAncestor(window, GA_ROOT) == window &&
+      (owner == fixture_pid || owner == child.value.dwProcessId), "Visible console host/client provenance does not match the explicit launch");
+  child.fixture = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE | PROCESS_TERMINATE, FALSE, fixture_pid);
+  Check(child.fixture != nullptr, "Cannot pin the known synthetic console client process");
+  if (Lower(ProcessImagePath(child.fixture)) != Lower(executable)) {
+    CloseHandle(child.fixture); child.fixture = nullptr;
+    throw std::runtime_error("Console client executable does not match the synthetic fixture");
+  }
+  result.host_identity_verified = true;
   wchar_t title[512]{}; GetWindowTextW(window, title, 512);
   Check(std::wstring(title).find(token) != std::wstring::npos, "Console title identity mismatch");
   return window;
@@ -454,7 +704,11 @@ int wmain(int argc, wchar_t** argv) {
   GetEnvironmentVariableW(L"GITHUB_ACTIONS", actions, 16);
   if (std::wstring(guard) != L"1" || std::wstring(actions) != L"true") return 2;
   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-  if (argc == 4 && std::wstring(argv[1]) == L"--console-fixture") return ConsoleFixture(argv[2], argv[3]);
+  if (argc == 4 && std::wstring(argv[1]) == L"--console-fixture") {
+    const int code = ConsoleFixture(argv[2], argv[3]);
+    std::ofstream exited((std::wstring(argv[3])+L".exit").c_str()); exited << code << '\n';
+    return code;
+  }
   if (argc != 5) return 2;
   const std::wstring mode = argv[1], token = argv[2], output = argv[3], root = argv[4];
   Result result; result.id = mode == L"notepad" ? "notepad" : (mode == L"edgePdf" ? "edgePdf" : "console");
@@ -462,7 +716,7 @@ int wmain(int argc, wchar_t** argv) {
   try {
     Check(mode == L"notepad" || mode == L"edgePdf" || mode == L"console", "Unknown desktop coverage case");
     int cell_x = 0, cell_y = 0;
-    window = mode == L"console" ? ConsoleSource(token, root, console, cell_x, cell_y) :
+    window = mode == L"console" ? ConsoleSource(token, root, console, cell_x, cell_y, result) :
         WaitForSource(token, mode == L"notepad" ? L"notepad.exe" : L"msedge.exe");
     result.source_image_path = ImagePath(window);
     Check(!result.source_image_path.empty(), "Captured source executable path could not be verified");
@@ -488,7 +742,11 @@ int wmain(int argc, wchar_t** argv) {
         POINT from = PdfGlyphAnchor(before, *marker, scale, attempt == 1 ? -2 : 0);
         const LONG text_left = marker->left+static_cast<LONG>(12*scale);
         const LONG text_width = static_cast<LONG>(static_cast<double>(wcslen(kPdfText))*10.8*scale);
-        POINT to{before.rect.left+text_left+text_width+static_cast<LONG>(24*scale), from.y};
+        // Extend beyond the line and slightly below its last glyph, still well
+        // above the decoy row. This includes the trailing glyph rather than
+        // stopping at its leading boundary in the PDF hit-test implementation.
+        POINT to{before.rect.left+text_left+text_width+static_cast<LONG>(48*scale),
+                 from.y+static_cast<LONG>(14*scale)};
         Check(to.x < before.rect.right-10, "PDF viewport too small for synthetic drag");
         // Clear any prior gesture selection and give the PDF real pointer focus.
         // The wait prevents the following mouse-down from becoming a double-click.
@@ -496,18 +754,21 @@ int wmain(int argc, wchar_t** argv) {
         const POINT focus{from.x+static_cast<LONG>(30*scale), from.y};
         Mouse(window, focus, 0); Mouse(window, focus, MOUSEEVENTF_LEFTDOWN); Mouse(window, focus, MOUSEEVENTF_LEFTUP);
         Sleep(GetDoubleClickTime()+100); before = Frame::Read(window);
-        if (attempt == 2) {
-          // Reverse drag starts inside the trailing half of the last glyph.
-          // Its endpoint stays in the first glyph's leading half.
-          to = from;
-          from = POINT{before.rect.left+text_left+text_width-std::max<LONG>(2, static_cast<LONG>(2*scale)), to.y};
+        if (attempt == 1) {
+          to = POINT{before.rect.left+text_left+text_width-2, from.y};
+        } else if (attempt == 2) {
+          // The next line's leading boundary extends through the first line's
+          // trailing glyph. The proof below rejects ANY decoy-row highlight.
+          to = POINT{before.rect.left+text_left, from.y+static_cast<LONG>(60*scale)};
         }
         before.Save(output+L"\\edgePdf-before-gesture"+std::to_wstring(attempt+1)+L".bmp");
         Drag(window, from, to);
-        Mouse(window, POINT{before.rect.left+20, before.rect.bottom-20}, 0); Sleep(300);
+        // Leave the real pointer over the selected PDF text, without clicking.
+        // Post-capture point/parent metadata can then describe this exact point.
+        Mouse(window, POINT{before.rect.left+text_left+text_width/2, from.y}, 0); Sleep(300);
         const auto after = Frame::Read(window);
         const RECT text_area{text_left, marker->top, text_left+text_width, marker->bottom};
-        result.selected = VisiblePdfSelection(before, after, text_area);
+        result.selected = CompletePdfSelection(before, after, text_area, scale);
         std::printf("DESKTOP_PDF_GESTURE|attempt=%u|from=%ld,%ld|to=%ld,%ld|scale=%.3f|selectionVerified=%d\n",
             attempt+1, from.x, from.y, to.x, to.y, scale, result.selected ? 1 : 0);
         after.Save(output+L"\\edgePdf-gesture"+std::to_wstring(attempt+1)+L".bmp");
@@ -516,6 +777,7 @@ int wmain(int argc, wchar_t** argv) {
       Check(result.selected, "PDF gesture did not create a verifiable visible selection; production capture was not attempted");
       const auto capture = Capture(window, result);
       Classify(result, capture, kPdfText, true, clipboard);
+      SourceSelectionMetadata(window, output+L"\\edgePdf-uia-metadata.json");
     } else {
       POINT origin{}; Check(ClientToScreen(window, &origin) != 0, "Console text grid unavailable");
       const POINT from{origin.x+4*cell_x+cell_x/2, origin.y+2*cell_y+cell_y/2};

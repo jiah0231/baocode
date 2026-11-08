@@ -33,8 +33,10 @@ code, forcing accessibility flags, scanning document text, or sending Ctrl+C.
 - **Edge built-in PDF reader:** open a genuine local PDF with selectable text in
   a fresh Edge profile. A magenta fixture mark locates the rendered line without
   relying on toolbar coordinates. Real pointer input selects the line. A visible
-  selection-background change verifies the gesture. The start point is inside
-  the first glyph, not its side-bearing. Up to three real gestures may establish
+  selection-background change verifies the gesture. Both the first and last
+  character cells must be highlighted and the decoy row must remain unselected;
+  a selection ending at “Ech” instead of “Echo” is rejected before capture.
+  The start point is inside the first glyph, not its side-bearing. Up to three real gestures may establish
   that visual precondition before any UIA call; after capture starts, neither
   selection nor capture is retried. Capture is attempted without prewarming UIA.
   An unrendered PDF or an unverified gesture is a failure, never a
@@ -46,8 +48,12 @@ code, forcing accessibility flags, scanning document text, or sending Ctrl+C.
   the default terminal or security settings. Wait for a real visible host, verify
   that only the fixture is attached, and retain startup/exit diagnostics.
   The fixture's `GetConsoleSelectionInfo` verifies the expected selection rectangle.
-  The visible window must belong to real `conhost.exe`. No command shell runs and
-  no Ctrl+C is injected. This is not a Windows Terminal test.
+  Host provenance requires the pinned system-conhost process image, the fixture's
+  matching parent PID, a visible top-level `ConsoleWindowClass`, and a single
+  attached fixture client. Some systems report the client PID for that HWND, so
+  an HWND-owner filename alone is not host proof. Host and client image paths
+  remain separate, and `verifiedConsoleHost` identifies the host-version source.
+  No command shell runs and no Ctrl+C is injected. This is not a Windows Terminal test.
 - **Word, WPS Writer, VS Code, Adobe Reader/Acrobat, and Windows Terminal:** inspect
   known installation/App Paths locations only. Installed applications are reported
   `notTested`; missing applications are `notAvailable`. No new application is
@@ -73,6 +79,15 @@ version. Unavailable version metadata remains unknown. Inventory-only versions
 are labeled `versionSource: inventoryExecutable`. Both initial `attempts` and
 `finalAttempts` are recorded for capture diagnostics. `desktop-coverage.md` and the Actions step summary show the same outcomes.
 Synthetic source-window PNG/BMP evidence is retained for diagnosis.
+
+`edgePdf-uia-metadata.json` is collected only after the single measured capture.
+It records the post-capture focused element's control type, PID, focus/password
+flags and selected-range endpoint/count metadata. The real pointer remains over
+the selected synthetic line. Raw-view and control-view parent chains each stop
+at eight elements, at a focus/process/safety boundary, or at a short deadline.
+Each chain compares its elements with that post-capture focused reference. These
+are diagnostics, not production capture retries or authority to read child text.
+They never read Name, Value, DocumentRange or GetText.
 
 | Outcome | Meaning |
 | --- | --- |
