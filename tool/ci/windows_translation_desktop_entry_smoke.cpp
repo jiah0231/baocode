@@ -47,6 +47,38 @@ std::string Quote(const std::wstring& value) {
   }
   return out.str() + '"';
 }
+// Window metadata only. Never read captions or pixels from an unverified
+// foreground window; the timeline explains source-focus changes without them.
+struct WindowState {
+  HWND window = nullptr, root = nullptr, owner = nullptr, root_owner = nullptr;
+  DWORD pid = 0;
+  bool visible = false;
+  std::wstring cls;
+  static WindowState Read(HWND value) {
+    WindowState state; state.window = value;
+    if (!value) return state;
+    GetWindowThreadProcessId(value, &state.pid);
+    state.root = GetAncestor(value, GA_ROOT);
+    state.owner = GetWindow(value, GW_OWNER);
+    state.root_owner = GetAncestor(value, GA_ROOTOWNER);
+    state.visible = IsWindowVisible(value) != 0;
+    wchar_t cls[128]{};
+    if (GetClassNameW(value, cls, 128)) state.cls = cls;
+    return state;
+  }
+  std::string Json() const {
+    std::ostringstream out;
+    out << "{\"hwnd\":" << reinterpret_cast<uintptr_t>(window)
+        << ",\"pid\":" << pid << ",\"class\":" << Quote(cls)
+        << ",\"root\":" << reinterpret_cast<uintptr_t>(root)
+        << ",\"owner\":" << reinterpret_cast<uintptr_t>(owner)
+        << ",\"rootOwner\":" << reinterpret_cast<uintptr_t>(root_owner)
+        << ",\"visible\":" << (visible ? "true" : "false") << '}';
+    return out.str();
+  }
+};
+struct ForegroundEvent { ULONGLONG tick; WindowState state; };
+std::vector<ForegroundEvent> foreground_events;
 struct Result {
   std::string id, outcome = "failed", detail, status = "notRun";
   std::string first_uia_caller = "productionSelectionEntry";
@@ -66,6 +98,11 @@ struct Result {
   DWORD stale_original_focus_pid = 0, stale_changed_focus_pid = 0;
   int stale_original_type = 0, stale_changed_type = 0;
   std::string stale_mutation = "notRun";
+  WindowState stale_source_window, stale_changed_window;
+  bool stale_foreground_known_source = false, stale_source_identity_valid = false;
+  bool stale_no_post_mutation_input = true;
+  ULONGLONG stale_mutation_tick = 0;
+  std::string stale_screenshot_omission = "none";
   unsigned stale_callbacks = 0;
   std::string stale_status = "notRun";
   unsigned callbacks_before_click = 0, callbacks = 0, capture_calls = 0;
@@ -114,13 +151,26 @@ struct Result {
          << ",\n  \"staleOriginalFocusPid\":" << stale_original_focus_pid
          << ",\n  \"staleChangedFocusPid\":" << stale_changed_focus_pid
          << ",\n  \"staleSameSourceWindow\":" << (stale_same_source ? "true" : "false")
+         << ",\n  \"mutationSourceWindow\":" << stale_source_window.Json()
+         << ",\n  \"mutationForegroundWindow\":" << stale_changed_window.Json()
+         << ",\n  \"mutationTick\":" << stale_mutation_tick
+         << ",\n  \"mutationForegroundMatchesPinnedSourceProcess\":" << (stale_foreground_known_source ? "true" : "false")
+         << ",\n  \"mutationSourceIdentityValid\":" << (stale_source_identity_valid ? "true" : "false")
+         << ",\n  \"noInputAfterForegroundMutation\":" << (stale_no_post_mutation_input ? "true" : "false")
+         << ",\n  \"negativeScreenshotOmission\":" << Quote(stale_screenshot_omission)
          << ",\n  \"staleOriginalFocusType\":" << stale_original_type
          << ",\n  \"staleChangedFocusType\":" << stale_changed_type
          << ",\n  \"staleEntryClickAttempted\":" << (stale_click_attempted ? "true" : "false")
          << ",\n  \"staleSelectionRejected\":" << (stale_rejected ? "true" : "false")
          << ",\n  \"staleCallbacks\":" << stale_callbacks
          << ",\n  \"staleStatus\":" << Quote(stale_status)
-         << "\n}\n";
+         << ",\n  \"foregroundTimeline\":[";
+    for (size_t i = 0; i < foreground_events.size(); ++i) {
+      if (i) file << ',';
+      file << "{\"tick\":" << foreground_events[i].tick
+           << ",\"window\":" << foreground_events[i].state.Json() << '}';
+    }
+    file << "]\n}\n";
     file.close(); Check(!file.fail(), "Cannot finish desktop entry JSON");
   }
 };
@@ -206,8 +256,16 @@ struct SourceIdentity {
 SourceIdentity* monitored_source = nullptr;
 bool foreground_lost = false;
 void ObserveForeground() {
-  if (monitored_source && (!monitored_source->Valid() ||
-      GetForegroundWindow() != monitored_source->window)) foreground_lost = true;
+  if (!monitored_source) return;
+  const HWND foreground = GetForegroundWindow();
+  if (foreground_events.empty() || foreground_events.back().state.window != foreground) {
+    foreground_events.push_back(ForegroundEvent{GetTickCount64(), WindowState::Read(foreground)});
+    std::printf("DESKTOP_ENTRY_FOREGROUND|tick=%llu|source=%llu|window=%s\n",
+        static_cast<unsigned long long>(foreground_events.back().tick),
+        static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(monitored_source->window)),
+        foreground_events.back().state.Json().c_str());
+  }
+  if (!monitored_source->Valid() || foreground != monitored_source->window) foreground_lost = true;
 }
 void Pump(DWORD duration) {
   const ULONGLONG end = GetTickCount64()+duration;
@@ -763,8 +821,9 @@ void ChangeTargetWithKeyboard(HWND window, bool pdf) {
   Pump(40);
 }
 // Used ONLY after the real cold entry and its explicit-click capture passed.
-// Ctrl+A is a no-op in some Edge PDF versions. Ctrl+F instead changes keyboard
-// focus to a real in-window Edit. Prove that identity transition using metadata
+// Ctrl+A is a no-op in some Edge PDF versions. Ctrl+F can focus an in-window
+// Edit or a separate Edge widget. This helper proves ONLY the in-window Edit
+// identity transition; a foreground-window transition is checked separately using metadata
 // only; never use a name, value, text, document range, child scan or fresh Capture.
 class KeyboardFocusProof {
  public:
@@ -839,8 +898,8 @@ void RejectChangedTarget(HWND window, Driver& driver, Result& result,
                             RECT text_area, double scale, POINT from, POINT to,
                             DWORD clipboard) {
   // This phase runs only after the independent first cold entry has passed.
-  // A changed selected range OR focused control within the same HWND must
-  // invalidate the marker bound to the original focus/target/range.
+  // A changed range/control in the source HWND, or a verified source-process
+  // foreground-window change, must invalidate the original bound marker.
   driver.ResetRequest();
   Pump(GetDoubleClickTime()+100);
   Mouse(window, from, 0); Mouse(window, from, MOUSEEVENTF_LEFTDOWN);
@@ -865,22 +924,51 @@ void RejectChangedTarget(HWND window, Driver& driver, Result& result,
     result.stale_mutation = "focusedControlChange";
   } else result.stale_mutation = "selectedRangeEndpointChange";
   const auto changed = GetTickCount64();
+  result.stale_mutation_tick = changed;
+  result.stale_source_window = WindowState::Read(window);
   ChangeTargetWithKeyboard(window, mode == L"edgePdf");
   result.stale_changed = mode == L"edgePdf" ?
       focus_proof->WaitForChangedEdit(&result.stale_changed_type, &result.stale_focus_identity_changed,
           &result.stale_changed_focus_pid) : ConsoleSelection(root, changed, -1);
   result.stale_focus_metadata_safe = mode == L"edgePdf" && result.stale_changed;
-  result.stale_same_source = GetForegroundWindow() == window && !foreground_lost &&
-      monitored_source && monitored_source->Valid();
-  Frame::Read(window).Save(output+L"\\"+mode+L"-stale-changed.bmp");
-  std::printf("DESKTOP_ENTRY_KEYBOARD_MUTATION|%s|method=%s|changed=%d|sameSource=%d|beforeType=%d|afterType=%d\n",
+  ObserveForeground();
+  result.stale_changed_window = WindowState::Read(GetForegroundWindow());
+  result.stale_source_identity_valid = monitored_source && monitored_source->Valid();
+  result.stale_same_source = result.stale_changed_window.window == window && !foreground_lost &&
+      result.stale_source_identity_valid;
+  if (mode == L"edgePdf" && result.stale_changed_window.window &&
+      result.stale_changed_window.window != window) {
+    // An Edge PDF version may put Find in another top-level widget. This is
+    // explicitly a SOURCE-FOREGROUND change, never claimed as same-HWND focus
+    // or text-range mutation. Do not query its UIA, send input, or screenshot it.
+    result.stale_mutation = "sourceForegroundWindowChange";
+    result.stale_focus_metadata_safe = false;
+    result.stale_focus_identity_changed = false;
+    result.stale_changed_focus_pid = 0;
+    result.stale_changed_type = 0;
+    result.stale_foreground_known_source = result.stale_source_identity_valid &&
+        result.stale_changed_window.pid == monitored_source->pid &&
+        result.stale_changed_window.visible &&
+        result.stale_changed_window.root == result.stale_changed_window.window;
+    result.stale_changed = result.stale_foreground_known_source;
+    result.stale_screenshot_omission = "sourceNoLongerForeground";
+  }
+  const bool source_window_changed = result.stale_mutation == "sourceForegroundWindowChange";
+  // Preserve the screenshot guard exactly: never capture a background source
+  // or the new/unknown foreground. Metadata replaces those two negative images.
+  if (!source_window_changed && GetForegroundWindow() == window)
+    Frame::Read(window).Save(output+L"\\"+mode+L"-stale-changed.bmp");
+  std::printf("DESKTOP_ENTRY_KEYBOARD_MUTATION|%s|method=%s|changed=%d|sameSource=%d|beforeType=%d|afterType=%d|before=%s|after=%s\n",
       result.id.c_str(), result.stale_mutation.c_str(), result.stale_changed ? 1 : 0,
-      result.stale_same_source ? 1 : 0, result.stale_original_type, result.stale_changed_type);
-  Check(result.stale_changed, "Keyboard mutation did not prove a different selected range or focused Edit in the same HWND");
-  Check(result.stale_same_source, "Keyboard mutation left the verified source HWND");
+      result.stale_same_source ? 1 : 0, result.stale_original_type, result.stale_changed_type,
+      result.stale_source_window.Json().c_str(), result.stale_changed_window.Json().c_str());
+  Check(result.stale_changed, "Keyboard mutation did not prove a changed range, focused Edit, or verified source-process foreground window");
+  Check(source_window_changed ? result.stale_foreground_known_source : result.stale_same_source,
+      "Keyboard mutation moved to an unverified foreground or lost the same-window identity");
   // The regular metadata poll may already have dismissed the stale entry.
   // If still present, use a real click, never a fabricated window message.
-  if (EntryVisible() && WindowFromPoint(center) == entry) {
+  if (!source_window_changed && EntryVisible() && WindowFromPoint(center) == entry) {
+    result.stale_no_post_mutation_input = false;
     Mouse(window, center, 0);
     if (EntryVisible() && WindowFromPoint(center) == entry) {
       result.stale_click_attempted = true;
@@ -906,10 +994,13 @@ void RejectChangedTarget(HWND window, Driver& driver, Result& result,
     result.stale_rejected = driver.callbacks == 1 && driver.capture_calls == 1 &&
         selection.status != "ok" && selection.text.empty() && !selection.copy_proof;
   }
-  Check(result.stale_rejected, "Old entry returned text after the same HWND selected range or focused control changed");
-  Check(driver.correct_source && NoMainWindow() && !foreground_lost && ClipboardUnchanged(clipboard),
-      "Stale-selection rejection changed source, clipboard or window activation");
-  Frame::Read(window).Save(output+L"\\"+mode+L"-stale-rejected.bmp");
+  Check(result.stale_rejected, "Old entry returned text after its verified source target or foreground changed");
+  Check(driver.correct_source && NoMainWindow() && ClipboardUnchanged(clipboard) &&
+      (source_window_changed ? (result.stale_no_post_mutation_input && driver.callbacks == 0 &&
+          driver.capture_calls == 0 && !EntryVisible()) : !foreground_lost),
+      "Stale-target rejection captured text, changed clipboard or violated the foreground boundary");
+  if (!source_window_changed)
+    Frame::Read(window).Save(output+L"\\"+mode+L"-stale-rejected.bmp");
 }
 std::wstring Environment(const wchar_t* name) {
   const DWORD count = GetEnvironmentVariableW(name, nullptr, 0);
@@ -1095,7 +1186,7 @@ int wmain(int argc, wchar_t** argv) {
     RejectChangedTarget(window, driver, result, mode, root, output,
         before, text_area, pdf_scale, from, to, clipboard);
     result.outcome = "exactEntryCaptured";
-    result.detail = "Single cold drag showed a nonactivating entry; only its physical click captured exact selected text, excluding decoy, with selection/foreground/clipboard preserved. A later same-HWND keyboard range/control change invalidated the stale entry. Native pinned-entry selection only; Flutter popup/model routing is separate coverage.";
+    result.detail = "Single cold drag showed a nonactivating entry; only its physical click captured exact selected text, excluding decoy, with selection/foreground/clipboard preserved. A later independently verified keyboard target/foreground change invalidated the stale entry; mutationKind records its exact scope. Native pinned-entry selection only; Flutter popup/model routing is separate coverage.";
   } catch (const std::exception& error) {
     result.detail = error.what();
     if (!result.exact) { result.callbacks = driver.callbacks; result.capture_calls = driver.capture_calls; }

@@ -14,7 +14,27 @@
 #include "translation_console_binding.h"
 #include "translation_selection_target.h"
 
+#ifdef BAOCODE_TRANSLATION_ACTION_DIAGNOSTICS
+#include <cstdio>
+#define ACTION_TRACE(...) do { std::printf(__VA_ARGS__); std::fflush(stdout); } while (false)
+#define ACTION_STAGE(value) bounds_trace.stage = value
+#else
+#define ACTION_TRACE(...) ((void)0)
+#define ACTION_STAGE(value) ((void)0)
+#endif
+
 namespace {
+#ifdef BAOCODE_TRANSLATION_ACTION_DIAGNOSTICS
+struct BoundsTrace {
+  HWND source;
+  ULONGLONG began = GetTickCount64();
+  const char* stage = "start";
+  ~BoundsTrace() {
+    ACTION_TRACE("ACTION_PROVIDER|source=%p|stage=%s|elapsedMs=%llu\n",
+        static_cast<void*>(source), stage, GetTickCount64() - began);
+  }
+};
+#endif
 constexpr UINT kMouse = WM_APP + 0x391;
 constexpr wchar_t kClass[] = L"BaoCodeTranslationSelectionAction";
 TranslationSelectionAction* active = nullptr;
@@ -32,11 +52,15 @@ std::optional<RECT> SelectionBounds(HWND source,
     const std::function<bool()>& stopped, ULONGLONG deadline,
     ComPtr<IUIAutomation2>* transaction_control = nullptr,
     ComPtr<IUIAutomationTextRange>* validated_range = nullptr) {
+#ifdef BAOCODE_TRANSLATION_ACTION_DIAGNOSTICS
+  BoundsTrace bounds_trace{source};
+#endif
   retryable = false;
   DWORD pid = 0;
   GetWindowThreadProcessId(source, &pid);
   if (stopped() || !pid || pid == GetCurrentProcessId() || GetForegroundWindow() != source)
     return std::nullopt;
+  ACTION_STAGE("createAutomation");
   ComPtr<IUIAutomation> automation;
   if (FAILED(CoCreateInstance(CLSID_CUIAutomation8, nullptr, CLSCTX_INPROC_SERVER,
                               IID_PPV_ARGS(&automation)))) return std::nullopt;
@@ -48,6 +72,7 @@ std::optional<RECT> SelectionBounds(HWND source,
       FAILED(bounded->put_ConnectionTimeout(std::min<DWORD>(previous_element ? 150 : 300, remaining))) ||
       stopped() || FAILED(bounded->put_TransactionTimeout(
           std::min<DWORD>(previous_element ? 200 : 500, remaining))) || stopped()) return std::nullopt;
+  ACTION_STAGE("getFocusedElement");
   ComPtr<IUIAutomationElement> focused;
   const HRESULT focus_result = automation->GetFocusedElement(&focused);
   if (stopped()) return std::nullopt;
@@ -69,6 +94,7 @@ std::optional<RECT> SelectionBounds(HWND source,
     return current < deadline && SUCCEEDED(bounded->put_TransactionTimeout(static_cast<DWORD>(
         std::min<ULONGLONG>(200, deadline - current)))) && !stopped();
   };
+  ACTION_STAGE("focusSecurityProperties");
   int focused_pid = 0;
   BOOL password = TRUE, has_focus = FALSE;
   if (!ready() || FAILED(focused->get_CurrentProcessId(&focused_pid)) ||
@@ -79,6 +105,7 @@ std::optional<RECT> SelectionBounds(HWND source,
       !ready() || FAILED(focused->get_CurrentHasKeyboardFocus(&has_focus)))
     return std::nullopt;
   if (!has_focus) {
+    ACTION_STAGE("unfocusedInitialPane");
     CONTROLTYPEID initial_type = 0;
     wchar_t source_class[64] = {};
     const bool known_type = ready() && SUCCEEDED(focused->get_CurrentControlType(&initial_type));
@@ -91,6 +118,7 @@ std::optional<RECT> SelectionBounds(HWND source,
     if (retryable) require_text_control = true;
     return std::nullopt;
   }
+  ACTION_STAGE("resolveTarget");
   if (!selection_target.Resolve(automation.Get(), focused.Get(), source,
           static_cast<DWORD>(focused_pid), ready, !previous_range)) return std::nullopt;
   if (!previous_range) previous_element = focused;
@@ -99,6 +127,7 @@ std::optional<RECT> SelectionBounds(HWND source,
   const bool text_control = ready() && SUCCEEDED(target->get_CurrentControlType(&control_type)) &&
       (control_type == UIA_EditControlTypeId || control_type == UIA_DocumentControlTypeId);
   if (!ready() || (require_text_control && !text_control)) return std::nullopt;
+  ACTION_STAGE("textPattern");
   ComPtr<IUIAutomationTextPattern> pattern;
   if (!ready()) return std::nullopt;
   const HRESULT pattern_result = target->GetCurrentPatternAs(UIA_TextPatternId, IID_PPV_ARGS(&pattern));
@@ -109,6 +138,7 @@ std::optional<RECT> SelectionBounds(HWND source,
          pattern_result == E_FAIL || (SUCCEEDED(pattern_result) && !pattern));
     return std::nullopt;
   }
+  ACTION_STAGE("getSelection");
   ComPtr<IUIAutomationTextRangeArray> ranges;
   if (!ready()) return std::nullopt;
   const HRESULT selected = pattern->GetSelection(&ranges);
@@ -120,12 +150,15 @@ std::optional<RECT> SelectionBounds(HWND source,
     return std::nullopt;
   }
   ComPtr<IUIAutomationTextRange> range;
+  ACTION_STAGE("rangeCount");
   int count = 0, difference = 0;
   if (!ready() || FAILED(ranges->get_Length(&count))) return std::nullopt;
+  ACTION_TRACE("ACTION_SELECTION|count=%d\n", count);
   if (count == 0) {
     retryable = !previous_range && selection_target.NoteEmpty(ready);
     return std::nullopt;
   }
+  ACTION_STAGE("noncollapsedRange");
   if (count != 1 || !ready() ||
       FAILED(ranges->GetElement(0, &range)) || !range || !ready() ||
       FAILED(range->CompareEndpoints(TextPatternRangeEndpoint_Start, range.Get(),
@@ -133,6 +166,8 @@ std::optional<RECT> SelectionBounds(HWND source,
       difference == 0) return std::nullopt;
   // Retain only provider endpoints/identity, never selected text. If selection
   // or the focused control changes, dismiss rather than tracking a new choice.
+  ACTION_TRACE("ACTION_SELECTION|endpointDifference=%d\n", difference);
+  ACTION_STAGE("pinnedIdentityAndEndpoints");
   if (previous_element && previous_range) {
     BOOL same = FALSE;
     int start = 0, end = 0;
@@ -146,6 +181,7 @@ std::optional<RECT> SelectionBounds(HWND source,
   previous_element = focused;
   if (!previous_range && (!ready() || FAILED(range->Clone(previous_range.ReleaseAndGetAddressOf())) || !ready()))
     return std::nullopt;
+  ACTION_STAGE("boundingRectangles");
   SAFEARRAY* rectangles = nullptr;
   if (!ready()) return std::nullopt;
   const HRESULT hr = range->GetBoundingRectangles(&rectangles);
@@ -173,6 +209,7 @@ std::optional<RECT> SelectionBounds(HWND source,
   }
   if (rectangles) SafeArrayDestroy(rectangles);
   if (!result && (hr == E_FAIL || hr == UIA_E_NOTSUPPORTED)) retryable = text_control;
+  ACTION_STAGE("finalFocus");
   ComPtr<IUIAutomationElement> final_focus;
   BOOL still_same = FALSE;
   if (!ready() || GetForegroundWindow() != source ||
@@ -187,6 +224,7 @@ std::optional<RECT> SelectionBounds(HWND source,
     retryable = false;
   }
   if (!ready()) result.reset();
+  ACTION_STAGE(result ? "accepted" : "noBoundsOrFinalMismatch");
   if (result && transaction_control) *transaction_control = bounded;
   if (result && validated_range) *validated_range = range;
   return result;
@@ -447,6 +485,7 @@ void TranslationSelectionAction::Hide() {
   // after worker completion but before the channel's next Poll/delivery.
   if (invalidate_click_) { invalidate_click_(); invalidate_click_ = {}; }
   ++generation_;
+  ACTION_TRACE("ACTION_HIDE|generation=%u|wasShown=%d\n", generation_, shown_ ? 1 : 0);
   { std::lock_guard<std::mutex> lock(worker_->mutex); worker_->active_generation = generation_; }
   candidate_ = false;
   discovery_attempts_ = 0;
@@ -472,6 +511,9 @@ bool TranslationSelectionAction::HandleMessage(UINT message, WPARAM wparam, LPAR
     const bool doubled = last_up_ && now - last_up_ <= GetDoubleClickTime() &&
                          std::abs(point.x - last_up_point_.x) <= GetSystemMetrics(SM_CXDOUBLECLK) &&
                          std::abs(point.y - last_up_point_.y) <= GetSystemMetrics(SM_CYDOUBLECLK);
+    ACTION_TRACE("ACTION_GESTURE|generation=%u|down=%d|dragged=%d|doubled=%d|from=%ld,%ld|to=%ld,%ld|foreground=%p\n",
+        generation_, down_ ? 1 : 0, dragged ? 1 : 0, doubled ? 1 : 0,
+        down_point_.x, down_point_.y, point.x, point.y, static_cast<void*>(GetForegroundWindow()));
     if (down_ && (dragged || doubled)) {
       source_ = GetForegroundWindow();
       candidate_ = true;
@@ -490,6 +532,8 @@ bool TranslationSelectionAction::HandleMessage(UINT message, WPARAM wparam, LPAR
 void TranslationSelectionAction::Request() {
   std::lock_guard<std::mutex> lock(worker_->mutex);
   if (worker_->busy) return;
+  ACTION_TRACE("ACTION_REQUEST|generation=%u|attempt=%u|source=%p|shown=%d\n",
+      generation_, discovery_attempts_ + 1, static_cast<void*>(source_), shown_ ? 1 : 0);
   worker_->source = source_;
   worker_->generation = generation_;
   worker_->active_generation = generation_;
@@ -518,6 +562,8 @@ void TranslationSelectionAction::Tick() {
     }
   }
   if (ready) {
+    ACTION_TRACE("ACTION_RESULT|generation=%u|bounds=%d|retryable=%d|elapsedMs=%llu\n",
+        generation_, bounds ? 1 : 0, retryable ? 1 : 0, now - started_);
     if (now - started_ > 700) { Hide(); return; }
     if (!bounds) {
       // Only incomplete first discovery retries. Once visible, a changed or

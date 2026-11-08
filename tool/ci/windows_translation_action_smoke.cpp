@@ -75,7 +75,22 @@ void Diagnose(const char* stage, HWND fixture) {
       stage, static_cast<void*>(entry), entry && IsWindowVisible(entry) ? 1 : 0, clicks,
       static_cast<void*>(captured), static_cast<void*>(fixture),
       static_cast<void*>(foreground), foreground_pid);
+  const HWND source_edit = FindWindowExW(fixture, nullptr, L"RICHEDIT50W", nullptr);
+  DWORD selection_start = 0, selection_end = 0;
+  SendMessage(source_edit, EM_GETSEL, reinterpret_cast<WPARAM>(&selection_start), reinterpret_cast<LPARAM>(&selection_end));
+  GUITHREADINFO gui{}; gui.cbSize = sizeof(gui);
+  const bool gui_ok = GetGUIThreadInfo(GetWindowThreadProcessId(fixture, nullptr), &gui) != FALSE;
+  std::printf("ACTION_NATIVE_SELECTION|stage=%s|edit=%p|start=%lu|end=%lu|guiOk=%d|focus=%p|capture=%p\n",
+      stage, static_cast<void*>(source_edit), selection_start, selection_end, gui_ok ? 1 : 0,
+      static_cast<void*>(gui.hwndFocus), static_cast<void*>(gui.hwndCapture));
   std::fflush(stdout);
+}
+bool NativeSelectionEstablished(HWND fixture, HWND source_edit) {
+  DWORD begin = 0, end = 0;
+  SendMessage(source_edit, EM_GETSEL, reinterpret_cast<WPARAM>(&begin), reinterpret_cast<LPARAM>(&end));
+  GUITHREADINFO gui{}; gui.cbSize = sizeof(gui);
+  return begin != end && GetForegroundWindow() == fixture &&
+      GetGUIThreadInfo(GetWindowThreadProcessId(fixture, nullptr), &gui) && gui.hwndFocus == source_edit;
 }
 int Fail(const char* reason) { std::fprintf(stderr, "%s\n", reason); return 1; }
 }
@@ -157,9 +172,16 @@ int wmain(int argc, wchar_t** argv) {
   if (Visible() || clicks) result = Fail("No-selection click showed an entry or captured text");
   SetCursorPos(rect.left + 3, rect.top + 8); Mouse(MOUSEEVENTF_LEFTDOWN);
   for (int i = 1; i <= 8; ++i) { SetCursorPos(rect.left + 3 + i * 15, rect.top + 8); Pump(35); }
-  Mouse(MOUSEEVENTF_LEFTUP); Pump(600);
+  Mouse(MOUSEEVENTF_LEFTUP);
+  Diagnose("immediately_after_drag", fixture);
+  const bool initial_selection_proven = NativeSelectionEstablished(fixture, control);
+  if (!initial_selection_proven) result = Fail("Real drag did not establish a nonempty native RichEdit selection and focus");
+  // Observe this single gesture for the production discovery budget. No new
+  // input, provider preflight, second selection or extra capture is performed.
+  const ULONGLONG discovery_end = GetTickCount64() + 1500;
+  while (!Visible() && GetTickCount64() < discovery_end) Pump(10);
   Diagnose("after_drag", fixture);
-  if (!Visible()) result = Fail("Deliberate drag selection did not show entry");
+  if (initial_selection_proven && !Visible()) result = Fail("Proven native drag selection did not show entry within discovery budget");
   if (clicks || GetForegroundWindow() != fixture) result = Fail("Entry activated or invoked capture before click");
   HWND entry = FindWindowW(L"BaoCodeTranslationSelectionAction", nullptr);
   Diagnose("before_entry_click", fixture);
@@ -226,6 +248,11 @@ int wmain(int argc, wchar_t** argv) {
     SetCursorPos(rect.left + 3, rect.top + 8); Mouse(MOUSEEVENTF_LEFTDOWN);
     for (int i = 1; i <= 8; ++i) { SetCursorPos(rect.left + 3 + i * 15, rect.top + 8); Pump(35); }
     Mouse(MOUSEEVENTF_LEFTUP);
+    Diagnose("mutation_entry_after_drag", fixture);
+    if (!NativeSelectionEstablished(fixture, control)) {
+      result = Fail("Mutation setup drag did not establish a nonempty native selection and focus");
+      continue;
+    }
     for (int i = 0; i < 150 && !Visible(); ++i) Pump(10);
     HWND old_entry = FindWindowW(L"BaoCodeTranslationSelectionAction", nullptr);
     RECT old_button{};

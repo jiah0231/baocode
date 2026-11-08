@@ -116,7 +116,7 @@ function Run-EntryCase([string]$Id, [string]$Application, [string]$Path, [string
       foreach ($field in @('entryVisible', 'entryNonactivating', 'entryHiddenAfterClick',
           'selectionBeforeClick', 'selectionAfterClick', 'sourceForegroundPreserved',
           'noMainWindow', 'clipboardUnchanged', 'exactSelectedText', 'callbackSourceMatches',
-          'staleKeyboardTargetChanged', 'staleSameSourceWindow', 'staleSelectionRejected', 'requestNotCanceledAtConsumption')) {
+          'staleKeyboardTargetChanged', 'staleSelectionRejected', 'requestNotCanceledAtConsumption')) {
         if ($result.$field -ne $true) { throw "Missing positive entry assertion for $Id`: $field" }
       }
       if ($result.callbacksBeforeClick -ne 0 -or $result.callbacksAfterClick -ne 1 -or
@@ -124,15 +124,45 @@ function Run-EntryCase([string]$Id, [string]$Application, [string]$Path, [string
           $result.firstUiaCaller -ne 'productionSelectionEntry' -or $result.captureStatus -ne 'ok') {
         throw "Incomplete cold-entry/click-only capture assertions for $Id"
       }
-      if ($Id -eq 'edgePdf' -and ($result.mutationKind -ne 'focusedControlChange' -or $result.staleChangedFocusType -ne 50004 -or
-          $result.staleFocusIdentityChanged -ne $true -or $result.staleFocusMetadataVerified -ne $true -or
-          $result.staleOriginalFocusPid -le 0 -or $result.staleOriginalFocusPid -ne $result.staleChangedFocusPid)) {
-        throw 'PDF keyboard negative did not prove a distinct focused Edit in the same source window'
+      $negativePhases = @('stale-changed', 'stale-rejected')
+      if ($Id -eq 'edgePdf') {
+        if ($result.mutationKind -eq 'focusedControlChange') {
+          if ($result.staleSameSourceWindow -ne $true -or $result.staleChangedFocusType -ne 50004 -or
+              $result.staleFocusIdentityChanged -ne $true -or $result.staleFocusMetadataVerified -ne $true -or
+              $result.staleOriginalFocusPid -le 0 -or $result.staleOriginalFocusPid -ne $result.staleChangedFocusPid) {
+            throw 'PDF keyboard negative did not prove a distinct focused Edit in the same source window'
+          }
+        } elseif ($result.mutationKind -eq 'sourceForegroundWindowChange') {
+          $before = $result.mutationSourceWindow; $after = $result.mutationForegroundWindow
+          if ($result.staleSameSourceWindow -ne $false -or $result.mutationSourceIdentityValid -ne $true -or
+              $result.mutationForegroundMatchesPinnedSourceProcess -ne $true -or
+              $before.hwnd -eq 0 -or $after.hwnd -eq 0 -or $before.hwnd -eq $after.hwnd -or
+              $before.pid -le 0 -or $after.pid -ne $before.pid -or $after.root -ne $after.hwnd -or
+              $after.visible -ne $true -or $result.noInputAfterForegroundMutation -ne $true -or
+              $result.staleEntryClickAttempted -ne $false -or $result.staleCallbacks -ne 0 -or
+              $result.staleStatus -ne 'entryDismissed' -or
+              $result.negativeScreenshotOmission -ne 'sourceNoLongerForeground') {
+            throw 'PDF foreground negative did not prove a known source-process window transition with zero capture/input'
+          }
+          $observed = @($result.foregroundTimeline | Where-Object {
+            $_.tick -ge $result.mutationTick -and $_.window.hwnd -eq $after.hwnd -and $_.window.pid -eq $after.pid
+          })
+          if ($observed.Count -eq 0) { throw 'Missing timestamped foreground-window mutation proof' }
+          # The original source is background and the new widget is not a
+          # screenshot target. No background/unknown window pixels are allowed.
+          foreach ($phase in $negativePhases) {
+            if (Test-Path -LiteralPath (Join-Path $output "$Id-$phase.bmp")) {
+              throw 'Foreground-mutation path unexpectedly captured a negative screenshot'
+            }
+          }
+          $negativePhases = @()
+        } else { throw 'Unknown PDF negative mutation scope' }
       }
-      if ($Id -eq 'console' -and $result.mutationKind -ne 'selectedRangeEndpointChange') {
-        throw 'Console keyboard negative did not prove a changed selected range'
+      if ($Id -eq 'console' -and ($result.mutationKind -ne 'selectedRangeEndpointChange' -or
+          $result.staleSameSourceWindow -ne $true)) {
+        throw 'Console keyboard negative did not prove changed endpoints within the same source window'
       }
-      foreach ($phase in @('before', 'entry', 'after-click', 'stale-before', 'stale-changed', 'stale-rejected')) {
+      foreach ($phase in (@('before', 'entry', 'after-click', 'stale-before') + $negativePhases)) {
         if (!(Test-Path -LiteralPath (Join-Path $output "$Id-$phase.bmp"))) {
           throw "Missing desktop entry screenshot for $Id`: $phase"
         }
@@ -239,7 +269,7 @@ try {
   $summary = [ordered]@{
     schemaVersion = 1; observedUtc = [DateTime]::UtcNow.ToString('o')
     commit = $env:GITHUB_SHA; runnerImage = $env:ImageVersion
-    scope = 'Real desktop cold selection -> production nonactivating entry -> physical click -> pinned-range capture on the original MTA. Then verify rejection after a same-HWND keyboard selected-range or focused-control change. No model request or Flutter popup in this native probe.'
+    scope = 'Real desktop cold selection -> production nonactivating entry -> physical click -> pinned-range capture on the original MTA. Then verify rejection after the exact keyboard mutation named by mutationKind: selected endpoints, a same-window focused control, or a different foreground window belonging to the pinned source process. No model request or Flutter popup in this native probe.'
     coldIsolation = 'Separate positive process per application; new Edge PDF profile; no positive-source UIA preflight or accessibility-forcing flags; one cold positive drag, then a warm stale-selection negative phase. Console integrity diagnosis uses a different subprocess and host that exit before the fresh positive source is launched.'
     consoleIntegrity = 'RIDs: 8192=medium, 12288=high. The inherited-token diagnostic preserves elevated production rejection. Only after that exact rejection may the shared test-only launcher create an independent restricted-medium synthetic host; production acceptance and system settings are unchanged.'
     results = @($results.ToArray())
@@ -250,7 +280,7 @@ try {
   $lines.Add('')
   $lines.Add($summary.scope)
   $lines.Add('')
-  $lines.Add('PDF negative: Ctrl+F must move keyboard focus to a different same-process, visible, non-password Edit in the same source HWND, proved by metadata and element identity. This is a focused-control change, not evidence of a changed PDF text range. Console negative: Shift+Left must change the selected range endpoint, proved by fresh native console-selection coordinates. Both must invalidate the old entry.')
+  $lines.Add('PDF negative: Ctrl+F must prove either a different same-process, visible, non-password Edit in the source HWND, or another foreground HWND belonging to the pinned source process. The latter is source-foreground change, not a same-window control or text-range change; it must hide the old entry with zero capture and no further input. Negative screenshots are deliberately omitted when the original source is background; the HWND/PID/class/owner timeline records that transition without reading captions or pixels. Console negative: Shift+Left must change native selection endpoints in the same HWND. Separate native action tests cover same-window control/range changes.')
   $lines.Add('')
   $lines.Add('These are per-application entry tests, not universal desktop support. Existing cold Capture probes run separately and remain unchanged. An unsupported or unavailable required app fails this entry gate.')
   $lines.Add('')
