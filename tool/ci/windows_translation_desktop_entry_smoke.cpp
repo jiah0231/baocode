@@ -703,7 +703,8 @@ IntegrityEvidence ProbeIntegritySeparately(const std::wstring& token,
 }
 // File-only regression check for the old IPC race, before any positive-source
 // UIA access. Keep the legacy reader open to observe its replacement behavior,
-// then prove a delete-shared reader allows the publisher's atomic replacement.
+// then prove publication succeeds AFTER the snapshot reader closes. Windows
+// may reject replacement of an open target even with FILE_SHARE_DELETE.
 void CheckConsoleProofSharing(const std::wstring& root) {
   const std::wstring path = root+L".io-check", temporary = root+L".io-check.tmp";
   const auto write = [](const std::wstring& target, const char* value) {
@@ -723,12 +724,12 @@ void CheckConsoleProofSharing(const std::wstring& root) {
       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
       FILE_ATTRIBUTE_NORMAL, nullptr);
   Check(shared != INVALID_HANDLE_VALUE, "Cannot open delete-shared reader control");
+  CloseHandle(shared);  // Match the real reader: no live handle during Pump/publication.
   const bool replaced = MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != FALSE;
   const DWORD shared_error = replaced ? ERROR_SUCCESS : GetLastError();
-  CloseHandle(shared);
-  std::printf("CONSOLE_PROOF_IO_CHECK|legacyRenameBlocked=%d|legacyError=%lu|deleteSharedRename=%d|sharedError=%lu\n",
+  std::printf("CONSOLE_PROOF_IO_CHECK|legacyRenameBlocked=%d|legacyError=%lu|closedSnapshotRename=%d|sharedError=%lu\n",
       legacy_blocked ? 1 : 0, legacy_error, replaced ? 1 : 0, shared_error);
-  Check(replaced, "Delete-shared console proof reader blocked atomic publication");
+  Check(replaced, "Console proof publication failed after the snapshot reader closed");
   Check(DeleteFileW(path.c_str()) != FALSE, "Cannot clean owned proof-sharing check");
 }
 bool ConsoleSelection(const std::wstring& root, ULONGLONG since, int right_delta = 0,
@@ -740,8 +741,8 @@ bool ConsoleSelection(const std::wstring& root, ULONGLONG since, int right_delta
   for (; attempts < 40; ++attempts) {
     char bytes[256]{}; DWORD length = 0;
     bool read = false;
-    // Close BEFORE parsing or pumping. FILE_SHARE_DELETE also permits an atomic
-    // replacement during the read; this handle sees one complete old snapshot.
+    // Close BEFORE parsing or pumping. Delete sharing is defensive; correctness
+    // relies on closing the snapshot, not replacing a target that is still open.
     {
       HANDLE file = CreateFileW((root+L".selection").c_str(), GENERIC_READ,
           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
