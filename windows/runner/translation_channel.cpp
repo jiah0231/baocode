@@ -1,28 +1,70 @@
 #include "translation_channel.h"
 #include <flutter/standard_method_codec.h>
+#include <functional>
 #include <mutex>
 #include <thread>
 #include <system_error>
+#include <utility>
+#include "app_windows.h"
 #include "stash_channel.h"
 #include "translation_selection.h"
 #include "utils.h"
 
 namespace {
 constexpr int kHotkey = 0x4254;
-flutter::EncodableValue Encode(const translation_selection::Selection& selection) {
+flutter::EncodableValue Encode(const translation_selection::Selection& selection,
+                               int64_t request_id) {
   return flutter::EncodableValue(flutter::EncodableMap{
       {flutter::EncodableValue("text"), flutter::EncodableValue(Utf8FromUtf16(selection.text.c_str()))},
       {flutter::EncodableValue("status"), flutter::EncodableValue(selection.status)},
-      {flutter::EncodableValue("self"), flutter::EncodableValue(selection.self)}});
+      {flutter::EncodableValue("self"), flutter::EncodableValue(selection.self)},
+      {flutter::EncodableValue("requestId"), flutter::EncodableValue(request_id)}});
+}
+std::optional<int64_t> Argument(const flutter::EncodableValue* arguments,
+                               const char* key) {
+  const auto* map = arguments ? std::get_if<flutter::EncodableMap>(arguments) : nullptr;
+  if (!map) return std::nullopt;
+  const auto found = map->find(flutter::EncodableValue(key));
+  if (found == map->end()) return std::nullopt;
+  if (const auto* value = std::get_if<int64_t>(&found->second)) return *value;
+  if (const auto* value = std::get_if<int32_t>(&found->second)) return *value;
+  return std::nullopt;
 }
 }
+
+// This view shares the running engine, but is deliberately NOT an AppWindows
+// workspace entry. Closing it never opens, restores, or closes the main window.
+class TranslationPanelWindow : public IdeWindow {
+ public:
+  TranslationPanelWindow(FlutterDesktopEngineRef engine,
+                         flutter::BinaryMessenger* messenger,
+                         std::function<void(bool)> hide)
+      : IdeWindow(engine, messenger), hide_(std::move(hide)) {}
+  void Detach() { hide_ = nullptr; }
+ protected:
+  LRESULT MessageHandler(HWND window, UINT message, WPARAM wparam,
+                         LPARAM lparam) noexcept override {
+    if (message == WM_CLOSE) {
+      if (hide_) hide_(true);
+      return 0;
+    }
+    if (message == WM_ACTIVATE && LOWORD(wparam) == WA_INACTIVE) {
+      if (hide_) hide_(false);
+    }
+    return IdeWindow::MessageHandler(window, message, wparam, lparam);
+  }
+ private:
+  std::function<void(bool)> hide_;
+};
 struct TranslationChannel::Pending {
   std::mutex mutex;
   bool done = false;
+  int64_t request_id = 0;
+  HWND foreground = nullptr;
   translation_selection::Selection selection;
 };
 TranslationChannel::TranslationChannel(flutter::BinaryMessenger* messenger, HWND window)
-    : window_(window),
+    : messenger_(messenger), window_(window),
       channel_(std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
           messenger, "baocode/translation", &flutter::StandardMethodCodec::GetInstance())) {
   channel_->SetMethodCallHandler([this](const auto& call, auto result) {
@@ -31,6 +73,17 @@ TranslationChannel::TranslationChannel(flutter::BinaryMessenger* messenger, HWND
       result->Success(flutter::EncodableValue(spec && Register(*spec)));
     } else if (call.method_name() == "captureSelection") {
       Capture(std::move(result));
+    } else if (call.method_name() == "createPanel") {
+      const auto engine = Argument(call.arguments(), "engineId");
+      const auto view = engine ? CreatePanel(*engine) : std::nullopt;
+      result->Success(view ? flutter::EncodableValue(*view) : flutter::EncodableValue());
+    } else if (call.method_name() == "showPanel") {
+      result->Success(flutter::EncodableValue(ShowPanel(Argument(call.arguments(), "requestId"))));
+    } else if (call.method_name() == "hidePanel") {
+      // Dart owns clearing its state. No echo event that could erase a newer
+      // request; also allow hiding the old panel before showing that request.
+      HidePanel(true, false, false);
+      result->Success();
     } else {
       result->NotImplemented();
     }
@@ -40,9 +93,116 @@ TranslationChannel::~TranslationChannel() {
   channel_->SetMethodCallHandler(nullptr);
   if (registered_) UnregisterHotKey(window_, kHotkey);
   KillTimer(window_, kTimer);
+  // View destruction is outside a platform callback, before engine teardown.
+  if (panel_) panel_->Detach();
+  panel_.reset();
   // A late/hung provider owns only Pending, never this or Flutter objects.
   pending_.reset();
   result_.reset();
+}
+std::optional<int64_t> TranslationChannel::CreatePanel(int64_t engine_id) {
+  if (panel_) return panel_->view_id();
+  const auto engine = FlutterDesktopEngineForId(engine_id);
+  if (!engine) return std::nullopt;
+  auto panel = std::make_unique<TranslationPanelWindow>(engine, messenger_,
+      [this](bool restore) { if (panel_shown_) HidePanel(restore); });
+  if (!panel->Create(L"BaoCode Translate", Win32Window::Point(10, 10),
+                      Win32Window::Size(480, 560))) return std::nullopt;
+  panel->SetMinimumSize(Win32Window::Size(280, 240));
+  const HWND handle = panel->GetHandle();
+  SetWindowLongPtrW(handle, GWL_STYLE,
+      GetWindowLongPtrW(handle, GWL_STYLE) & ~(WS_MINIMIZEBOX | WS_MAXIMIZEBOX));
+  SetWindowLongPtrW(handle, GWL_EXSTYLE,
+      (GetWindowLongPtrW(handle, GWL_EXSTYLE) | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW);
+  SetWindowPos(handle, nullptr, 0, 0, 0, 0,
+      SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+  const auto view_id = panel->view_id();
+  panel_ = std::move(panel);
+  return view_id;
+}
+void TranslationChannel::BeginRequest(HWND foreground) {
+  ++request_id_;
+  request_started_ = GetTickCount64();
+  foreground_ = foreground;
+  foreground_process_ = 0;
+  if (foreground) GetWindowThreadProcessId(foreground, &foreground_process_);
+  GetCursorPos(&pointer_);
+  anchor_.reset();
+}
+bool TranslationChannel::ShowPanel(std::optional<int64_t> request_id) {
+  if (!panel_) return false;
+  const HWND panel = panel_->GetHandle();
+  if (!request_id) {
+    // Context menu / toolbar translation has no external capture. Do not use
+    // an earlier external selection's position or return-focus target.
+    const HWND front = GetForegroundWindow();
+    DWORD process = 0;
+    if (front) GetWindowThreadProcessId(front, &process);
+    // An in-app request delayed by first-view creation must not steal focus
+    // from a different application the user has switched to meanwhile.
+    if (!front || process != GetCurrentProcessId()) return false;
+    if (front != panel) BeginRequest(front);
+  } else if (*request_id != request_id_ ||
+             GetTickCount64() - request_started_ > 5000) {
+    return false;
+  }
+  const HWND front = GetForegroundWindow();
+  if (!foreground_ || (front != foreground_ && front != panel)) return false;
+  DWORD process = 0;
+  GetWindowThreadProcessId(foreground_, &process);
+  if (process != foreground_process_) return false;
+  const RECT anchor = anchor_.value_or(RECT{pointer_.x, pointer_.y, pointer_.x, pointer_.y});
+  const HMONITOR monitor = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
+  MONITORINFO info = {};
+  info.cbSize = sizeof(info);
+  if (!GetMonitorInfoW(monitor, &info)) return false;
+  const double scale = FlutterDesktopGetDpiForMonitor(monitor) / 96.0;
+  const auto& work = info.rcWork;
+  const auto placed = translation_panel::Place(
+      {anchor.left, anchor.top, anchor.right, anchor.bottom},
+      {work.left, work.top, work.right, work.bottom},
+      static_cast<int>(480 * scale), static_cast<int>(560 * scale),
+      static_cast<int>(10 * scale));
+  // A small display must remain usable even if its physical work area is
+  // smaller than the normal minimum logical panel size.
+  panel_->SetMinimumSize(Win32Window::Size(1, 1));
+  SetWindowPos(panel, HWND_TOP, placed.left, placed.top,
+      placed.right - placed.left, placed.bottom - placed.top, SWP_NOACTIVATE);
+  panel_->SetMinimumSize(Win32Window::Size(
+      static_cast<unsigned int>(std::clamp(
+          static_cast<int>((work.right - work.left) / scale) - 24, 1, 280)),
+      static_cast<unsigned int>(std::clamp(
+          static_cast<int>((work.bottom - work.top) / scale) - 24, 1, 240))));
+  if (GetForegroundWindow() != front) return false;
+  panel_request_id_ = request_id_;
+  panel_shown_ = true;
+  ShowWindow(panel, SW_SHOWNOACTIVATE);
+  SetForegroundWindow(panel);
+  if (GetForegroundWindow() != panel) {
+    HidePanel(false);
+    return false;
+  }
+  return panel_shown_;
+}
+void TranslationChannel::HidePanel(bool restore_focus, bool invalidate, bool notify) {
+  const bool shown = std::exchange(panel_shown_, false);
+  const HWND panel = panel_ ? panel_->GetHandle() : nullptr;
+  const bool was_front = panel && GetForegroundWindow() == panel;
+  const HWND source = foreground_;
+  const DWORD source_process = foreground_process_;
+  if (invalidate) ++request_id_;
+  if (panel) ShowWindow(panel, SW_HIDE);
+  DWORD process = 0;
+  if (source) GetWindowThreadProcessId(source, &process);
+  // Never steal focus back after the user clicks / Alt-Tabs to another app.
+  // Never restore a hidden/minimized main or source window.
+  if (restore_focus && was_front && source && IsWindowVisible(source) &&
+      !IsIconic(source) && process == source_process) SetForegroundWindow(source);
+  if (shown && notify) {
+    channel_->InvokeMethod("panelHidden", std::make_unique<flutter::EncodableValue>(
+        flutter::EncodableMap{{flutter::EncodableValue("requestId"),
+                               flutter::EncodableValue(panel_request_id_)}}));
+  }
 }
 bool TranslationChannel::Register(const std::string& spec) {
   if (registered_) UnregisterHotKey(window_, kHotkey);
@@ -56,42 +216,45 @@ bool TranslationChannel::Register(const std::string& spec) {
 }
 bool TranslationChannel::HandleHotkey(WPARAM id) {
   if (id != static_cast<WPARAM>(kHotkey)) return false;
-  Capture(nullptr);
+  if (panel_shown_) HidePanel(true);
+  else Capture(nullptr);
   return true;
 }
 void TranslationChannel::Capture(
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
   const HWND foreground = GetForegroundWindow();
-  DWORD process = 0;
-  GetWindowThreadProcessId(foreground, &process);
-  if (foreground && process == GetCurrentProcessId()) {
-    // Dart already knows the focused view and its selection. Do not change
-    // focus from a secondary IDE/agent window to the main window.
-    const auto own = Encode({L"", "noSelection", true});
+  BeginRequest(foreground);
+  if (result_) {
+    result_->Success(Encode({L"", "focusChanged", false, std::nullopt},
+                            pending_ ? pending_->request_id : request_id_));
+    result_.reset();
+  }
+  if (foreground && foreground_process_ == GetCurrentProcessId()) {
+    // Dart knows the focused view and its selection. No main activation.
+    const auto own = Encode({L"", "noSelection", true, std::nullopt}, request_id_);
     if (result) result->Success(own);
     else channel_->InvokeMethod("pressed", std::make_unique<flutter::EncodableValue>(own));
     return;
   }
   if (pending_) {
-    if (result) {
-      result->Success(Encode({L"", "busy", false}));
-    } else if (delivered_) {
-      // A provider that never returns cannot spawn more workers. A later
-      // explicit shortcut can still open a manual-entry panel.
-      ShowWindow(window_, IsIconic(window_) ? SW_RESTORE : SW_SHOW);
-      SetForegroundWindow(window_);
-      channel_->InvokeMethod("pressed", std::make_unique<flutter::EncodableValue>(
-          Encode({L"", "busy", false})));
-    }
+    // One bounded worker at a time even if a broken UIA provider never
+    // returns. New shortcuts get a fresh, empty manual-entry request.
+    delivered_ = true;
+    const auto busy = Encode({L"", "busy", false, std::nullopt}, request_id_);
+    if (result) result->Success(busy);
+    else channel_->InvokeMethod("pressed", std::make_unique<flutter::EncodableValue>(busy));
     return;
   }
-  foreground_ = foreground;
   pending_ = std::make_shared<Pending>();
+  pending_->request_id = request_id_;
+  pending_->foreground = foreground;
   result_ = std::move(result);
   delivered_ = false;
   started_ = GetTickCount64();
   if (!SetTimer(window_, kTimer, 25, nullptr)) {
-    if (result_) result_->Success(Encode({L"", "unsupported", false}));
+    const auto failed = Encode({L"", "unsupported", false, std::nullopt}, request_id_);
+    if (result_) result_->Success(failed);
+    else channel_->InvokeMethod("pressed", std::make_unique<flutter::EncodableValue>(failed));
     result_.reset();
     pending_.reset();
     return;
@@ -122,23 +285,25 @@ void TranslationChannel::Poll() {
   if (!delivered_ && (done || GetTickCount64() - started_ >= 1500)) {
     if (!done) {
       selection.text.clear();
+      selection.bounds.reset();
       selection.status = "timeout";
       SetTimer(window_, kTimer, 1000, nullptr);
     }
     delivered_ = true;
-    const bool changed = !foreground_ || GetForegroundWindow() != foreground_;
+    const bool changed = pending_->request_id != request_id_ ||
+        !pending_->foreground || GetForegroundWindow() != pending_->foreground;
     if (changed) {
       selection.text.clear();
+      selection.bounds.reset();
       selection.status = "focusChanged";
     }
+    if (!changed) anchor_ = selection.bounds;
     if (result_) {
-      result_->Success(Encode(selection));
+      result_->Success(Encode(selection, pending_->request_id));
       result_.reset();
     } else if (!changed && selection.status != "focusChanged") {
-      // Only a global shortcut requests activation; captureSelection does not.
-      ShowWindow(window_, IsIconic(window_) ? SW_RESTORE : SW_SHOW);
-      SetForegroundWindow(window_);
-      channel_->InvokeMethod("pressed", std::make_unique<flutter::EncodableValue>(Encode(selection)));
+      channel_->InvokeMethod("pressed", std::make_unique<flutter::EncodableValue>(
+          Encode(selection, pending_->request_id)));
     }
   }
   if (done) {

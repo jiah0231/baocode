@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <limits>
 
 namespace {
 constexpr UINT kPrepare = WM_APP + 19;
@@ -71,6 +72,29 @@ int wmain(int argc, wchar_t** argv) {
   translation_selection::RejectEmbeddedNull(valid);
   if (valid.text != L"Selected words" || valid.status != "ok")
     return Fail("Valid selection was rejected");
+  using translation_panel::Place;
+  using translation_panel::SelectionRect;
+  const auto below = Place({100, 100, 200, 120}, {0, 0, 1920, 1040}, 480, 560, 10);
+  if (below.left != 100 || below.top != 130 || below.right != 580 || below.bottom != 690)
+    return Fail("Panel was not placed below selection");
+  const auto above = Place({1800, 900, 1850, 920}, {0, 0, 1920, 1040}, 480, 560, 10);
+  if (above.left != 1440 || above.top != 330 || above.bottom != 890)
+    return Fail("Panel did not flip above selection and clamp right edge");
+  const auto negative = Place({-50, -20, -40, -10}, {-1920, -1080, 0, 0}, 720, 840, 15);
+  if (negative.left != -720 || negative.right != 0 || negative.top != -875)
+    return Fail("Panel placement failed on negative-origin high-DPI monitor");
+  const auto tiny = Place({300, 200, 301, 201}, {0, 0, 320, 240}, 960, 1120, 20);
+  if (tiny.left != 0 || tiny.top != 0 || tiny.right != 320 || tiny.bottom != 240)
+    return Fail("Panel overflowed a small monitor work area");
+  if (SelectionRect(0, 0, 0, 10) || SelectionRect(0, 0, -1, 10) ||
+      SelectionRect(std::numeric_limits<double>::quiet_NaN(), 0, 10, 10) ||
+      SelectionRect(0, 0, std::numeric_limits<double>::infinity(), 10) ||
+      SelectionRect(999999, 0, 100, 10) || SelectionRect(-1000001, 0, 10, 10))
+    return Fail("Unsafe UIA bounding rectangle accepted");
+  const auto fractional = SelectionRect(-1.5, 2.5, 10, 20);
+  if (!fractional || fractional->left != -2 || fractional->top != 2 ||
+      fractional->right != 9 || fractional->bottom != 23)
+    return Fail("UIA bounding rectangle rounding failed");
   wchar_t executable[MAX_PATH]; GetModuleFileNameW(nullptr, executable, MAX_PATH);
   std::wstring command = L"\"" + std::wstring(executable) + L"\" --fixture";
   STARTUPINFOW startup{}; startup.cb = static_cast<DWORD>(sizeof(startup));
@@ -111,6 +135,14 @@ int wmain(int argc, wchar_t** argv) {
     if (selected.self) result = Fail("External fixture incorrectly marked self");
     if (mode == 0 && (selected.status != "ok" || selected.text != L"Selected words"))
       result = Fail("UIA did not capture precisely the selected range");
+    if (mode == 0 && selected.bounds) {
+      RECT source = {}, intersection = {};
+      GetWindowRect(fixture, &source);
+      if (!IntersectRect(&intersection, &source, &*selected.bounds) ||
+          !EqualRect(&intersection, &*selected.bounds))
+        result = Fail("Selection anchor escaped source window bounds");
+    }
+    if (mode != 0 && selected.bounds) result = Fail("Rejected selection retained a stale anchor");
     if (mode == 1 && (selected.status != "noSelection" || !selected.text.empty()))
       result = Fail("Collapsed selection returned text");
     if (mode == 2 && (selected.status != "password" || !selected.text.empty()))
@@ -126,6 +158,6 @@ int wmain(int argc, wchar_t** argv) {
   if (fixture) PostMessageW(fixture, WM_CLOSE, 0, 0);
   if (WaitForSingleObject(process.hProcess, 3000) != WAIT_OBJECT_0) TerminateProcess(process.hProcess, 3);
   CloseHandle(process.hThread); CloseHandle(process.hProcess);
-  if (!result) std::puts("PASS: selected range, no selection, password, unsupported, oversized, changed focus, embedded null rejection, clipboard unchanged");
+  if (!result) std::puts("PASS: selected range, no selection, password, unsupported, oversized, changed focus, embedded null rejection, clipboard unchanged, placement and bounds validation");
   return result;
 }

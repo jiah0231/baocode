@@ -487,6 +487,16 @@ jobs:
           $fixture = Join-Path $PWD 'build/codex-launcher-fixture/Release'
           python tool/test_codex_owned_launcher.py --helper 'build/windows/x64/runner/Release/BaocodeCodexLauncher.exe' --reject-job-helper (Join-Path $fixture 'BaocodeCodexLauncherRejectJob.exe') --reject-membership-helper (Join-Path $fixture 'BaocodeCodexLauncherRejectMembership.exe')
           if ($LASTEXITCODE -ne 0) { throw 'Packaged owned launcher process isolation tests failed' }
+      - name: Verify independent floating translation window
+        timeout-minutes: 6
+        shell: pwsh
+        run: ./tool/ci/windows_translation_window_smoke.ps1 -Executable build/windows/x64/runner/Release/baocode.exe
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: translation-window-release-screenshots
+          if-no-files-found: warn
+          path: build/translation-window-previews/*
       - name: Smoke-test startup
         shell: pwsh
         run: |
@@ -525,15 +535,15 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           # Also exercise the user's latest published build, preserving +42 coverage.
-          # Source: 04dc51dbd3bd1912161277e5ea09ade2607c4408, custom-v1.9.1+46.
-          $old = Join-Path $env:RUNNER_TEMP 'baocode-baseline-46.exe'
-          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.9.1%2B46/BaoCode-1.9.1-setup.exe' -OutFile $old
-          if ((Get-Item $old).Length -ne 36853538) { throw 'Latest pinned Setup size mismatch' }
-          if ((Get-FileHash $old -Algorithm SHA256).Hash.ToLowerInvariant() -ne '2d3133c63952bca1186fd0dafd89dc5baf5896109b2c8f87cd16ec3d49c7d39a') { throw 'Latest pinned Setup checksum mismatch' }
+          # Source: 1d305d7b9c5902a9aaee701e5a6f8f75ced2e2ae, custom-v1.9.1+48.
+          $old = Join-Path $env:RUNNER_TEMP 'baocode-baseline-48.exe'
+          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.9.1%2B48/BaoCode-1.9.1-setup.exe' -OutFile $old
+          if ((Get-Item $old).Length -ne 36889987) { throw 'Latest pinned Setup size mismatch' }
+          if ((Get-FileHash $old -Algorithm SHA256).Hash.ToLowerInvariant() -ne '11a08cadbc1d24400450e46e2f2226f6fc58e9bb089e3caaf12666bc8cd16b4e') { throw 'Latest pinned Setup checksum mismatch' }
           $new = @(Get-ChildItem build/installers -Filter '*-setup.exe')
           if ($new.Count -ne 1) { throw 'Expected one new Setup' }
           $version = (Select-String -Path pubspec.yaml -Pattern '^version: (.+)$').Matches[0].Groups[1].Value
-          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.9.1+46
+          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.9.1+48
       - uses: actions/upload-artifact@v6
         with:
           name: custom-installer

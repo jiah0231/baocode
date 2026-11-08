@@ -22,6 +22,25 @@ New-Item -ItemType Directory -Force $dataDir | Out-Null
 $env:BAOCODE_DATA_DIR = $dataDir
 $marker = Join-Path $dataDir 'preserve-me.txt'
 Set-Content $marker 'isolated test data'
+# Existing settings and keybindings are user-owned files, not release assets.
+$userDir = Join-Path $dataDir 'User'
+New-Item -ItemType Directory -Force $userDir | Out-Null
+$settingsFile = Join-Path $userDir 'settings.json'
+$keybindingsFile = Join-Path $userDir 'keybindings.json'
+@{
+  'translation.globalHotkey' = 'ctrl+alt+u'
+  'workbench.colorTheme' = 'Bao Light'
+  'tray.enabled' = $false
+  'update.mode' = 'manual'
+  'models.providers' = @()
+} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $settingsFile -Encoding utf8
+'[{"key":"ctrl+alt+u","command":"translation.translateSelection"}]' | Set-Content -LiteralPath $keybindingsFile -Encoding utf8
+$settingsHash = (Get-FileHash -LiteralPath $settingsFile -Algorithm SHA256).Hash
+$keybindingsHash = (Get-FileHash -LiteralPath $keybindingsFile -Algorithm SHA256).Hash
+function Assert-UserFiles {
+  if ((Get-FileHash -LiteralPath $settingsFile -Algorithm SHA256).Hash -ne $settingsHash) { throw 'Upgrade or launch rewrote existing settings' }
+  if ((Get-FileHash -LiteralPath $keybindingsFile -Algorithm SHA256).Hash -ne $keybindingsHash) { throw 'Upgrade or launch rewrote existing keybindings' }
+}
 $old = (Resolve-Path $OldInstaller).Path
 $new = (Resolve-Path $NewInstaller).Path
 $bundle = (Resolve-Path $NewBundle).Path
@@ -56,11 +75,13 @@ try {
     Write-Host "Verified installed bundle hash: $relative SHA256 $installedHash"
   }
   if ((Get-Content $marker -Raw).Trim() -ne 'isolated test data') { throw 'Upgrade changed user data' }
+  Assert-UserFiles
   $process = Start-Process -FilePath $exe -PassThru
   Start-Sleep -Seconds 15
   $process.Refresh()
   if ($process.HasExited) { throw "Upgraded app failed startup: $($process.ExitCode)" }
-  Write-Host "PASS: $OldVersion -> $Version per-user Setup, executable/AOT/native/helper hashes, preserved data, startup"
+  Assert-UserFiles
+  Write-Host "PASS: $OldVersion -> $Version per-user Setup, executable/AOT/native/helper hashes, preserved data/settings/keybindings, startup"
 } finally {
   if ($process) {
     $process.Refresh()

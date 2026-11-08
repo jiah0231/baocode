@@ -4,19 +4,60 @@
 #include <UIAutomation.h>
 #include <wrl/client.h>
 #include <string>
+#include <optional>
+#include <cstdint>
+#include "translation_panel_geometry.h"
 
 namespace translation_selection {
 struct Selection {
   std::wstring text;
   std::string status = "unsupported";
   bool self = false;
+  std::optional<RECT> bounds;
 };
+// Bounding rectangles are optional. A broken geometry provider must neither
+// expose arbitrary data nor invalidate otherwise valid selected text.
+inline std::optional<RECT> ReadBounds(IUIAutomationTextRange* range,
+                                      HWND foreground) {
+  SAFEARRAY* values = nullptr;
+  const HRESULT read = range->GetBoundingRectangles(&values);
+  std::optional<RECT> result;
+  VARTYPE type = VT_EMPTY;
+  LONG lower = 0, upper = -1;
+  if (SUCCEEDED(read) && values && SafeArrayGetDim(values) == 1 &&
+      SUCCEEDED(SafeArrayGetVartype(values, &type)) && type == VT_R8 &&
+      SUCCEEDED(SafeArrayGetLBound(values, 1, &lower)) &&
+      SUCCEEDED(SafeArrayGetUBound(values, 1, &upper)) &&
+      upper >= lower && static_cast<int64_t>(upper) - lower < 256 &&
+      (static_cast<int64_t>(upper) - lower + 1) % 4 == 0) {
+    double* data = nullptr;
+    if (SUCCEEDED(SafeArrayAccessData(values, reinterpret_cast<void**>(&data)))) {
+      RECT source = {};
+      if (data && GetWindowRect(foreground, &source)) {
+        const int count = static_cast<int>(static_cast<int64_t>(upper) - lower + 1);
+        for (int i = 0; i < count && !result; i += 4) {
+          const auto checked = translation_panel::SelectionRect(
+              data[i], data[i + 1], data[i + 2], data[i + 3]);
+          if (!checked) continue;
+          const RECT rect{checked->left, checked->top, checked->right, checked->bottom};
+          RECT clipped = {};
+          if (IntersectRect(&clipped, &rect, &source) &&
+              MonitorFromRect(&clipped, MONITOR_DEFAULTTONULL)) result = clipped;
+        }
+      }
+      SafeArrayUnaccessData(values);
+    }
+  }
+  if (values) SafeArrayDestroy(values);
+  return result;
+}
 // BSTRs are length-delimited, but downstream native string conversion is not.
 // Never return a prefix of a selection containing an embedded null.
 inline void RejectEmbeddedNull(Selection& selection) {
   if (selection.text.find(L'\0') != std::wstring::npos) {
     selection.text.clear();
     selection.status = "unsupported";
+    selection.bounds.reset();
   }
 }
 // Call only on an MTA worker after an explicit user action. Never reads the
@@ -92,6 +133,7 @@ inline Selection Capture(HWND foreground) {
                     SysFreeString(text);
                     if (FAILED(read) || !has_text) { failed = true; break; }
                     if (out.status == "tooLong") break;
+                    if (!out.bounds) out.bounds = ReadBounds(range.Get(), foreground);
                   }
                   if (failed || out.status == "tooLong") {
                     out.text.clear();
@@ -114,6 +156,7 @@ inline Selection Capture(HWND foreground) {
     out.text.clear();
     out.status = "focusChanged";
   }
+  if (out.status != "ok") out.bounds.reset();
   return out;
 }
 }  // namespace translation_selection

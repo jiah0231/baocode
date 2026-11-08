@@ -12,7 +12,9 @@ jobs:
   validate:
     if: github.repository == 'jiah0231/baocode'
     runs-on: windows-2025
-    timeout-minutes: 45
+    timeout-minutes: 60
+    env:
+      BAOCODE_CUSTOM_UPDATE_KEY: ${{ vars.BAOCODE_CUSTOM_UPDATE_KEY }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -63,6 +65,20 @@ jobs:
         run: |
           flutter test --no-pub --reporter expanded --timeout 2m --dart-define=TRANSLATION_PREVIEWS=true test/translation test/quick_ask test/keybindings/window_keybindings_test.dart test/chat/history_selection_test.dart test/settings/settings_wiring_test.dart test/settings/stash_hotkey_field_test.dart test/settings/models_page_test.dart test/ide/ide_input_test.dart test/ide/ide_menu_test.dart test/update/version_test.dart
           if ($LASTEXITCODE -ne 0) { throw 'Translation regressions failed' }
+      - name: Build actual Windows release app
+        shell: pwsh
+        run: |
+          dart run tool/build_windows.dart --arch x64 --custom-updates --build-only
+          if ($LASTEXITCODE -ne 0) { throw 'Windows release build failed' }
+      - name: Test real independent translation window
+        shell: pwsh
+        run: ./tool/ci/windows_translation_window_smoke.ps1 -Executable build/windows/x64/runner/Release/baocode.exe
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: translation-real-window-previews
+          if-no-files-found: error
+          path: build/translation-window-previews/*.png
       - name: Export synthetic preview images for review
         if: always()
         shell: pwsh

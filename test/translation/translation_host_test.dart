@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:baocode/translation/translation_host.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -17,6 +19,131 @@ void main() {
     });
   });
   tearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+  Future<void> nativeEvent(String method, [Object? arguments]) async {
+    final done = Completer<void>();
+    messenger.handlePlatformMessage(
+      channel.name,
+      const StandardMethodCodec().encodeMethodCall(
+        MethodCall(method, arguments),
+      ),
+      (_) => done.complete(),
+    );
+    await done.future;
+  }
+
+  test('panel is lazy and never shown before its new frame', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return call.method == 'createPanel' ? 9 : true;
+    });
+    final host = TranslationHost(
+      channel: channel,
+      supported: true,
+      engineId: 42,
+    );
+    expect(calls, isEmpty);
+    expect(
+      await host.openPanel(
+        const TranslationCapture(text: 'hello', status: 'ok', requestId: 7),
+      ),
+      isTrue,
+    );
+    expect(host.panelViewId, 9);
+    expect(calls.map((c) => c.method), ['createPanel']);
+    expect(calls.single.arguments, {'engineId': 42});
+    await host.panelRendered(host.panelGeneration);
+    expect(calls.last.method, 'showPanel');
+    expect(calls.last.arguments, {'requestId': 7});
+    await host.hidePanel();
+    expect(host.panelCapture, isNull);
+    expect(host.panelModelSettings, isNull);
+  });
+
+  test(
+    'replacement invalidates stale frames and native dismiss clears text',
+    () async {
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return call.method == 'createPanel' ? 9 : true;
+      });
+      final host = TranslationHost(
+        channel: channel,
+        supported: true,
+        engineId: 42,
+      )..start(null);
+      await host.openPanel(const TranslationCapture(text: 'old', requestId: 1));
+      final old = host.panelGeneration;
+      await host.openPanel(const TranslationCapture(text: 'new', requestId: 2));
+      await host.panelRendered(old);
+      expect(calls.where((c) => c.method == 'showPanel'), isEmpty);
+      await nativeEvent('panelHidden', {'requestId': 1});
+      expect(host.panelCapture?.text, 'new');
+      await nativeEvent('panelHidden', {'requestId': 2});
+      expect(host.panelCapture, isNull);
+      await host.panelRendered(host.panelGeneration - 1);
+      expect(calls.where((c) => c.method == 'showPanel'), isEmpty);
+      host.stop();
+    },
+  );
+
+  test(
+    'closing during creation cannot reopen; later request reuses view',
+    () async {
+      final created = Completer<int>();
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return call.method == 'createPanel' ? created.future : true;
+      });
+      final host = TranslationHost(
+        channel: channel,
+        supported: true,
+        engineId: 42,
+      );
+      final opening = host.openPanel(const TranslationCapture(text: 'secret'));
+      await host.hidePanel();
+      created.complete(9);
+      expect(await opening, isTrue);
+      expect(host.panelCapture, isNull);
+      await host.openPanel(const TranslationCapture(text: 'fresh'));
+      expect(host.panelCapture?.text, 'fresh');
+      expect(calls.where((c) => c.method == 'createPanel'), hasLength(1));
+      await host.hidePanel();
+    },
+  );
+
+  test('creation failure permits fallback, focus rejection does not', () async {
+    final host = TranslationHost(
+      channel: channel,
+      supported: true,
+      engineId: 42,
+    );
+    messenger.setMockMethodCallHandler(channel, (_) async => null);
+    expect(await host.openPanel(const TranslationCapture()), isFalse);
+    messenger.setMockMethodCallHandler(
+      channel,
+      (call) async => call.method == 'createPanel' ? 9 : false,
+    );
+    expect(
+      await host.openPanel(const TranslationCapture(text: 'discard')),
+      isTrue,
+    );
+    await host.panelRendered(host.panelGeneration);
+    expect(host.panelCapture, isNull);
+  });
+
+  test(
+    'single-view hosts do not create an unrenderable native panel',
+    () async {
+      final host = TranslationHost(
+        channel: channel,
+        supported: true,
+        panelEnabled: false,
+      );
+      expect(await host.openPanel(const TranslationCapture()), isFalse);
+      expect(calls, isEmpty);
+    },
+  );
 
   test('failed or oversized capture cannot carry text', () {
     expect(

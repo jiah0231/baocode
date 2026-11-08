@@ -18,6 +18,43 @@ import 'package:baocode/usage/usage_ledger.dart';
 import 'translation_service_test.dart' show configured;
 
 void main() {
+  for (final brightness in Brightness.values) {
+    testWidgets(
+      'embedded panel fits small viewport at 200% text in $brightness',
+      (tester) async {
+        tester.view.physicalSize = const Size(280, 340);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        var frames = 0;
+        var closed = false;
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData(brightness: brightness),
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(context)
+                  .copyWith(textScaler: const TextScaler.linear(2)),
+              child: child!,
+            ),
+            home: TranslationDialog(
+              embedded: true,
+              selectedText: 'hello',
+              onRendered: () => frames++,
+              onClose: () => closed = true,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(frames, 1);
+        expect(tester.takeException(), isNull);
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pump();
+        expect(closed, isTrue);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets('warns live when optional usage debug tracing is enabled', (
     tester,
   ) async {

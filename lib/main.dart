@@ -132,6 +132,8 @@ import 'update/update_service.dart';
 import 'update/update_settings.dart';
 import 'update/update_store.dart';
 import 'update/version.dart';
+import 'translation/translation_dialog.dart';
+import 'translation/translation_host.dart';
 import 'usage/usage_ledger.dart';
 import 'usage/usage_prices.dart';
 import 'usage/usage_storage.dart';
@@ -942,6 +944,13 @@ class _BaoCodeAppState extends State<BaoCodeApp>
   }
 
   @override
+  void didChangeMetrics() {
+    if (TranslationHost.instance.panelViewId != null && mounted) {
+      setState(() {});
+    }
+  }
+
+  @override
   void didChangeAccessibilityFeatures() {
     if (WidgetsBinding
         .instance
@@ -956,6 +965,7 @@ class _BaoCodeAppState extends State<BaoCodeApp>
   void initState() {
     super.initState();
     _lifecycle;
+    TranslationHost.instance.panelEnabled = _windows.started;
     WidgetsBinding.instance.addObserver(this);
     _themes.transition = _transitionTheme;
     _themes.addListener(_colorThemeChanged);
@@ -1016,6 +1026,7 @@ class _BaoCodeAppState extends State<BaoCodeApp>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _themes.transition = null;
+    TranslationHost.instance.panelEnabled = false;
     _themeTransition.dispose();
     _themes.removeListener(_colorThemeChanged);
     _locale.removeListener(_windows.relabel);
@@ -1043,9 +1054,23 @@ class _BaoCodeAppState extends State<BaoCodeApp>
           listenable: _locale,
           builder: (context, _) => _windows.started
               ? ListenableBuilder(
-                  listenable: _windows,
+                  listenable: Listenable.merge([
+                    _windows,
+                    TranslationHost.instance,
+                  ]),
                   builder: (context, _) => ViewCollection(
                     views: [
+                      if (TranslationHost.instance.panelViewId case final id?)
+                        if (_windows.host.viewOf(id) case final view?)
+                          QuietView(
+                            key: ValueKey(id),
+                            view: view,
+                            child: _app(
+                              _windows.chat,
+                              translation: true,
+                              viewId: id,
+                            ),
+                          ),
                       for (final window in [
                         _windows.chat,
                         ..._windows.ideWindows,
@@ -1068,9 +1093,34 @@ class _BaoCodeAppState extends State<BaoCodeApp>
     );
   }
 
+  Widget _translationPanel() {
+    final host = TranslationHost.instance;
+    final capture = host.panelCapture;
+    final generation = host.panelGeneration;
+    final settings = host.panelModelSettings;
+    return capture == null
+        ? const SizedBox.shrink()
+        : TranslationDialog(
+            key: ValueKey(generation),
+            embedded: true,
+            selectedText: capture.text,
+            captureStatus: capture.status,
+            onRendered: () => unawaited(host.panelRendered(generation)),
+            onClose: () => unawaited(host.hidePanel()),
+            onModelSettings: settings,
+          );
+  }
+
   /// A window's app: its own navigator, dialogs, overlay and focus; what
   /// it shows built anew as its folder changes.
-  Widget _app(AppWindow window) => MaterialApp(
+  Widget _app(
+    AppWindow window, {
+    bool translation = false,
+    int? viewId,
+  }) => MaterialApp(
+    key: translation
+        ? ValueKey(TranslationHost.instance.panelGeneration)
+        : null,
     title: 'BaoCode',
     debugShowCheckedModeBanner: false,
     theme: buildAppTheme(),
@@ -1087,7 +1137,7 @@ class _BaoCodeAppState extends State<BaoCodeApp>
         WindowControls.setTitleBarDrop(
           (AppMetrics.titleBarHeight * zoom - AppMetrics.nativeTitleBarHeight) /
               2,
-          viewId: window.viewId,
+          viewId: viewId ?? window.viewId,
         );
         // Windows blurs glyphs drawn at a fractional pixel size.
         TextScaler snapped(TextScaler scaler) => AppPlatform.isWindows
@@ -1118,7 +1168,9 @@ class _BaoCodeAppState extends State<BaoCodeApp>
       GlobalCupertinoLocalizations.delegate,
       GlobalWidgetsLocalizations.delegate,
     ],
-    home: window.isStash
+    home: translation
+        ? _translationPanel()
+        : window.isStash
         ? Material(
             type: MaterialType.transparency,
             child: StashPanelView(

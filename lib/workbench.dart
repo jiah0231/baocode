@@ -608,6 +608,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     _windows?.addListener(_windowsChanged);
     if (_main) {
       TranslationHost.instance.onPressed = _translationPressed;
+      TranslationHost.instance.defaultModelSettings = _translationModelSettings;
       TranslationHost.instance.start(widget.settings?.files?.settings);
       // A link to a stash (#12 references) shows it here.
       StashController.current?.showPage = _showStash;
@@ -1175,25 +1176,53 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         }
         return true;
       });
-      unawaited((owner ?? this)._openTranslation());
+      unawaited((owner ?? this)._openTranslation(capture: capture));
     } else {
       unawaited(_openTranslation(capture: capture));
     }
   }
 
+  void _translationModelSettings() {
+    unawaited(() async {
+      await TranslationHost.instance.hidePanel();
+      if (!mounted) return;
+      if (_windows case final windows?) {
+        if (widget.window case final window?) windows.focus(window);
+        await windows.host.focus(_viewId);
+      }
+      if (mounted) await openSettings(SettingsSection.models);
+    }());
+  }
+
   Future<void> _openTranslation({TranslationCapture? capture}) async {
     if (_translationOpen || ChatKeys.isComposing || !mounted) return;
-    final source = capture == null ? QuickAskContext.captureFocused() : null;
+    final source = capture == null || capture.inApp
+        ? QuickAskContext.captureFocused()
+        : null;
+    final selection = capture != null && !capture.inApp
+        ? capture
+        : TranslationCapture(
+            text: source?.truncated == true ? '' : source?.selectedText ?? '',
+            status: source?.truncated == true ? 'tooLong' : 'ok',
+            inApp: true,
+            requestId: capture?.requestId,
+          );
+    if (await TranslationHost.instance.openPanel(
+      selection,
+      onModelSettings: _translationModelSettings,
+    )) {
+      return;
+    }
+    // External capture never brings the main workspace forward as a fallback.
+    if (capture?.inApp == false || !mounted) return;
     _translationOpen = true;
     try {
       await showTranslationDialog(
         context,
-        selectedText:
-            capture?.text ??
-            (source?.truncated == true ? '' : source?.selectedText ?? ''),
-        captureStatus:
-            capture?.status ?? (source?.truncated == true ? 'tooLong' : null),
-        onModelSettings: () => unawaited(openSettings(SettingsSection.models)),
+        preferFloating: false,
+        selectedText: selection.text,
+        captureStatus: selection.status,
+        onModelSettings: _translationModelSettings,
       );
     } finally {
       _translationOpen = false;

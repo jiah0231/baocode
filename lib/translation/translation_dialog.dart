@@ -10,6 +10,8 @@ import '../ide/ide_menu.dart';
 import '../l10n/l10n.dart';
 import '../theme/workbench_theme.dart';
 import '../usage/usage_ledger.dart';
+import '../workspace/window_controls.dart';
+import 'translation_host.dart';
 import 'translation_service.dart';
 import 'translation_strings.dart';
 
@@ -21,7 +23,20 @@ Future<void> showTranslationDialog(
   String? captureStatus,
   TranslationService? service,
   VoidCallback? onModelSettings,
+  bool preferFloating = true,
 }) async {
+  if (preferFloating &&
+      await TranslationHost.instance.openPanel(
+        TranslationCapture(
+          text: selectedText,
+          status: captureStatus ?? 'ok',
+          inApp: true,
+        ),
+        onModelSettings: onModelSettings,
+      )) {
+    return;
+  }
+  if (!context.mounted) return;
   final view = View.of(context);
   if (!_openTranslationViews.add(view)) return;
   try {
@@ -54,8 +69,12 @@ class TranslationDialog extends StatefulWidget {
     this.service,
     this.onModelSettings,
     this.onClose,
+    this.embedded = false,
+    this.onRendered,
   });
   final String selectedText;
+  final bool embedded;
+  final VoidCallback? onRendered;
 
   /// 'tooLong' means the capture was truncated: discard it, never translate a
   /// clipped selection. Any other non-null status shows manual-entry guidance.
@@ -82,6 +101,14 @@ class _TranslationDialogState extends State<TranslationDialog> {
   bool _edited = false;
   int _generation = 0;
   Completer<void>? _cancel;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.onRendered?.call();
+    });
+  }
 
   @override
   void dispose() {
@@ -232,11 +259,14 @@ class _TranslationDialogState extends State<TranslationDialog> {
         child: SafeArea(
           child: Center(
             child: Padding(
-              padding: const EdgeInsets.all(12),
+              padding: EdgeInsets.all(widget.embedded ? 0 : 12),
               child: ConstrainedBox(
                 constraints: BoxConstraints(
-                  maxWidth: 720,
-                  maxHeight: math.max(100, viewport.height - 48),
+                  maxWidth: widget.embedded ? double.infinity : 720,
+                  minHeight: widget.embedded ? viewport.height : 0,
+                  maxHeight: widget.embedded
+                      ? viewport.height
+                      : math.max(100, viewport.height - 48),
                 ),
                 child: Material(
                   color: themeColors['editorWidget.background'],
@@ -244,7 +274,7 @@ class _TranslationDialogState extends State<TranslationDialog> {
                     borderRadius: BorderRadius.circular(12),
                     side: BorderSide(color: themeColors['editorWidget.border']),
                   ),
-                  elevation: 12,
+                  elevation: widget.embedded ? 0 : 12,
                   clipBehavior: Clip.antiAlias,
                   child: DefaultTextStyle(
                     style: Theme.of(context).textTheme.bodyMedium!.copyWith(
@@ -261,11 +291,21 @@ class _TranslationDialogState extends State<TranslationDialog> {
                           Row(
                             children: [
                               Expanded(
-                                child: Text(
-                                  l.translationTitle,
-                                  style: const TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w600,
+                                child: GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
+                                  onPanStart: widget.embedded
+                                      ? (_) => unawaited(
+                                          WindowControls.dragWindow(
+                                            viewId: View.of(context).viewId,
+                                          ),
+                                        )
+                                      : null,
+                                  child: Text(
+                                    l.translationTitle,
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
                               ),
