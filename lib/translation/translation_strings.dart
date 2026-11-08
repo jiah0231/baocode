@@ -16,7 +16,7 @@ extension TranslationStrings on AppLocalizations {
       : 'Only Translate sends this text. No files or conversation are included; no translation history is saved.';
   String get translationModel => _zh ? '模型设置' : 'Model settings';
   String get translationModelHint =>
-      _zh ? '使用快速提问的模型' : 'Uses the Quick Ask model';
+      _zh ? '使用「$modelsQuickAsk」' : 'Uses the Quick Ask model';
   String get translationCopy => _zh ? '复制译文' : 'Copy translation';
   String get translationCopied => _zh ? '已复制' : 'Copied';
   String get translationCopyFailed => _zh
@@ -50,7 +50,7 @@ extension TranslationStrings on AppLocalizations {
           : 'Source exceeds 8,000 characters. Shorten it and retry.',
     TranslationFailure.noModel =>
       _zh
-          ? '请在模型设置中配置可用的快速提问模型。'
+          ? '请在模型设置中配置可用的「$modelsQuickAsk」。'
           : 'Configure an available Quick Ask model in Model settings.',
     TranslationFailure.timeout =>
       _zh ? '翻译超时，请重试。' : 'Translation timed out. Please retry.',

@@ -55,7 +55,7 @@ bool TranslationChannel::Register(const std::string& spec) {
   return registered_;
 }
 bool TranslationChannel::HandleHotkey(WPARAM id) {
-  if (id != kHotkey) return false;
+  if (id != static_cast<WPARAM>(kHotkey)) return false;
   Capture(nullptr);
   return true;
 }

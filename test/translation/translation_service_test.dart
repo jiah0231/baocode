@@ -156,7 +156,7 @@ void main() {
     expect(received, ['first']);
   });
   test('timeout cancels transport and never exposes raw failure', () async {
-    var cancelled = false;
+    final cancellationObserved = Completer<void>();
     final service = TranslationService(
       providers: providers,
       timeout: const Duration(milliseconds: 5),
@@ -169,7 +169,7 @@ void main() {
             required cancel,
             required onText,
           }) {
-            cancel.then((_) => cancelled = true);
+            unawaited(cancel.then((_) => cancellationObserved.complete()));
             return Completer<String>().future;
           },
     );
@@ -177,7 +177,9 @@ void main() {
       service.translate(text: 'hello'),
       failure(TranslationFailure.timeout),
     );
-    expect(cancelled, isTrue);
+    // Cancellation listeners run asynchronously after the timeout error.
+    // Await the actual transport signal, and fail promptly if it never arrives.
+    await cancellationObserved.future.timeout(const Duration(seconds: 1));
   });
   test('bounded answer and streaming overflow', () async {
     for (final streaming in [false, true]) {
@@ -203,6 +205,11 @@ void main() {
     }
   });
   test('no provider refuses to send', () async {
+    // The shared test harness enables the CLI. This case has no route only
+    // when neither an upstream nor the built-in CLI model is available.
+    final previous = ClaudeCore.current;
+    addTearDown(() => ClaudeCore.current = previous);
+    ClaudeCore.current = () => ClaudeCore.builtin;
     final empty = ModelProviders.memory();
     addTearDown(empty.dispose);
     final service = TranslationService(

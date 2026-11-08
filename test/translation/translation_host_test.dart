@@ -57,9 +57,9 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(calls.map((call) => call.method), everyElement('setHotkey'));
       expect(calls.map((call) => call.arguments), [
-        'ctrl+alt+t',
+        'ctrl+alt+y',
         '',
-        'ctrl+alt+t',
+        'ctrl+alt+y',
         '',
       ]);
     },

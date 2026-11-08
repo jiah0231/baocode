@@ -78,14 +78,20 @@ inline Selection Capture(HWND foreground) {
                     }
                     if (difference == 0) continue;
                     if (!out.text.empty()) out.text += L"\n";
+                    if (out.text.size() > 8000) { out.status = "tooLong"; break; }
                     BSTR text = nullptr;
                     const HRESULT read = range->GetText(
                         static_cast<int>(8001 - out.text.size()), &text);
-                    if (SUCCEEDED(read) && text) out.text.append(text, SysStringLen(text));
+                    if (SUCCEEDED(read) && text) {
+                      const UINT units = SysStringLen(text);
+                      // Do not trust a provider to honor GetText's maximum.
+                      if (units > 8000 - out.text.size()) out.status = "tooLong";
+                      else out.text.append(text, units);
+                    }
                     const bool has_text = text != nullptr;
                     SysFreeString(text);
                     if (FAILED(read) || !has_text) { failed = true; break; }
-                    if (out.text.size() > 8000) { out.status = "tooLong"; break; }
+                    if (out.status == "tooLong") break;
                   }
                   if (failed || out.status == "tooLong") {
                     out.text.clear();

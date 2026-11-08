@@ -45,7 +45,7 @@ class TranslationHost extends ChangeNotifier {
 
   static final instance = TranslationHost();
   static const hotkeyKey = 'translation.globalHotkey';
-  static const defaultHotkey = 'ctrl+alt+t';
+  static const defaultHotkey = 'ctrl+alt+y';
   final MethodChannel _channel;
   final bool supported;
   UserSettings? _settings;

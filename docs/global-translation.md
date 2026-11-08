@@ -4,8 +4,8 @@ BaoCode custom 1.9.1+48 adds a lightweight translation panel to the existing Flu
 
 ## Use
 
-- Windows: select text in another application, then press **Ctrl+Alt+T** while BaoCode is running. BaoCode opens a translation panel with the captured source. Review it and click **Translate**.
-- Within BaoCode: use the **Translate Selection** command, **Ctrl+Alt+T** (**Cmd+Option+T** on macOS), or the translation entry in editor/chat selection context menus.
+- Windows: select text in another application, then press **Ctrl+Alt+Y** while BaoCode is running. BaoCode opens a translation panel with the captured source. Review it and click **Translate**.
+- Within BaoCode: use the **Translate Selection** command, **Ctrl+Alt+Y** (**Cmd+Option+Y** on macOS), or the translation entry in editor/chat selection context menus.
 - Configure the Windows global shortcut or disable it in **Settings → Region & Language** or **Keyboard Shortcuts**. A registration failure is shown if another app owns the keys.
 - Translation follows **Models → Quick Ask**, displays the resolved provider and model, and uses the existing text-only model transport. Configure that model before translating. Standard provider charges can apply.
 - Source detection plus Chinese, English, Japanese, Korean, French, German and Spanish are available. Edit/paste text, swap explicitly selected languages, retry, cancel or copy the result.

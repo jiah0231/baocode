@@ -50,8 +50,26 @@ void main() {
     sync.dispose();
     files.dispose();
     KeybindingService.instance = KeybindingService();
-    await data.delete(recursive: true);
-    await home.delete(recursive: true);
+    // An import discovery started by the widget can still be releasing a
+    // directory handle on Windows. Retry only transient sharing violations.
+    Future<void> remove(Directory directory) async {
+      for (var attempt = 0; ; attempt++) {
+        try {
+          await directory.delete(recursive: true);
+          return;
+        } on FileSystemException catch (error) {
+          if (!Platform.isWindows ||
+              ![32, 145].contains(error.osError?.errorCode) ||
+              attempt >= 19) {
+            rethrow;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+      }
+    }
+
+    await remove(data);
+    await remove(home);
   });
 
   /// Makes the settings over the data folder, its files as they are now.

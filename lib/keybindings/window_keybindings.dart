@@ -62,8 +62,8 @@ final List<CommandInfo> windowCommands = [
 
 final List<KeybindingEntry> windowKeybindings = [
   const KeybindingEntry(
-    key: 'ctrl+alt+t',
-    mac: 'cmd+alt+t',
+    key: 'ctrl+alt+y',
+    mac: 'cmd+alt+y',
     command: WindowCommandIds.translate,
   ),
   const KeybindingEntry(

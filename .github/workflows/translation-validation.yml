@@ -63,6 +63,13 @@ jobs:
         run: |
           flutter test --no-pub --reporter expanded --timeout 2m --dart-define=TRANSLATION_PREVIEWS=true test/translation test/quick_ask test/keybindings/window_keybindings_test.dart test/chat/history_selection_test.dart test/settings/settings_wiring_test.dart test/settings/stash_hotkey_field_test.dart test/settings/models_page_test.dart test/ide/ide_input_test.dart test/ide/ide_menu_test.dart test/update/version_test.dart
           if ($LASTEXITCODE -ne 0) { throw 'Translation regressions failed' }
+      - name: Export synthetic preview images for review
+        if: always()
+        shell: pwsh
+        run: |
+          Get-ChildItem 'build/translation-previews/*.png' -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Output ('TRANSLATION_PREVIEW|' + $_.BaseName + '|' + [Convert]::ToBase64String([IO.File]::ReadAllBytes($_.FullName)))
+          }
       - uses: actions/upload-artifact@v6
         if: always()
         with:

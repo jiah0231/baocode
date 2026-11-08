@@ -51,7 +51,7 @@ class _TranslationSettingsCardState extends State<TranslationSettingsCard> {
                 else
                   zh ? '当前平台支持应用内翻译；跨应用快捷键目前仅支持 Windows。' : 'In-app translation is available. The cross-app shortcut currently requires Windows.',
                 zh
-                    ? '仅发送你确认的文字给「模型 → 即问即改」配置的提供方；不保存翻译记录，不监听剪贴板。无法读取的应用请手动粘贴。'
+                    ? '仅发送你确认的文字给「模型 → ${context.l10n.modelsQuickAsk}」配置的提供方；不保存翻译记录，不监听剪贴板。无法读取的应用请手动粘贴。'
                     : 'Only confirmed text is sent to the provider configured under Models → Quick Ask. No history or clipboard monitoring. Paste manually if an app cannot expose its selection.',
                 if (host.hotkeyTaken == false && hotkey.isNotEmpty)
                   zh ? '快捷键注册失败，可能被其他应用占用。请更换组合键。' : 'Could not register this shortcut. Another app may own it; choose a different combination.',

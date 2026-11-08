@@ -14,7 +14,7 @@ void main() {
         service.withPlatformKeys((key) => {'chatMode': true}[key]),
         const [],
         KeyChord.parse(
-          platform == KeybindingPlatform.mac ? 'cmd+alt+t' : 'ctrl+alt+t',
+          platform == KeybindingPlatform.mac ? 'cmd+alt+y' : 'ctrl+alt+y',
         )!,
         canRun: (item) => service.isSupported(item.command),
       );
