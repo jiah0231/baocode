@@ -279,6 +279,9 @@ void VisualProofSelfTest(const std::wstring& root) {
   Check(!verify(before, L"none"), "Visual self-test failed: no selection accepted");
   Frame missing = exact; paint(missing, RECT{x, expected.top, x+w, expected.bottom}, 8, 16, 24);
   Check(!verify(missing, L"missing-cell"), "Visual self-test failed: missing selected cell accepted");
+  Frame missing_last = exact;
+  paint(missing_last, RECT{expected.right-w, expected.top, expected.right, expected.bottom}, 8, 16, 24);
+  Check(!verify(missing_last, L"missing-last-cell"), "Visual self-test failed: missing trailing selected cell accepted");
   Frame extra = exact; paint(extra, RECT{expected.right, expected.top, expected.right+w, expected.bottom}, 255, 255, 255);
   Check(!verify(extra, L"extra-cell"), "Visual self-test failed: extra selected cell accepted");
   Frame wrong = before; paint(wrong, RECT{x, expected.top+h, expected.right, expected.bottom+h}, 255, 255, 255);
@@ -289,7 +292,7 @@ void VisualProofSelfTest(const std::wstring& root) {
   Check(!verify(moved, L"moved"), "Visual self-test failed: moved source accepted");
   Frame bad_marker = before; paint(bad_marker, RECT{x, y, x+w, y+h}, 8, 16, 24);
   Check(!FixtureGrid(bad_marker).has_value(), "Visual self-test failed: missing marker accepted");
-  std::printf("TERMINAL_VISUAL_PROOF_SELF_TEST|8 passed\n");
+  std::printf("TERMINAL_VISUAL_PROOF_SELF_TEST|9 passed\n");
 }
 
 int Fixture(const std::wstring& root) {
@@ -472,8 +475,15 @@ int wmain(int argc, wchar_t** argv) {
     session.identity_verified = true;
     before.Save(output+L"\\windowsTerminal-before.bmp");
     const DWORD clipboard = SeedClipboard(session.source);
-    const POINT from{before.rect.left+grid->left+grid->width/2, before.rect.top+grid->top+grid->height/2};
-    const POINT to{from.x+(kUnits-1)*grid->width, from.y};
+    // Terminal snaps a pointer endpoint to the nearest character boundary.
+    // With the observed odd 9px cells, integer center (4px) lands in the
+    // leading half and excludes the last character. Deliberately start in the
+    // first cell's leading half and finish in the last cell's trailing half.
+    // Both endpoints stay INSIDE their cells; exact/decoy proof stays unchanged.
+    const POINT from{before.rect.left+grid->left+1, before.rect.top+grid->top+grid->height/2};
+    const POINT to{before.rect.left+grid->left+kUnits*grid->width-1, from.y};
+    std::printf("TERMINAL_GESTURE|from=%ld,%ld|to=%ld,%ld|cell=%ld,%ld|expectedCells=%d\n",
+        from.x, from.y, to.x, to.y, grid->width, grid->height, kUnits);
     Drag(session.source, from, to);
     Mouse(session.source, POINT{before.rect.left+grid->left, before.rect.top+grid->top+5*grid->height}, 0);
     Sleep(200);
