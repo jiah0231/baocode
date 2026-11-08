@@ -491,17 +491,30 @@ int ConsoleFixture(const std::wstring& token, const std::wstring& root) {
     ready << reinterpret_cast<uintptr_t>(window) << ' ' << size.X << ' ' << size.Y << ' ' << GetCurrentProcessId() << '\n';
   }
   const auto end = GetTickCount64()+60000;
+  unsigned published = 0, publish_failures = 0;
+  ULONGLONG last_published = 0;
   while (GetTickCount64() < end && GetFileAttributesW((root+L".stop").c_str()) == INVALID_FILE_ATTRIBUTES) {
     CONSOLE_SELECTION_INFO selection{};
     if (GetConsoleSelectionInfo(&selection)) {
+      const auto sample = GetTickCount64();
       std::ofstream proof((root+L".selection.tmp").c_str());
-      proof << GetTickCount64() << ' ' << selection.dwFlags << ' ' << selection.srSelection.Left << ' ' << selection.srSelection.Top << ' '
+      proof << sample << ' ' << selection.dwFlags << ' ' << selection.srSelection.Left << ' ' << selection.srSelection.Top << ' '
             << selection.srSelection.Right << ' ' << selection.srSelection.Bottom << '\n';
       proof.close();
-      MoveFileExW((root+L".selection.tmp").c_str(), (root+L".selection").c_str(), MOVEFILE_REPLACE_EXISTING);
+      if (!proof.fail() && MoveFileExW((root+L".selection.tmp").c_str(),
+          (root+L".selection").c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        ++published; last_published = sample;
+      } else {
+        const DWORD error = proof.fail() ? ERROR_WRITE_FAULT : GetLastError();
+        ++publish_failures;
+        trace << "selectionPublishFailure tick=" << sample << " error=" << error
+              << " count=" << publish_failures << std::endl;
+      }
     }
     Sleep(40);
   }
+  trace << "selectionPublisherSummary published=" << published << " failures=" << publish_failures
+        << " lastPublishedTick=" << last_published << std::endl;
   return 0;
 }
 struct Child {
@@ -688,17 +701,70 @@ IntegrityEvidence ProbeIntegritySeparately(const std::wstring& token,
       false, evidence.stage.c_str(), evidence.host, evidence.client), "Invalid elevated rejection proof");
   return evidence;
 }
-bool ConsoleSelection(const std::wstring& root, ULONGLONG since, int right_delta = 0) {
-  for (int i = 0; i < 40; ++i) {
-    ULONGLONG sample = 0; DWORD flags = 0;
-    int left = -1, top = -1, right = -1, bottom = -1;
-    std::ifstream proof((root+L".selection").c_str());
+// File-only regression check for the old IPC race, before any positive-source
+// UIA access. Keep the legacy reader open to observe its replacement behavior,
+// then prove a delete-shared reader allows the publisher's atomic replacement.
+void CheckConsoleProofSharing(const std::wstring& root) {
+  const std::wstring path = root+L".io-check", temporary = root+L".io-check.tmp";
+  const auto write = [](const std::wstring& target, const char* value) {
+    std::ofstream stream(target.c_str()); stream << value; stream.close();
+    Check(!stream.fail(), "Cannot write owned console proof I/O check");
+  };
+  write(path, "old"); write(temporary, "legacy replacement");
+  bool legacy_blocked = false; DWORD legacy_error = ERROR_SUCCESS;
+  {
+    std::ifstream legacy(path.c_str());
+    Check(legacy.good(), "Cannot open legacy-reader control");
+    legacy_blocked = MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) == FALSE;
+    if (legacy_blocked) legacy_error = GetLastError();
+  }
+  write(temporary, "shared replacement");
+  HANDLE shared = CreateFileW(path.c_str(), GENERIC_READ,
+      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+      FILE_ATTRIBUTE_NORMAL, nullptr);
+  Check(shared != INVALID_HANDLE_VALUE, "Cannot open delete-shared reader control");
+  const bool replaced = MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != FALSE;
+  const DWORD shared_error = replaced ? ERROR_SUCCESS : GetLastError();
+  CloseHandle(shared);
+  std::printf("CONSOLE_PROOF_IO_CHECK|legacyRenameBlocked=%d|legacyError=%lu|deleteSharedRename=%d|sharedError=%lu\n",
+      legacy_blocked ? 1 : 0, legacy_error, replaced ? 1 : 0, shared_error);
+  Check(replaced, "Delete-shared console proof reader blocked atomic publication");
+  Check(DeleteFileW(path.c_str()) != FALSE, "Cannot clean owned proof-sharing check");
+}
+bool ConsoleSelection(const std::wstring& root, ULONGLONG since, int right_delta = 0,
+                      const char* phase = "unspecified") {
+  const auto began = GetTickCount64();
+  ULONGLONG sample = 0; DWORD flags = 0, read_error = ERROR_SUCCESS;
+  int left = -1, top = -1, right = -1, bottom = -1;
+  bool matched = false; unsigned attempts = 0;
+  for (; attempts < 40; ++attempts) {
+    char bytes[256]{}; DWORD length = 0;
+    bool read = false;
+    // Close BEFORE parsing or pumping. FILE_SHARE_DELETE also permits an atomic
+    // replacement during the read; this handle sees one complete old snapshot.
+    {
+      HANDLE file = CreateFileW((root+L".selection").c_str(), GENERIC_READ,
+          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+          FILE_ATTRIBUTE_NORMAL, nullptr);
+      if (file != INVALID_HANDLE_VALUE) {
+        read = ReadFile(file, bytes, static_cast<DWORD>(sizeof(bytes)-1), &length, nullptr) != FALSE;
+        read_error = read ? ERROR_SUCCESS : GetLastError();
+        CloseHandle(file);
+      } else read_error = GetLastError();
+    }
+    std::istringstream proof(read ? std::string(bytes, length) : std::string{});
     proof >> sample >> flags >> left >> top >> right >> bottom;
-    if (proof && sample >= since && (flags & CONSOLE_SELECTION_NOT_EMPTY) &&
-        left == 4 && top == 2 && right == 4+static_cast<int>(wcslen(kConsoleText))-1+right_delta && bottom == 2) return true;
+    matched = proof && sample >= since && (flags & CONSOLE_SELECTION_NOT_EMPTY) &&
+        left == 4 && top == 2 && right == 4+static_cast<int>(wcslen(kConsoleText))-1+right_delta && bottom == 2;
+    if (matched) { ++attempts; break; }
     Pump(25);
   }
-  return false;
+  std::printf("CONSOLE_SELECTION_PROOF|phase=%s|ok=%d|since=%llu|lastSample=%llu|finished=%llu|waitMs=%llu|attempts=%u|flags=%lu|rect=%d,%d,%d,%d|expectedRight=%d|readError=%lu\n",
+      phase, matched ? 1 : 0, static_cast<unsigned long long>(since),
+      static_cast<unsigned long long>(sample), static_cast<unsigned long long>(GetTickCount64()),
+      static_cast<unsigned long long>(GetTickCount64()-began), attempts, flags, left, top, right, bottom,
+      4+static_cast<int>(wcslen(kConsoleText))-1+right_delta, read_error);
+  return matched;
 }
 bool ClipboardUnchanged(DWORD sequence) {
   if (GetClipboardSequenceNumber() != sequence || !OpenClipboard(nullptr)) return false;
@@ -911,7 +977,7 @@ void RejectChangedTarget(HWND window, Driver& driver, Result& result,
   Check(EntryVisible() && driver.callbacks == 0, "Cannot establish the stale-selection negative precondition");
   const auto before_change = Frame::Read(window);
   Check(mode == L"edgePdf" ? CompletePdfSelection(baseline, before_change, text_area, scale) :
-      ConsoleSelection(root, released), "Negative precondition did not recreate the original exact selection");
+      ConsoleSelection(root, released, 0, "negativeBeforeMutation"), "Negative precondition did not recreate the original exact selection");
   before_change.Save(output+L"\\"+mode+L"-stale-before.bmp");
   const HWND entry = OwnedEntry(); RECT button{};
   Check(GetWindowRect(entry, &button) != 0, "Stale entry bounds unavailable");
@@ -929,7 +995,7 @@ void RejectChangedTarget(HWND window, Driver& driver, Result& result,
   ChangeTargetWithKeyboard(window, mode == L"edgePdf");
   result.stale_changed = mode == L"edgePdf" ?
       focus_proof->WaitForChangedEdit(&result.stale_changed_type, &result.stale_focus_identity_changed,
-          &result.stale_changed_focus_pid) : ConsoleSelection(root, changed, -1);
+          &result.stale_changed_focus_pid) : ConsoleSelection(root, changed, -1, "negativeAfterKeyboard");
   result.stale_focus_metadata_safe = mode == L"edgePdf" && result.stale_changed;
   ObserveForeground();
   result.stale_changed_window = WindowState::Read(GetForegroundWindow());
@@ -1063,6 +1129,7 @@ int wmain(int argc, wchar_t** argv) {
       Check(CreateDirectoryW(ipc.c_str(), security.get()) != 0,
           "Cannot create a fresh private medium-label console fixture directory");
       root = ipc+L"\\console";
+      CheckConsoleProofSharing(root);
     }
     int cell_x = 0, cell_y = 0;
     window = mode == L"console" ? ConsoleSource(token, root, console, cell_x, cell_y, result, &evidence) :
@@ -1126,7 +1193,7 @@ int wmain(int argc, wchar_t** argv) {
     const Frame selected = Frame::Read(window);
     selected.Save(output+L"\\"+mode+L"-entry.bmp");
     result.selection_before_click = mode == L"edgePdf" ?
-        CompletePdfSelection(before, selected, text_area, pdf_scale) : ConsoleSelection(root, released);
+        CompletePdfSelection(before, selected, text_area, pdf_scale) : ConsoleSelection(root, released, 0, "positiveBeforeClick");
     Check(result.selection_before_click, "The single cold gesture did not retain the exact synthetic selection");
     Check(result.entry_visible, "Cold desktop selection did not show the production translation entry");
     Check(result.callbacks_before_click == 0 && driver.capture_calls == 0,
@@ -1154,7 +1221,8 @@ int wmain(int argc, wchar_t** argv) {
     const auto clicked = GetTickCount64();
     while (!driver.captured->done.load(std::memory_order_acquire) && GetTickCount64()-clicked < 6000) Pump(10);
     Check(driver.captured->done.load(std::memory_order_acquire), "Entry capture did not finish within its bound");
-    Check(!driver.captured->canceled.load(), "Finished entry request was invalidated before UI consumption");
+    result.request_not_canceled = !driver.captured->canceled.load();
+    Check(result.request_not_canceled, "Finished entry request was invalidated before UI consumption");
     const auto& captured = *driver.captured;
     result.capture_ms = captured.elapsed; result.status = captured.selection.status;
     result.units = captured.selection.text.size();
@@ -1168,7 +1236,7 @@ int wmain(int argc, wchar_t** argv) {
     const Frame after = Frame::Read(window);
     after.Save(output+L"\\"+mode+L"-after-click.bmp");
     result.selection_after_click = mode == L"edgePdf" ?
-        CompletePdfSelection(before, after, text_area, pdf_scale) : ConsoleSelection(root, after_time);
+        CompletePdfSelection(before, after, text_area, pdf_scale) : ConsoleSelection(root, after_time, 0, "positiveAfterClick");
     result.clipboard = ClipboardUnchanged(clipboard);
     result.foreground_preserved = !foreground_lost && identity.Valid() && GetForegroundWindow() == window;
     result.no_main_window = result.no_main_window && NoMainWindow();
@@ -1178,8 +1246,11 @@ int wmain(int argc, wchar_t** argv) {
         "Entry capture did not return exactly the selected synthetic text, or incorrectly enabled copy fallback");
     Check(result.callback_source && result.entry_hidden && driver.callbacks == 1 && driver.capture_calls == 1,
         "Entry click targeted another source, left the entry open, or captured more than once");
-    Check(result.selection_after_click && result.clipboard && result.foreground_preserved && result.no_main_window,
-        "Entry click changed selection, clipboard, foreground, or opened a main window");
+    Check(result.selection_after_click,
+        "Post-click selection proof failed freshness/exact-selection requirements; see CONSOLE_SELECTION_PROOF or PDF highlight logs");
+    Check(result.clipboard, "Entry click changed the synthetic clipboard");
+    Check(result.foreground_preserved, "Entry click lost the verified source foreground");
+    Check(result.no_main_window, "Entry click opened an unexpected main window");
     result.request_not_canceled = !captured.canceled.load();
     Check(result.request_not_canceled, "Finished request was canceled before acceptance");
     driver.action->ReleaseClickedSelection(captured.accepted_generation);
