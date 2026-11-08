@@ -132,7 +132,9 @@ void main() {
               rebuild = setState;
               return Stack(
                 children: [
-                  TextField(focusNode: sourceFocus, autofocus: true),
+                  Material(
+                    child: TextField(focusNode: sourceFocus, autofocus: true),
+                  ),
                   if (panel)
                     ExcludeFocus(
                       child: MaterialApp(

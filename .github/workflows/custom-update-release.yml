@@ -100,6 +100,11 @@ jobs:
         env:
           BAOCODE_DISPOSABLE_UI_TEST: '1'
         run: ./tool/ci/windows_translation_action_smoke.ps1
+      - name: Test default Edge selection capture
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+        run: ./tool/ci/windows_translation_browser_smoke.ps1
       - name: Check translation source formatting
         run: dart format --output=none --set-exit-if-changed lib/translation test/translation lib/settings/pages/language_page.dart lib/settings/pages/stash_hotkey_field.dart lib/settings/app_settings.dart
       - name: Test translation routing, cancellation and theme layouts
