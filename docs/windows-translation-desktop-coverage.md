@@ -88,6 +88,14 @@ at eight elements, at a focus/process/safety boundary, or at a short deadline.
 Each chain compares its elements with that post-capture focused reference. These
 are diagnostics, not production capture retries or authority to read child text.
 They never read Name, Value, DocumentRange or GetText.
+PDF diagnostics also observe metadata at 200, 500, 1,000 and 2,000 ms after the
+measured capture, pinning and comparing the same initial post-capture focus
+identity. A foreground change stops the timeline.
+Scheduled, actual start and completion times are recorded. These observations do
+not invoke production Capture again and cannot replace its initial result.
+`console-uia-metadata.json` records the foreground-window PID separately from the
+previously verified Console Host PID; metadata inspection may use that verified
+host provider without changing production's same-PID capture policy.
 
 | Outcome | Meaning |
 | --- | --- |
@@ -132,6 +140,19 @@ An exact-capture gate fails if the application is absent, unsupported, untested 
 fails. Do not enable this example gate based on the fixture implementation alone.
 The runner is Windows-specific. macOS/Linux system-wide selection, OCR, elevated
 windows and arbitrary custom controls remain outside this coverage.
+
+## Separate Windows Terminal probe
+
+`windows_translation_terminal_smoke.ps1` tests the installed, registered Windows
+Terminal separately from Console Host. It creates a new window with a compiled
+synthetic client directly, without a shell or settings changes. Colored fixture
+cells calibrate one real mouse drag. Every selected cell must visibly change,
+while adjacent cells and the unselected decoy stay unchanged, before the single
+production capture is called. Its default gate requires exact source text and an
+unchanged clipboard. Setup and runtime failures remain failures. The
+`translation-terminal-coverage` artifact records the actual host/package version,
+source identity, screenshots, independent selection proof and capture outcome.
+The suite's existence is not evidence that this application has passed.
 
 ## Console-host selection rationale
 

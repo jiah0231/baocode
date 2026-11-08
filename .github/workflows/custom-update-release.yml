@@ -121,6 +121,17 @@ jobs:
           name: translation-desktop-release-coverage
           if-no-files-found: warn
           path: build/translation-desktop-coverage/
+      - name: Verify real Windows Terminal selection
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+        run: ./tool/ci/windows_translation_terminal_smoke.ps1
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: translation-terminal-release-coverage
+          if-no-files-found: warn
+          path: build/translation-terminal-coverage/
       - name: Check translation source formatting
         run: dart format --output=none --set-exit-if-changed lib/translation test/translation lib/settings/pages/language_page.dart lib/settings/pages/stash_hotkey_field.dart lib/settings/app_settings.dart
       - name: Test translation routing, cancellation and theme layouts

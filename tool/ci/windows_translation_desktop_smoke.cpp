@@ -48,6 +48,7 @@ struct Result {
   bool host_identity_verified = false;
   bool selected = false, clipboard = false, proof = false;
   unsigned long long elapsed = 0;
+  ULONGLONG capture_finished = 0;
   size_t units = 0;
   unsigned gesture_attempts = 0;
   translation_selection::CaptureDiagnostics diagnostics;
@@ -418,14 +419,79 @@ void PointParentMetadata(std::ofstream& out, IUIAutomation* uia,
     out << ']';
   }
 }
+void DelayedFocusMetadata(std::ofstream& out, IUIAutomation* uia,
+                          IUIAutomationElement* initial_focus, HWND source,
+                          DWORD initial_pid, bool initial_safe, ULONGLONG capture_finished) {
+  out << ",\n  \"delayedObservations\":[";
+  const DWORD delays[] = {200, 500, 1000, 2000};
+  for (size_t index = 0; index < sizeof(delays)/sizeof(delays[0]); ++index) {
+    const ULONGLONG target = capture_finished+delays[index];
+    while (GetTickCount64() < target && GetForegroundWindow() == source) Sleep(5);
+    const bool foreground = GetForegroundWindow() == source;
+    const auto observed = static_cast<unsigned long long>(GetTickCount64()-capture_finished);
+    if (index) out << ',';
+    out << "{\"scheduledAfterCaptureMs\":" << delays[index] << ",\"observedAfterCaptureMs\":" << observed
+        << ",\"foregroundMatches\":" << (foreground ? "true" : "false");
+    Microsoft::WRL::ComPtr<IUIAutomationElement> focus;
+    const HRESULT focus_hr = foreground ? uia->GetFocusedElement(&focus) : E_ABORT;
+    out << ",\"focusHRESULT\":" << static_cast<unsigned long>(focus_hr);
+    if (SUCCEEDED(focus_hr) && focus) {
+      BOOL same = FALSE, has_focus = FALSE, password = TRUE; int pid = 0; CONTROLTYPEID type = 0;
+      const HRESULT same_hr = uia->CompareElements(initial_focus, focus.Get(), &same);
+      const HRESULT pid_hr = focus->get_CurrentProcessId(&pid);
+      const HRESULT type_hr = focus->get_CurrentControlType(&type);
+      const HRESULT has_focus_hr = focus->get_CurrentHasKeyboardFocus(&has_focus);
+      const HRESULT password_hr = focus->get_CurrentIsPassword(&password);
+      out << ",\"sameAsInitialDiagnosticFocus\":" << (same ? "true" : "false")
+          << ",\"compareIdentityHRESULT\":" << static_cast<unsigned long>(same_hr)
+          << ",\"pid\":" << pid << ",\"pidHRESULT\":" << static_cast<unsigned long>(pid_hr)
+          << ",\"controlType\":" << type << ",\"typeHRESULT\":" << static_cast<unsigned long>(type_hr)
+          << ",\"hasKeyboardFocus\":" << (has_focus ? "true" : "false")
+          << ",\"hasFocusHRESULT\":" << static_cast<unsigned long>(has_focus_hr)
+          << ",\"isPassword\":" << (password ? "true" : "false")
+          << ",\"passwordHRESULT\":" << static_cast<unsigned long>(password_hr);
+      const bool safe = initial_safe && SUCCEEDED(same_hr) && same && SUCCEEDED(pid_hr) &&
+          static_cast<DWORD>(pid) == initial_pid && SUCCEEDED(has_focus_hr) && has_focus &&
+          SUCCEEDED(password_hr) && !password && GetForegroundWindow() == source;
+      out << ",\"selectionMetadataEligible\":" << (safe ? "true" : "false");
+      int count = -1, noncollapsed = 0;
+      if (safe) {
+        Microsoft::WRL::ComPtr<IUIAutomationTextPattern> pattern;
+        const HRESULT pattern_hr = focus->GetCurrentPatternAs(UIA_TextPatternId, IID_PPV_ARGS(&pattern));
+        out << ",\"patternHRESULT\":" << static_cast<unsigned long>(pattern_hr);
+        if (SUCCEEDED(pattern_hr) && pattern) {
+          Microsoft::WRL::ComPtr<IUIAutomationTextRangeArray> ranges;
+          const HRESULT selected_hr = pattern->GetSelection(&ranges);
+          const HRESULT count_hr = ranges ? ranges->get_Length(&count) : E_POINTER;
+          out << ",\"getSelectionHRESULT\":" << static_cast<unsigned long>(selected_hr)
+              << ",\"selectionCountHRESULT\":" << static_cast<unsigned long>(count_hr);
+          for (int i = 0; SUCCEEDED(selected_hr) && SUCCEEDED(count_hr) && count <= 16 && i < count; ++i) {
+            Microsoft::WRL::ComPtr<IUIAutomationTextRange> range; int difference = 0;
+            if (SUCCEEDED(ranges->GetElement(i, &range)) && range &&
+                SUCCEEDED(range->CompareEndpoints(TextPatternRangeEndpoint_Start, range.Get(), TextPatternRangeEndpoint_End, &difference)) && difference != 0) ++noncollapsed;
+          }
+        }
+      }
+      out << ",\"selectionCount\":" << count << ",\"nonCollapsedRanges\":" << noncollapsed;
+      std::printf("DESKTOP_DELAYED_UIA|scheduledMs=%lu|observedMs=%llu|sameIdentity=%d|pid=%d|type=%d|hasFocus=%d|password=%d|ranges=%d|nonCollapsed=%d\n",
+          delays[index], observed, same, pid, type, has_focus, password, count, noncollapsed);
+    }
+    out << ",\"completedAfterCaptureMs\":" << static_cast<unsigned long long>(GetTickCount64()-capture_finished) << '}';
+    if (!foreground || GetForegroundWindow() != source) break;
+  }
+  out << ']';
+}
 // Post-capture diagnostics only: never call before the measured production
 // capture, never read Name/Value/DocumentRange/GetText, and never change focus.
-void SourceSelectionMetadata(HWND source, const std::wstring& path) {
+void SourceSelectionMetadata(HWND source, const std::wstring& path,
+                             ULONGLONG capture_finished = 0, bool observe_delayed = false,
+                             DWORD verified_console_host_pid = 0) {
   std::ofstream out(path.c_str());
   if (!out) return;
   DWORD source_pid = 0; GetWindowThreadProcessId(source, &source_pid);
   out << "{\n  \"phase\":\"afterOnlyProductionCapture\",\n  \"focusReference\":\"postCaptureGetFocusedElement\",\n  \"sourcePid\":" << source_pid
-      << ",\n  \"foregroundMatches\":" << (GetForegroundWindow() == source ? "true" : "false");
+      << ",\n  \"foregroundMatches\":" << (GetForegroundWindow() == source ? "true" : "false")
+      << ",\n  \"verifiedConsoleHostPid\":" << verified_console_host_pid;
   const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   out << ",\n  \"initializeHRESULT\":" << static_cast<unsigned long>(initialized);
   if (SUCCEEDED(initialized)) {
@@ -466,7 +532,11 @@ void SourceSelectionMetadata(HWND source, const std::wstring& path) {
               << ",\n  \"frameworkId\":" << Quote(framework ? std::wstring(framework, SysStringLen(framework)) : std::wstring{})
               << ",\n  \"frameworkHRESULT\":" << static_cast<unsigned long>(framework_hr);
           SysFreeString(cls); SysFreeString(framework);
-          const bool safe = SUCCEEDED(pid_hr) && static_cast<DWORD>(pid) == source_pid &&
+          // Test-only console metadata may come from its separately verified
+          // host process. This does not change production's same-PID policy.
+          const bool known_provider = static_cast<DWORD>(pid) == source_pid ||
+              (verified_console_host_pid && static_cast<DWORD>(pid) == verified_console_host_pid);
+          const bool safe = SUCCEEDED(pid_hr) && known_provider &&
               SUCCEEDED(focus_hr) && has_focus && SUCCEEDED(password_hr) && !password && GetForegroundWindow() == source;
           out << ",\n  \"selectionMetadataEligible\":" << (safe ? "true" : "false");
           if (safe) {
@@ -503,7 +573,11 @@ void SourceSelectionMetadata(HWND source, const std::wstring& path) {
                   pid, type, has_focus, password, static_cast<unsigned long>(pattern_hr), static_cast<unsigned long>(selection_hr), count, noncollapsed);
             }
           }
-          PointParentMetadata(out, uia.Get(), focus.Get(), source, source_pid, safe);
+          PointParentMetadata(out, uia.Get(), focus.Get(), source,
+              known_provider ? static_cast<DWORD>(pid) : source_pid, safe);
+          if (observe_delayed && capture_finished) {
+            DelayedFocusMetadata(out, uia.Get(), focus.Get(), source, static_cast<DWORD>(pid), safe, capture_finished);
+          }
         }
       }
     }
@@ -514,7 +588,8 @@ void SourceSelectionMetadata(HWND source, const std::wstring& path) {
 translation_selection::Selection Capture(HWND window, Result& result) {
   const ULONGLONG began = GetTickCount64();
   auto capture = translation_selection::Capture(window, true, nullptr, 0, &result.diagnostics);
-  result.elapsed = GetTickCount64()-began; result.status = capture.status;
+  result.capture_finished = GetTickCount64();
+  result.elapsed = result.capture_finished-began; result.status = capture.status;
   result.units = capture.text.size(); result.proof = capture.copy_proof.has_value();
   if (capture.copy_proof) result.fallback = translation_clipboard::SafeControl(*capture.copy_proof) ?
       "eligibleButNotExercised" : "proofRejectedBySafetyChecks";
@@ -777,7 +852,7 @@ int wmain(int argc, wchar_t** argv) {
       Check(result.selected, "PDF gesture did not create a verifiable visible selection; production capture was not attempted");
       const auto capture = Capture(window, result);
       Classify(result, capture, kPdfText, true, clipboard);
-      SourceSelectionMetadata(window, output+L"\\edgePdf-uia-metadata.json");
+      SourceSelectionMetadata(window, output+L"\\edgePdf-uia-metadata.json", result.capture_finished, true);
     } else {
       POINT origin{}; Check(ClientToScreen(window, &origin) != 0, "Console text grid unavailable");
       const POINT from{origin.x+4*cell_x+cell_x/2, origin.y+2*cell_y+cell_y/2};
@@ -788,6 +863,8 @@ int wmain(int argc, wchar_t** argv) {
       Check(result.selected, "Console gesture did not select the exact synthetic rectangle; production capture was not attempted");
       const auto capture = Capture(window, result);
       Classify(result, capture, kConsoleText, true, clipboard);
+      SourceSelectionMetadata(window, output+L"\\console-uia-metadata.json", result.capture_finished, false,
+          result.host_identity_verified ? console.value.dwProcessId : 0);
     }
     Check(GetForegroundWindow() == window, "Synthetic source lost foreground during capture");
     Frame::Read(window).Save(output+L"\\"+mode+L"-result.bmp");
