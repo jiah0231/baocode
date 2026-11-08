@@ -1,8 +1,11 @@
 # Default Edge browser selection, disposable runner only. No accounts or remote pages.
+param([string]$OutputDirectory = 'build/translation-browser-previews')
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or !$env:RUNNER_TEMP -or $env:OS -ne 'Windows_NT' -or $env:BAOCODE_DISPOSABLE_UI_TEST -ne '1') {
   throw 'Browser selection smoke requires an explicitly enabled disposable Windows Actions desktop.'
 }
+$output = [IO.Path]::GetFullPath($OutputDirectory)
+New-Item -ItemType Directory -Force $output | Out-Null
 $edge = @(
   "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
   "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
@@ -18,7 +21,7 @@ $html = Join-Path $root 'selection.html'
 <!doctype html>
 <html><head><meta charset="utf-8"><title>$token</title>
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; connect-src 'none'">
-<style>html,body{margin:0;background:white;color:black;font:24px/24px monospace}p{position:absolute;left:40px;top:80px;margin:0;white-space:pre;user-select:text}#second{top:180px}#decoy{top:280px}</style></head>
+<style>html,body{margin:0;background:white;color:black;font:24px/24px monospace}p{position:absolute;left:40px;top:80px;margin:0;padding-left:32px;width:900px;box-sizing:border-box;white-space:pre;user-select:text}#second{top:180px}#decoy{top:280px}</style></head>
 <body><p>Browser synthetic selection Echo</p><p id="second">Browser synthetic selection Foxtrot</p><p id="decoy">Unselected browser document decoy</p></body></html>
 "@ | Set-Content -LiteralPath $html -Encoding utf8
 $source = Join-Path $PSScriptRoot 'windows_translation_browser_smoke.cpp'
@@ -26,7 +29,7 @@ $test = $null
 $browser = $null
 Push-Location $root
 try {
-  & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX $source /Fe:browser_smoke.exe /link user32.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
+  & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX $source /Fe:browser_smoke.exe /link user32.lib gdi32.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
   if ($LASTEXITCODE -ne 0) { throw 'Browser selection harness compilation failed' }
   $url = ([Uri]$html).AbsoluteUri
   # Normal installed Edge, isolated profile and local page. No forced renderer
@@ -35,10 +38,23 @@ try {
   # and the local HTML has a restrictive CSP. No external origin is requested.
   $arguments = @("--user-data-dir=`"$profile`"", '--no-first-run', '--no-default-browser-check', '--disable-background-networking', '--disable-sync', '--disable-component-update', '--proxy-server=http://127.0.0.1:9', '--proxy-bypass-list=<-loopback>', '--window-size=1100,650', '--window-position=40,40', "--app=`"$url`"")
   $browser = Start-Process -FilePath $edge -ArgumentList $arguments -PassThru
-  $test = Start-Process -FilePath (Join-Path $root 'browser_smoke.exe') -ArgumentList $token -PassThru -NoNewWindow
+  $test = Start-Process -FilePath (Join-Path $root 'browser_smoke.exe') -ArgumentList @($token, "`"$output`"") -PassThru -NoNewWindow
   if (!$test.WaitForExit(60000)) { throw 'Default Edge selection smoke timed out' }
   if ($test.ExitCode -ne 0) { throw "Default Edge selection smoke failed: $($test.ExitCode). Do not claim browser support from RichEdit coverage." }
 } finally {
+  # Preserve synthetic failure diagnostics even when the strict assertion fails.
+  try {
+    Add-Type -AssemblyName System.Drawing
+    Get-ChildItem -LiteralPath $output -Filter '*-mismatch.bmp' | ForEach-Object {
+      $bitmap = [System.Drawing.Bitmap]::FromFile($_.FullName)
+      $png = [IO.Path]::ChangeExtension($_.FullName, '.png')
+      try { $bitmap.Save($png, [System.Drawing.Imaging.ImageFormat]::Png) }
+      finally { $bitmap.Dispose() }
+      Write-Output ('TRANSLATION_BROWSER_PREVIEW|' + [IO.Path]::GetFileNameWithoutExtension($png) + '|' + [Convert]::ToBase64String([IO.File]::ReadAllBytes($png)))
+    }
+  } catch {
+    Write-Warning "Synthetic browser screenshot export failed: $_"
+  }
   if ($test) {
     $test.Refresh()
     if (!$test.HasExited) { & taskkill /PID $test.Id /T /F | Out-Null }

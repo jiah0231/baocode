@@ -98,9 +98,30 @@ std::wstring AccessibleText(IUIAutomation* uia, HWND w) {
   }
   if (condition) condition->Release(); root->Release(); return text;
 }
-void Screenshot(HWND w, const std::wstring& path) {
-  Check(GetForegroundWindow() == w, "Refusing screenshot of obscured popup");
+void Screenshot(HWND w, const std::wstring& path, HWND syntheticSource = nullptr) {
+  if (!syntheticSource) {
+    Check(GetForegroundWindow() == w, "Refusing screenshot of obscured popup");
+  } else {
+    // The entry intentionally never activates. Permit only our app's exact
+    // entry class over the known synthetic fixture, never an arbitrary window.
+    wchar_t cls[128]{}; GetClassNameW(w, cls, 128);
+    wchar_t sourceClass[128]{}; GetClassNameW(syntheticSource, sourceClass, 128);
+    DWORD owner = 0; GetWindowThreadProcessId(w, &owner);
+    Check(owner == appPid && std::wstring(cls) == L"BaoCodeTranslationSelectionAction" &&
+        std::wstring(sourceClass) == L"BaoTranslationWindowFixture" &&
+        GetForegroundWindow() == syntheticSource && IsWindowVisible(w) &&
+        (GetWindowLongPtrW(w, GWL_EXSTYLE) & WS_EX_NOACTIVATE),
+        "Refusing screenshot of unverified nonactivating entry");
+  }
   RECT r{}; Check(GetWindowRect(w, &r) != 0, "Popup rectangle missing");
+  if (syntheticSource) {
+    const POINT corners[] = {{r.left, r.top}, {r.right-1, r.top},
+        {r.left, r.bottom-1}, {r.right-1, r.bottom-1}};
+    for (const POINT point : corners) {
+      Check(GetAncestor(WindowFromPoint(point), GA_ROOT) == w,
+          "Refusing screenshot of obscured selection entry");
+    }
+  }
   const int width = r.right-r.left, height = r.bottom-r.top;
   HDC screen = GetDC(nullptr), dc = CreateCompatibleDC(screen);
   BITMAPINFO info{}; info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -213,6 +234,10 @@ int wmain(int argc, wchar_t** argv) {
       Check((actionStyle & WS_EX_NOACTIVATE) && (actionStyle & WS_EX_TOOLWINDOW), "Selection entry is activating or taskbar eligible");
       RECT bounds{}; Check(GetWindowRect(action, &bounds) != 0, "Selection entry bounds missing");
       const POINT center{(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2};
+      if (selection == 0) {
+        Sleep(150); // Allow the real entry's first WM_PAINT before cropping it.
+        Screenshot(action, std::wstring(argv[2]) + L".entry.bmp", fixture);
+      }
       Mouse(center, 0); Mouse(center, MOUSEEVENTF_LEFTDOWN); Sleep(50); Mouse(center, MOUSEEVENTF_LEFTUP);
       Check(Wait([] { EnumWindows(FindApp, 0); return popup && IsWindowVisible(popup); }), "Clicking selection entry did not open independent popup");
       Check(popup != mainWindow && !IsWindowVisible(mainWindow), "Selection entry reused or revealed main window");

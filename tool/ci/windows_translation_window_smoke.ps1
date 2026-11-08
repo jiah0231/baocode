@@ -49,7 +49,7 @@ try {
     $app.Dispose(); $app = $null
     if (!(Test-Path -LiteralPath $screenshot)) { throw 'Required real-app screenshot missing' }
     Add-Type -AssemblyName System.Drawing
-    foreach ($capture in @($screenshot, "$screenshot.mouse.bmp")) {
+    foreach ($capture in @($screenshot, "$screenshot.mouse.bmp", "$screenshot.entry.bmp")) {
       if (!(Test-Path -LiteralPath $capture)) { throw "Required real-app screenshot missing: $capture" }
       $bitmap = [System.Drawing.Bitmap]::FromFile($capture)
       $png = [IO.Path]::ChangeExtension($capture, '.png')

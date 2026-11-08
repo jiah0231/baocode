@@ -95,6 +95,12 @@ int wmain(int argc, wchar_t** argv) {
   if (!fractional || fractional->left != -2 || fractional->top != 2 ||
       fractional->right != 9 || fractional->bottom != 23)
     return Fail("UIA bounding rectangle rounding failed");
+  using translation_retry::CanRetry;
+  if (!CanRetry(true, 1, 100, 1500) || !CanRetry(true, 3, 700, 1500) ||
+      CanRetry(true, 4, 700, 1500) || CanRetry(false, 1, 100, 1500) ||
+      CanRetry(true, 1, 100, 1500, true) || CanRetry(true, 1, 1500, 1500) ||
+      CanRetry(true, 2, 1200, 1500) || CanRetry(true, 0, 100, 1500))
+    return Fail("Cold-provider retry policy exceeded attempts/deadline or retried denial");
   wchar_t executable[MAX_PATH]; GetModuleFileNameW(nullptr, executable, MAX_PATH);
   std::wstring command = L"\"" + std::wstring(executable) + L"\" --fixture";
   STARTUPINFOW startup{}; startup.cb = static_cast<DWORD>(sizeof(startup));

@@ -7,9 +7,16 @@
 #include <optional>
 #include <cstdint>
 #include "translation_panel_geometry.h"
+#include "translation_capture_retry.h"
 #include "translation_clipboard_capture.h"
 
 namespace translation_selection {
+// Optional test diagnostics contain only operation names/HRESULTs, never text.
+struct CaptureDiagnostics {
+  const char* last_failure_stage = "none";
+  HRESULT last_failure = S_OK;
+  unsigned attempts = 0;
+};
 struct Selection {
   std::wstring text;
   std::string status = "unsupported";
@@ -64,12 +71,31 @@ inline void RejectEmbeddedNull(Selection& selection) {
 }
 // Call only on an MTA worker after an explicit user action. Never reads the
 // clipboard, ValuePattern, document range, or arbitrary window captions.
-inline Selection Capture(HWND foreground, bool explicit_shortcut = false) {
+inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
+                         const std::atomic<bool>* canceled = nullptr,
+                         ULONGLONG deadline = 0,
+                         CaptureDiagnostics* diagnostics = nullptr) {
+  if (diagnostics) *diagnostics = CaptureDiagnostics{};
+  const auto observe = [&](const char* stage, HRESULT hr) {
+    if (diagnostics && FAILED(hr)) {
+      diagnostics->last_failure_stage = stage;
+      diagnostics->last_failure = hr;
+    }
+    return hr;
+  };
+  if (!deadline) deadline = GetTickCount64() + 1500;
+  const auto stopped = [&] {
+    return (canceled && canceled->load()) || GetTickCount64() >= deadline;
+  };
   Selection out;
   DWORD process = 0;
   GetWindowThreadProcessId(foreground, &process);
   out.self = process == GetCurrentProcessId();
   if (!foreground) return out;
+  if (stopped()) {
+    out.status = canceled && canceled->load() ? "canceled" : "timeout";
+    return out;
+  }
   if (GetForegroundWindow() != foreground) { out.status = "focusChanged"; return out; }
   const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   if (FAILED(initialized)) return out;
@@ -84,99 +110,162 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false) {
         bounded->put_ConnectionTimeout(300);
         bounded->put_TransactionTimeout(500);
       }
-      ComPtr<IUIAutomationElement> focused;
-      if (SUCCEEDED(automation->GetFocusedElement(&focused)) && focused) {
-        int focused_process = 0;
-        BOOL password = TRUE;
-        BOOL has_focus = FALSE;
-        // Fail closed if the provider cannot affirm this is not a password.
-        if (SUCCEEDED(focused->get_CurrentProcessId(&focused_process)) &&
-            static_cast<DWORD>(focused_process) == process &&
-            SUCCEEDED(focused->get_CurrentHasKeyboardFocus(&has_focus)) &&
-            has_focus &&
-            SUCCEEDED(focused->get_CurrentIsPassword(&password))) {
-          if (password) {
-            out.status = "password";
-          } else {
-            ComPtr<IUIAutomationTextPattern> pattern;
-            const HRESULT pattern_result = focused->GetCurrentPatternAs(
-                UIA_TextPatternId, IID_PPV_ARGS(&pattern));
-            // Only an explicitly unsupported pattern can qualify for copying.
-            // Provider failures, timeouts and collapsed selections never do.
-            if (explicit_shortcut &&
-                (pattern_result == UIA_E_NOTSUPPORTED || pattern_result == E_NOINTERFACE ||
-                 (SUCCEEDED(pattern_result) && !pattern))) {
-              CONTROLTYPEID type = 0;
-              UIA_HWND native = {};
-              DWORD source_process = 0, focus_process = 0;
-              const DWORD thread = GetWindowThreadProcessId(foreground, &source_process);
-              GUITHREADINFO info = {};
-              info.cbSize = sizeof(info);
-              if (SUCCEEDED(focused->get_CurrentControlType(&type)) &&
-                  type == UIA_EditControlTypeId &&
-                  SUCCEEDED(focused->get_CurrentNativeWindowHandle(&native)) && native &&
-                  GetGUIThreadInfo(thread, &info) &&
-                  info.hwndFocus == reinterpret_cast<HWND>(native) &&
-                  GetWindowThreadProcessId(info.hwndFocus, &focus_process) == thread &&
-                  source_process == process && focus_process == process &&
-                  GetAncestor(info.hwndFocus, GA_ROOT) == foreground &&
-                  GetForegroundWindow() == foreground) {
-                out.copy_proof = translation_clipboard::Proof{
-                    foreground, info.hwndFocus, process, thread, true, true, true};
+      ComPtr<IUIAutomationElement> original_element;
+      // Chromium may expose a focused Document before its accessibility text
+      // pattern is ready. Retry only that incomplete, security-checked element,
+      // within this one gesture; never scan descendants or change focus.
+      for (unsigned attempt = 0; attempt < translation_retry::kMaxAttempts && !stopped(); ++attempt) {
+        if (diagnostics) diagnostics->attempts = attempt + 1;
+        bool retryable = false;
+        out = Selection{};
+        out.self = process == GetCurrentProcessId();
+        if (GetForegroundWindow() != foreground) { out.status = "focusChanged"; break; }
+        if (bounded) {
+          const ULONGLONG now = GetTickCount64();
+          if (now >= deadline) break;
+          const DWORD remaining = static_cast<DWORD>(deadline - now);
+          if (FAILED(bounded->put_ConnectionTimeout(std::min<DWORD>(150, remaining))) ||
+              FAILED(bounded->put_TransactionTimeout(std::min<DWORD>(200, remaining)))) break;
+        }
+        ComPtr<IUIAutomationElement> focused;
+        if (SUCCEEDED(observe("GetFocusedElement", automation->GetFocusedElement(&focused))) && focused) {
+          int focused_process = 0;
+          BOOL password = TRUE;
+          BOOL has_focus = FALSE;
+          // Fail closed if the provider cannot affirm this is not a password.
+          if (SUCCEEDED(observe("ProcessId", focused->get_CurrentProcessId(&focused_process))) &&
+              static_cast<DWORD>(focused_process) == process &&
+              SUCCEEDED(observe("HasKeyboardFocus", focused->get_CurrentHasKeyboardFocus(&has_focus))) &&
+              has_focus &&
+              SUCCEEDED(observe("IsPassword", focused->get_CurrentIsPassword(&password)))) {
+            if (password) {
+              out.status = "password";
+            } else {
+              BOOL same = FALSE;
+              if (original_element &&
+                  (FAILED(automation->CompareElements(original_element.Get(), focused.Get(), &same)) || !same)) {
+                out.status = "focusChanged";
+                break;
               }
-            }
-            if (SUCCEEDED(pattern_result) && pattern) {
-              ComPtr<IUIAutomationTextRangeArray> ranges;
-              if (SUCCEEDED(pattern->GetSelection(&ranges)) && ranges) {
-                int length = 0;
-                if (SUCCEEDED(ranges->get_Length(&length))) {
-                  out.status = length > 16 ? "tooLong" : "noSelection";
-                  // Request one extra UTF-16 unit to detect overflow, never
-                  // accept a truncated source or a partial multi-range result.
-                  bool failed = length < 0;
-                  for (int i = 0; i < length && length <= 16; ++i) {
-                    ComPtr<IUIAutomationTextRange> range;
-                    if (FAILED(ranges->GetElement(i, &range)) || !range) {
-                      failed = true; break;
+              original_element = focused;
+              if (stopped()) break;
+              CONTROLTYPEID control_type = 0;
+              const bool text_control = SUCCEEDED(focused->get_CurrentControlType(&control_type)) &&
+                  (control_type == UIA_EditControlTypeId || control_type == UIA_DocumentControlTypeId);
+              ComPtr<IUIAutomationTextPattern> pattern;
+              const HRESULT pattern_result = observe("TextPattern", focused->GetCurrentPatternAs(
+                  UIA_TextPatternId, IID_PPV_ARGS(&pattern)));
+              if (SUCCEEDED(pattern_result) && !pattern) observe("TextPattern.null", E_NOINTERFACE);
+              retryable = text_control &&
+                  (pattern_result == UIA_E_NOTSUPPORTED || pattern_result == E_NOINTERFACE ||
+                   pattern_result == E_FAIL || (SUCCEEDED(pattern_result) && !pattern));
+              // Only an explicitly unsupported pattern can qualify for copying.
+              // Provider failures, timeouts and collapsed selections never do.
+              if (explicit_shortcut &&
+                  (pattern_result == UIA_E_NOTSUPPORTED || pattern_result == E_NOINTERFACE ||
+                   (SUCCEEDED(pattern_result) && !pattern))) {
+                CONTROLTYPEID type = 0;
+                UIA_HWND native = {};
+                DWORD source_process = 0, focus_process = 0;
+                const DWORD thread = GetWindowThreadProcessId(foreground, &source_process);
+                GUITHREADINFO info = {};
+                info.cbSize = sizeof(info);
+                if (SUCCEEDED(focused->get_CurrentControlType(&type)) &&
+                    type == UIA_EditControlTypeId &&
+                    SUCCEEDED(focused->get_CurrentNativeWindowHandle(&native)) && native &&
+                    GetGUIThreadInfo(thread, &info) &&
+                    info.hwndFocus == reinterpret_cast<HWND>(native) &&
+                    GetWindowThreadProcessId(info.hwndFocus, &focus_process) == thread &&
+                    source_process == process && focus_process == process &&
+                    GetAncestor(info.hwndFocus, GA_ROOT) == foreground &&
+                    GetForegroundWindow() == foreground) {
+                  out.copy_proof = translation_clipboard::Proof{
+                      foreground, info.hwndFocus, process, thread, true, true, true};
+                }
+              }
+              if (SUCCEEDED(pattern_result) && pattern) {
+                ComPtr<IUIAutomationTextRangeArray> ranges;
+                if (stopped()) break;
+                const HRESULT selected = observe("GetSelection", pattern->GetSelection(&ranges));
+                if (SUCCEEDED(selected) && !ranges) observe("GetSelection.null", E_NOINTERFACE);
+                retryable = text_control &&
+                    (selected == UIA_E_NOTSUPPORTED || selected == E_NOINTERFACE ||
+                     selected == E_FAIL || (SUCCEEDED(selected) && !ranges));
+                if (SUCCEEDED(selected) && ranges) {
+                  int length = 0;
+                  if (SUCCEEDED(observe("Selection.Length", ranges->get_Length(&length)))) {
+                    out.status = length > 16 ? "tooLong" : "noSelection";
+                    // Request one extra UTF-16 unit to detect overflow, never
+                    // accept a truncated source or a partial multi-range result.
+                    bool failed = length < 0;
+                    for (int i = 0; i < length && length <= 16; ++i) {
+                      if (stopped()) { failed = true; break; }
+                      ComPtr<IUIAutomationTextRange> range;
+                      if (FAILED(observe("Selection.GetElement", ranges->GetElement(i, &range))) || !range) {
+                        failed = true; break;
+                      }
+                      int difference = 0;
+                      if (FAILED(range->CompareEndpoints(TextPatternRangeEndpoint_Start,
+                          range.Get(), TextPatternRangeEndpoint_End, &difference))) {
+                        failed = true; break;
+                      }
+                      if (difference == 0) continue;
+                      if (!out.text.empty()) out.text += L"\n";
+                      if (out.text.size() > 8000) { out.status = "tooLong"; break; }
+                      if (stopped()) { failed = true; break; }
+                      BSTR text = nullptr;
+                      const HRESULT read = observe("Selection.GetText", range->GetText(
+                          static_cast<int>(8001 - out.text.size()), &text));
+                      if (SUCCEEDED(read) && text) {
+                        const UINT units = SysStringLen(text);
+                        // Do not trust a provider to honor GetText's maximum.
+                        if (units > 8000 - out.text.size()) out.status = "tooLong";
+                        else out.text.append(text, units);
+                      }
+                      const bool has_text = text != nullptr;
+                      SysFreeString(text);
+                      if (FAILED(read) || !has_text) { failed = true; break; }
+                      if (out.status == "tooLong") break;
+                      if (!out.bounds) out.bounds = ReadBounds(range.Get(), foreground);
                     }
-                    int difference = 0;
-                    if (FAILED(range->CompareEndpoints(TextPatternRangeEndpoint_Start,
-                        range.Get(), TextPatternRangeEndpoint_End, &difference))) {
-                      failed = true; break;
+                    if (failed || out.status == "tooLong") {
+                      out.text.clear();
+                      if (failed) out.status = "unsupported";
+                    } else if (!out.text.empty()) {
+                      out.status = "ok";
                     }
-                    if (difference == 0) continue;
-                    if (!out.text.empty()) out.text += L"\n";
-                    if (out.text.size() > 8000) { out.status = "tooLong"; break; }
-                    BSTR text = nullptr;
-                    const HRESULT read = range->GetText(
-                        static_cast<int>(8001 - out.text.size()), &text);
-                    if (SUCCEEDED(read) && text) {
-                      const UINT units = SysStringLen(text);
-                      // Do not trust a provider to honor GetText's maximum.
-                      if (units > 8000 - out.text.size()) out.status = "tooLong";
-                      else out.text.append(text, units);
-                    }
-                    const bool has_text = text != nullptr;
-                    SysFreeString(text);
-                    if (FAILED(read) || !has_text) { failed = true; break; }
-                    if (out.status == "tooLong") break;
-                    if (!out.bounds) out.bounds = ReadBounds(range.Get(), foreground);
-                  }
-                  if (failed || out.status == "tooLong") {
-                    out.text.clear();
-                    if (failed) out.status = "unsupported";
-                  } else if (!out.text.empty()) {
-                    out.status = "ok";
                   }
                 }
               }
             }
           }
         }
+        if (out.status != "unsupported" ||
+            !translation_retry::CanRetry(retryable, attempt + 1, GetTickCount64(), deadline,
+                                         canceled && canceled->load())) break;
+        // Small interruptible backoff, no replacement workers or provider retry
+        // after cancellation. Empty selection/password/unknown controls stop above.
+        const ULONGLONG wake = std::min<ULONGLONG>(deadline, GetTickCount64() + translation_retry::Delay(attempt + 1));
+        while (GetTickCount64() < wake && !stopped() && GetForegroundWindow() == foreground) Sleep(5);
+      }
+      // A source can switch focused controls without changing its foreground
+      // HWND. Discard text/proof rather than delivering a different control.
+      if (original_element && !stopped()) {
+        ComPtr<IUIAutomationElement> final_focus;
+        BOOL same = FALSE;
+        if (FAILED(automation->GetFocusedElement(&final_focus)) || !final_focus ||
+            FAILED(automation->CompareElements(original_element.Get(), final_focus.Get(), &same)) || !same) {
+          out = Selection{};
+          out.status = "focusChanged";
+        }
       }
     }
   }
   CoUninitialize();
+  if (stopped()) {
+    out = Selection{};
+    out.status = canceled && canceled->load() ? "canceled" : "timeout";
+  }
   RejectEmbeddedNull(out);
   // Do not deliver text from an app the user switched away from meanwhile.
   if (GetForegroundWindow() != foreground) {

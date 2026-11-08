@@ -36,6 +36,8 @@ class TranslationSelectionAction {
   POINT last_up_point_{};
   ULONGLONG due_ = 0, expires_ = 0, started_ = 0;
   unsigned generation_ = 0;
+  unsigned discovery_attempts_ = 0;
+  ULONGLONG discovery_started_ = 0;
   std::function<void(HWND)> on_click_;
   std::shared_ptr<Worker> worker_;
 };

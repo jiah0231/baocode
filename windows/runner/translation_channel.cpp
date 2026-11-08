@@ -303,7 +303,8 @@ void TranslationChannel::Capture(
   const ULONGLONG deadline = started_ + 1500;
   try {
     std::thread([pending, foreground, allow_copy, owner, deadline]() {
-      auto selection = translation_selection::Capture(foreground, allow_copy);
+      auto selection = translation_selection::Capture(
+          foreground, allow_copy, &pending->canceled, deadline);
       if (allow_copy && selection.status == "unsupported" && selection.copy_proof &&
           !pending->canceled.load() && GetTickCount64() < deadline) {
         auto copied = translation_clipboard::CopySelection(

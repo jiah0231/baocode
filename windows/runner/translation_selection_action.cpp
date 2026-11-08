@@ -10,6 +10,7 @@
 #include <system_error>
 #include <cstdint>
 #include "translation_panel_geometry.h"
+#include "translation_capture_retry.h"
 
 namespace {
 constexpr UINT kMouse = WM_APP + 0x391;
@@ -23,7 +24,8 @@ using Microsoft::WRL::ComPtr;
 // ValuePattern, document range, clipboard, or keyboard monitoring is used.
 std::optional<RECT> SelectionBounds(HWND source,
     ComPtr<IUIAutomationElement>& previous_element,
-    ComPtr<IUIAutomationTextRange>& previous_range) {
+    ComPtr<IUIAutomationTextRange>& previous_range, bool& retryable) {
+  retryable = false;
   DWORD pid = 0;
   GetWindowThreadProcessId(source, &pid);
   if (!pid || pid == GetCurrentProcessId() || GetForegroundWindow() != source)
@@ -44,13 +46,35 @@ std::optional<RECT> SelectionBounds(HWND source,
       FAILED(focused->get_CurrentIsPassword(&password)) || password ||
       FAILED(focused->get_CurrentHasKeyboardFocus(&has_focus)) || !has_focus)
     return std::nullopt;
+  BOOL same_element = FALSE;
+  if (previous_element &&
+      (FAILED(automation->CompareElements(previous_element.Get(), focused.Get(), &same_element)) || !same_element))
+    return std::nullopt;
+  // Pin identity before requesting a possibly not-yet-initialized browser
+  // pattern. A retry may never drift to another focused control.
+  previous_element = focused;
+  CONTROLTYPEID control_type = 0;
+  const bool text_control = SUCCEEDED(focused->get_CurrentControlType(&control_type)) &&
+      (control_type == UIA_EditControlTypeId || control_type == UIA_DocumentControlTypeId);
   ComPtr<IUIAutomationTextPattern> pattern;
+  const HRESULT pattern_result = focused->GetCurrentPatternAs(UIA_TextPatternId, IID_PPV_ARGS(&pattern));
+  if (FAILED(pattern_result) || !pattern) {
+    retryable = text_control &&
+        (pattern_result == UIA_E_NOTSUPPORTED || pattern_result == E_NOINTERFACE ||
+         pattern_result == E_FAIL || (SUCCEEDED(pattern_result) && !pattern));
+    return std::nullopt;
+  }
   ComPtr<IUIAutomationTextRangeArray> ranges;
+  const HRESULT selected = pattern->GetSelection(&ranges);
+  if (FAILED(selected) || !ranges) {
+    retryable = text_control &&
+        (selected == UIA_E_NOTSUPPORTED || selected == E_NOINTERFACE || selected == E_FAIL ||
+         (SUCCEEDED(selected) && !ranges));
+    return std::nullopt;
+  }
   ComPtr<IUIAutomationTextRange> range;
   int count = 0, difference = 0;
-  if (FAILED(focused->GetCurrentPatternAs(UIA_TextPatternId, IID_PPV_ARGS(&pattern))) ||
-      !pattern || FAILED(pattern->GetSelection(&ranges)) || !ranges ||
-      FAILED(ranges->get_Length(&count)) || count != 1 ||
+  if (FAILED(ranges->get_Length(&count)) || count != 1 ||
       FAILED(ranges->GetElement(0, &range)) || !range ||
       FAILED(range->CompareEndpoints(TextPatternRangeEndpoint_Start, range.Get(),
                                     TextPatternRangeEndpoint_End, &difference)) ||
@@ -94,7 +118,15 @@ std::optional<RECT> SelectionBounds(HWND source,
     }
   }
   if (rectangles) SafeArrayDestroy(rectangles);
-  if (GetForegroundWindow() != source) result.reset();
+  if (!result && (hr == E_FAIL || hr == UIA_E_NOTSUPPORTED)) retryable = text_control;
+  ComPtr<IUIAutomationElement> final_focus;
+  BOOL still_same = FALSE;
+  if (GetForegroundWindow() != source ||
+      FAILED(automation->GetFocusedElement(&final_focus)) || !final_focus ||
+      FAILED(automation->CompareElements(focused.Get(), final_focus.Get(), &still_same)) || !still_same) {
+    result.reset();
+    retryable = false;
+  }
   return result;
 }
 }
@@ -103,6 +135,7 @@ struct TranslationSelectionAction::Worker {
   std::mutex mutex;
   std::condition_variable wake;
   bool stop = false, busy = false, pending = false, ready = false;
+  bool retryable = false;
   HWND source = nullptr;
   unsigned generation = 0;
   std::optional<RECT> result;
@@ -132,10 +165,12 @@ TranslationSelectionAction::TranslationSelectionAction(HWND dispatcher,
         previous_element.Reset(); previous_range.Reset();
         previous_generation = generation;
       }
+      bool retryable = false;
       auto result = SUCCEEDED(initialized)
-          ? SelectionBounds(source, previous_element, previous_range) : std::nullopt;
+          ? SelectionBounds(source, previous_element, previous_range, retryable) : std::nullopt;
       lock.lock();
       worker->result = result;
+      worker->retryable = retryable;
       worker->ready = true;
       worker->busy = false;
     }
@@ -205,6 +240,8 @@ LRESULT CALLBACK TranslationSelectionAction::MouseHook(int code, WPARAM wparam, 
 void TranslationSelectionAction::Hide() {
   ++generation_;
   candidate_ = false;
+  discovery_attempts_ = 0;
+  discovery_started_ = 0;
   shown_ = false;
   source_ = nullptr;
   if (button_) ShowWindow(button_, SW_HIDE);
@@ -229,7 +266,9 @@ bool TranslationSelectionAction::HandleMessage(UINT message, WPARAM wparam, LPAR
     if (down_ && (dragged || doubled)) {
       source_ = GetForegroundWindow();
       candidate_ = true;
-      due_ = GetTickCount64() + 120;
+      discovery_started_ = GetTickCount64();
+      discovery_attempts_ = 0;
+      due_ = discovery_started_ + 120;
       expires_ = due_ + 5000;
     }
     down_ = false;
@@ -248,26 +287,38 @@ void TranslationSelectionAction::Request() {
   worker_->pending = true;
   worker_->ready = false;
   started_ = GetTickCount64();
+  if (!shown_) ++discovery_attempts_;
   worker_->wake.notify_one();
 }
 
 void TranslationSelectionAction::Tick() {
   const ULONGLONG now = GetTickCount64();
   if (!candidate_) return;
+  if (!shown_ && now - discovery_started_ >= 1500) { Hide(); return; }
   if (GetForegroundWindow() != source_ || now >= expires_) { Hide(); return; }
   std::optional<RECT> bounds;
-  bool ready = false, busy = false;
+  bool ready = false, busy = false, retryable = false;
   {
     std::lock_guard<std::mutex> lock(worker_->mutex);
     busy = worker_->busy;
     if (worker_->ready) {
       ready = worker_->generation == generation_;
-      if (ready) bounds = worker_->result;
+      if (ready) { bounds = worker_->result; retryable = worker_->retryable; }
       worker_->ready = false;
     }
   }
   if (ready) {
-    if (!bounds || now - started_ > 700) { Hide(); return; }
+    if (now - started_ > 700) { Hide(); return; }
+    if (!bounds) {
+      // Only incomplete first discovery retries. Once visible, a changed or
+      // vanished selection dismisses immediately. Never read selected text.
+      if (!shown_ && translation_retry::CanRetry(retryable, discovery_attempts_,
+                                                 now, discovery_started_ + 1500)) {
+        due_ = now + translation_retry::Delay(discovery_attempts_);
+        return;
+      }
+      Hide(); return;
+    }
     if (shown_ && !EqualRect(&shown_bounds_, &*bounds)) { Hide(); return; }
     shown_bounds_ = *bounds;
     shown_ = true;
