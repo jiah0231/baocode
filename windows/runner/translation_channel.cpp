@@ -228,13 +228,18 @@ void TranslationChannel::HidePanel(bool restore_focus, bool invalidate, bool not
   const HWND source = foreground_;
   const DWORD source_process = foreground_process_;
   if (invalidate) ++request_id_;
-  if (panel) ShowWindow(panel, SW_HIDE);
   DWORD process = 0;
   if (source) GetWindowThreadProcessId(source, &process);
   // Never steal focus back after the user clicks / Alt-Tabs to another app.
-  // Never restore a hidden/minimized main or source window.
+  // Never restore a hidden/minimized main or source window. Activate the
+  // verified source BEFORE hiding an active popup: SW_HIDE otherwise chooses
+  // another window to activate, potentially restoring the minimized main in
+  // the interval before focus is returned to the source. panel_shown_ is
+  // already false, so this deactivation cannot recursively hide/notify.
   if (restore_focus && was_front && source && IsWindowVisible(source) &&
-      !IsIconic(source) && process == source_process) SetForegroundWindow(source);
+      !IsIconic(source) && process == source_process &&
+      GetForegroundWindow() == panel) SetForegroundWindow(source);
+  if (panel) ShowWindow(panel, SW_HIDE);
   if (shown && notify) {
     channel_->InvokeMethod("panelHidden", std::make_unique<flutter::EncodableValue>(
         flutter::EncodableMap{{flutter::EncodableValue("requestId"),

@@ -45,6 +45,44 @@ BOOL CALLBACK FindApp(HWND w, LPARAM) {
   else if (!mainWindow && IsWindowVisible(w) && !(GetWindowLongPtrW(w, GWL_EXSTYLE) & WS_EX_TOOLWINDOW)) mainWindow = w;
   return TRUE;
 }
+std::string MetadataUtf8(const wchar_t* value) {
+  const int bytes = WideCharToMultiByte(CP_UTF8, 0, value, -1, nullptr, 0, nullptr, nullptr);
+  if (bytes <= 1) return {};
+  std::string result(static_cast<size_t>(bytes), '\0');
+  WideCharToMultiByte(CP_UTF8, 0, value, -1, result.data(), bytes, nullptr, nullptr);
+  result.pop_back(); return result;
+}
+void TraceMain(int state, int close, const char* stage, BOOL expectedVisible, BOOL expectedIconic) {
+  // Owned isolated-app window metadata only, never selected text or UIA content.
+  wchar_t title[256]{}, cls[256]{};
+  GetWindowTextW(mainWindow, title, 256); GetClassNameW(mainWindow, cls, 256);
+  const BOOL visible = IsWindowVisible(mainWindow), iconic = IsIconic(mainWindow);
+  HWND foreground = GetForegroundWindow(); DWORD foregroundPid = 0;
+  if (foreground) GetWindowThreadProcessId(foreground, &foregroundPid);
+  WINDOWPLACEMENT placement{}; placement.length = sizeof(placement);
+  const BOOL placementRead = GetWindowPlacement(mainWindow, &placement);
+  const char* modes[] = {"Escape", "WM_CLOSE", "AltF4", "blur", "hotkey_toggle"};
+  std::printf("WINDOW_STATE|state=%s|close=%s|stage=%s|main=%p|title=%s|class=%s|exists=%d|expectedVisibleRaw=%d|visibleRaw=%d|expectedIconicRaw=%d|iconicRaw=%d|expectedVisibleBool=%d|visibleBool=%d|expectedIconicBool=%d|iconicBool=%d|foreground=%p|foregroundPID=%lu|popup=%p|placementRead=%d|showCmd=%u|flags=%u\n",
+    state == 0 ? "tray_hidden" : state == 1 ? "minimized" : "startup",
+    close >= 0 && close < 5 ? modes[close] : "none", stage,
+    static_cast<void*>(mainWindow), MetadataUtf8(title).c_str(), MetadataUtf8(cls).c_str(),
+    IsWindow(mainWindow), expectedVisible, visible, expectedIconic, iconic,
+    expectedVisible != 0 ? 1 : 0, visible != 0 ? 1 : 0,
+    expectedIconic != 0 ? 1 : 0, iconic != 0 ? 1 : 0,
+    static_cast<void*>(foreground), foregroundPid, static_cast<void*>(popup),
+    placementRead, placement.showCmd, placement.flags);
+  std::fflush(stdout);
+}
+BOOL CALLBACK TraceAppCandidate(HWND w, LPARAM) {
+  DWORD pid = 0; GetWindowThreadProcessId(w, &pid);
+  if (pid != appPid) return TRUE;
+  wchar_t title[256]{}, cls[256]{}; GetWindowTextW(w, title, 256); GetClassNameW(w, cls, 256);
+  std::printf("WINDOW_CANDIDATE|hwnd=%p|chosen=%d|title=%s|class=%s|visibleRaw=%d|iconicRaw=%d|exstyle=0x%llX|owner=%p\n",
+    static_cast<void*>(w), w == mainWindow ? 1 : 0, MetadataUtf8(title).c_str(), MetadataUtf8(cls).c_str(),
+    IsWindowVisible(w), IsIconic(w), static_cast<unsigned long long>(GetWindowLongPtrW(w, GWL_EXSTYLE)),
+    static_cast<void*>(GetWindow(w, GW_OWNER)));
+  return TRUE;
+}
 void Keys(std::initializer_list<WORD> keys) {
   std::vector<INPUT> input;
   for (auto k : keys) { INPUT i{}; i.type = INPUT_KEYBOARD; i.ki.wVk = k; input.push_back(i); }
@@ -157,6 +195,8 @@ int wmain(int argc, wchar_t** argv) {
   try {
     Check(SUCCEEDED(CoCreateInstance(CLSID_CUIAutomation, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&uia))), "UIA unavailable");
     Check(Wait([] { EnumWindows(FindApp, 0); return mainWindow != nullptr; }), "Release app main HWND not found");
+    EnumWindows(TraceAppCandidate, 0);
+    TraceMain(-1, -1, "selected_main", IsWindowVisible(mainWindow), IsIconic(mainWindow));
     wchar_t self[MAX_PATH]{}; GetModuleFileNameW(nullptr, self, MAX_PATH);
     std::wstring command = L"\"" + std::wstring(self) + L"\" --fixture";
     STARTUPINFOW startup{}; startup.cb = sizeof(startup);
@@ -182,10 +222,12 @@ int wmain(int argc, wchar_t** argv) {
         AllowSetForegroundWindow(fixtureProcess.dwProcessId);
         SendMessageW(fixture, kPrepare, close % 2, 0);
         Check(Wait([&] { return GetForegroundWindow() == fixture; }), "Fixture could not take foreground");
+        TraceMain(state, close, "before_open", visible, iconic);
         Keys({VK_CONTROL, VK_MENU, 'Y'});
         Check(Wait([] { EnumWindows(FindApp, 0); return popup && IsWindowVisible(popup); }), "Real global shortcut did not open popup");
+        TraceMain(state, close, "after_open", visible, iconic);
         Check(popup != mainWindow, "Translation reused the main HWND");
-        Check(IsWindowVisible(mainWindow) == visible && IsIconic(mainWindow) == iconic, "Shortcut changed main hidden/minimized state");
+        Check((IsWindowVisible(mainWindow) != FALSE) == (visible != FALSE) && (IsIconic(mainWindow) != FALSE) == (iconic != FALSE), "Shortcut changed main hidden/minimized state");
         const auto style = GetWindowLongPtrW(popup, GWL_EXSTYLE);
         Check((style & WS_EX_TOOLWINDOW) && !(style & WS_EX_APPWINDOW), "Popup is taskbar/AltTab eligible");
         RECT r{}, anchor{}; GetWindowRect(popup, &r); GetWindowRect(fixture, &anchor);
@@ -198,15 +240,18 @@ int wmain(int argc, wchar_t** argv) {
         Check(Wait([&] { auto text = AccessibleText(uia, popup); return text.find(expected) != std::wstring::npos && text.find(stale) == std::wstring::npos && text.find(L"Synthetic clipboard decoy") == std::wstring::npos; }), "Popup UIA missing fresh selection or retaining stale text");
         Check(Wait([] { return GetForegroundWindow() == popup; }), "Popup not active");
         if (state == 0 && close == 0) { Sleep(500); Screenshot(popup, argv[2]); }
+        TraceMain(state, close, "before_close", visible, iconic);
         if (close == 0) Keys({VK_ESCAPE});
         if (close == 1) PostMessageW(popup, WM_CLOSE, 0, 0); // Native caption X message.
         if (close == 2) Keys({VK_MENU, VK_F4});
         if (close == 4) Keys({VK_CONTROL, VK_MENU, 'Y'});
         if (close == 3) { AllowSetForegroundWindow(fixtureProcess.dwProcessId); SendMessageW(fixture, kPrepare, 0, 0); }
+        TraceMain(state, close, "after_close_input", visible, iconic);
         Check(Wait([] { return !IsWindowVisible(popup); }), "Popup failed to dismiss");
         Check(Wait([&] { return GetForegroundWindow() == fixture; }), "Dismissal failed to restore prior app focus");
+        TraceMain(state, close, "after_close_settled", visible, iconic);
         Check(IsWindow(mainWindow) != 0, "Popup close quit the application");
-        Check(IsWindowVisible(mainWindow) == visible && IsIconic(mainWindow) == iconic, "Dismissal changed main state");
+        Check((IsWindowVisible(mainWindow) != FALSE) == (visible != FALSE) && (IsIconic(mainWindow) != FALSE) == (iconic != FALSE), "Dismissal changed main state");
         Check(GetClipboardSequenceNumber() == sequence, "Translation modified clipboard");
       }
     }

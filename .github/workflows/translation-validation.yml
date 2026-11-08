@@ -92,23 +92,6 @@ jobs:
         run: |
           flutter test --no-pub --reporter expanded --timeout 2m --dart-define=TRANSLATION_PREVIEWS=true test/translation test/quick_ask test/keybindings/window_keybindings_test.dart test/chat/history_selection_test.dart test/settings/settings_wiring_test.dart test/settings/stash_hotkey_field_test.dart test/settings/models_page_test.dart test/ide/ide_input_test.dart test/ide/ide_menu_test.dart test/update/version_test.dart
           if ($LASTEXITCODE -ne 0) { throw 'Translation regressions failed' }
-      - name: Build actual Windows release app
-        id: build
-        if: ${{ !cancelled() && steps.resolve.outcome == 'success' && steps.analyze.outcome == 'success' }}
-        shell: pwsh
-        run: |
-          dart run tool/build_windows.dart --arch x64 --custom-updates --build-only
-          if ($LASTEXITCODE -ne 0) { throw 'Windows release build failed' }
-      - name: Test real independent translation window
-        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        shell: pwsh
-        run: ./tool/ci/windows_translation_window_smoke.ps1 -Executable build/windows/x64/runner/Release/baocode.exe
-      - uses: actions/upload-artifact@v6
-        if: always()
-        with:
-          name: translation-real-window-previews
-          if-no-files-found: error
-          path: build/translation-window-previews/*.png
       - name: Export synthetic preview images for review
         if: always()
         shell: pwsh
@@ -122,3 +105,68 @@ jobs:
           name: translation-visual-previews
           if-no-files-found: warn
           path: build/translation-previews/*.png
+
+  windows_app:
+    if: github.repository == 'jiah0231/baocode' && github.ref != 'refs/heads/feat/global-translation-native-tests'
+    runs-on: windows-2025
+    timeout-minutes: 60
+    env:
+      BAOCODE_CUSTOM_UPDATE_KEY: ${{ vars.BAOCODE_CUSTOM_UPDATE_KEY }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Restore unchanged bundled assets
+        shell: pwsh
+        run: |
+          python tool/ci/reassemble_preview_assets.py
+          if ($LASTEXITCODE -ne 0) { throw 'Preview reconstruction failed' }
+          python tool/ci/reassemble_maple_font.py
+          if ($LASTEXITCODE -ne 0) { throw 'Font reconstruction failed' }
+          git diff --exit-code HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Asset restoration changed source' }
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.5'
+          cache: true
+      - id: iroh
+        uses: ./.github/actions/bao-iroh-prebuilt
+      - if: steps.iroh.outputs.hit != 'true'
+        uses: ./.github/actions/setup-rust
+      - name: Resolve packages and localization
+        id: resolve
+        shell: pwsh
+        run: |
+          flutter pub get
+          if ($LASTEXITCODE -ne 0) { throw 'Package resolution failed' }
+          flutter gen-l10n
+          if ($LASTEXITCODE -ne 0) { throw 'Localization failed' }
+          git diff --exit-code HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Generated source differs' }
+      - name: Build actual Windows release app
+        id: build
+        shell: pwsh
+        run: |
+          dart run tool/build_windows.dart --arch x64 --custom-updates --build-only
+          if ($LASTEXITCODE -ne 0) { throw 'Windows release build failed' }
+      - name: Retain isolated test bundle for diagnostics
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: translation-test-bundle-${{ github.sha }}
+          retention-days: 3
+          if-no-files-found: error
+          path: build/windows/x64/runner/Release/
+      - name: Test real independent translation window
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        shell: pwsh
+        run: ./tool/ci/windows_translation_window_smoke.ps1 -Executable build/windows/x64/runner/Release/baocode.exe
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: translation-real-window-previews
+          if-no-files-found: error
+          path: build/translation-window-previews/*.png

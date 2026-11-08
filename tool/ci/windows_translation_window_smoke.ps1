@@ -48,17 +48,25 @@ try {
     if ($app.ExitCode -ne 0) { throw "App crashed at native quit: $($app.ExitCode)" }
     $app.Dispose(); $app = $null
     if (!(Test-Path -LiteralPath $screenshot)) { throw 'Required real-app screenshot missing' }
-    Add-Type -AssemblyName System.Drawing
     foreach ($capture in @($screenshot, "$screenshot.mouse.bmp", "$screenshot.entry.bmp")) {
       if (!(Test-Path -LiteralPath $capture)) { throw "Required real-app screenshot missing: $capture" }
-      $bitmap = [System.Drawing.Bitmap]::FromFile($capture)
-      $png = [IO.Path]::ChangeExtension($capture, '.png')
+    }
+  }
+} finally {
+  $primaryExitCode = $global:LASTEXITCODE
+  # Keep the first real popup/entry evidence even if a later assertion fails.
+  try {
+    Add-Type -AssemblyName System.Drawing
+    Get-ChildItem -LiteralPath $output -Filter '*.bmp' | ForEach-Object {
+      $bitmap = [System.Drawing.Bitmap]::FromFile($_.FullName)
+      $png = [IO.Path]::ChangeExtension($_.FullName, '.png')
       try { $bitmap.Save($png, [System.Drawing.Imaging.ImageFormat]::Png) }
       finally { $bitmap.Dispose() }
       Write-Output ('TRANSLATION_WINDOW_PREVIEW|' + [IO.Path]::GetFileNameWithoutExtension($png) + '|' + [Convert]::ToBase64String([IO.File]::ReadAllBytes($png)))
     }
+  } catch {
+    Write-Warning "Real-window screenshot export failed: $_"
   }
-} finally {
   foreach ($process in @($test, $app)) {
     if ($process) {
       $process.Refresh()
@@ -68,4 +76,5 @@ try {
   }
   $env:BAOCODE_DATA_DIR = $previousDataDir
   Pop-Location
+  $global:LASTEXITCODE = $primaryExitCode
 }
