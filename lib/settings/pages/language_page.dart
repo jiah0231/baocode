@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../ide/ide_menu.dart';
 import '../../l10n/l10n.dart';
 import '../app_locale.dart';
+import '../user_settings.dart';
+import '../../translation/translation_settings_card.dart';
 import 'settings_dropdown.dart';
 import 'settings_widgets.dart';
 
@@ -10,9 +12,10 @@ import 'settings_widgets.dart';
 /// Configure Display Language. Each language is named in its own language;
 /// a choice applies at once.
 class LanguageSettingsPage extends StatelessWidget {
-  const LanguageSettingsPage({super.key, required this.locale});
+  const LanguageSettingsPage({super.key, required this.locale, this.settings});
 
   final AppLocale locale;
+  final UserSettings? settings;
 
   /// Each language in its own language.
   static const nativeNames = {
@@ -38,6 +41,7 @@ class LanguageSettingsPage extends StatelessWidget {
         return SettingsPage(
           title: l10n.languageSettingsTitle,
           children: [
+            TranslationSettingsCard(settings: settings),
             SettingsCard(
               children: [
                 SettingsRow(

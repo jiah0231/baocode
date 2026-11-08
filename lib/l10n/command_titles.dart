@@ -20,6 +20,8 @@ String localizedCommandLabel(AppLocalizations l10n, String id, String english) {
     if (index != null) return l10n.cmdOpenEditorAtIndex(index);
   }
   return switch (id) {
+    WindowCommandIds.translate =>
+      l10n.localeName.startsWith('zh') ? '翻译选中文本' : 'Translate Selection',
     WindowCommandIds.quickAsk => l10n.quickAskTitle,
     'workbench.action.showCommands' => l10n.cmdShowAllCommands,
     'workbench.action.quickOpen' => l10n.cmdQuickOpen,

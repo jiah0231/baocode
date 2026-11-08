@@ -19,6 +19,7 @@ import 'chat_keybindings.dart' show ChatContextKeys;
 import 'default_keybindings.dart' show CommandInfo;
 
 abstract final class WindowCommandIds {
+  static const translate = 'baocode.translateSelection';
   static const quickAsk = 'baocode.quickAsk';
   static const newWindow = 'workbench.action.newWindow';
   static const closeWindow = 'workbench.action.closeWindow';
@@ -31,6 +32,11 @@ abstract final class WindowCommandIds {
 }
 
 final List<CommandInfo> windowCommands = [
+  const CommandInfo(
+    WindowCommandIds.translate,
+    'Translate Selection',
+    category: 'AI',
+  ),
   const CommandInfo(
     WindowCommandIds.quickAsk,
     'Quick Ask / Edit',
@@ -55,6 +61,11 @@ final List<CommandInfo> windowCommands = [
 ];
 
 final List<KeybindingEntry> windowKeybindings = [
+  const KeybindingEntry(
+    key: 'ctrl+alt+t',
+    mac: 'cmd+alt+t',
+    command: WindowCommandIds.translate,
+  ),
   const KeybindingEntry(
     key: 'ctrl+alt+k',
     mac: 'cmd+alt+k',

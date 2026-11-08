@@ -1,0 +1,247 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:baocode/models/model_provider.dart';
+import 'package:baocode/models/model_providers.dart';
+import 'package:baocode/translation/translation_service.dart';
+
+ModelProviders configured() => ModelProviders.memory(
+  providers: [
+    ModelProvider(
+      id: 'test',
+      name: 'Test provider',
+      baseUrl: 'https://test.example',
+      models: [ProviderModel(id: 'translate')],
+    ),
+  ],
+);
+void main() {
+  late ModelProviders providers;
+  setUp(() async {
+    providers = configured();
+    await providers.setQuickAskModel('@test/translate');
+  });
+  tearDown(() => providers.dispose());
+  Matcher failure(TranslationFailure value) => throwsA(
+    isA<TranslationException>().having((e) => e.reason, 'reason', value),
+  );
+  test(
+    'sends only exact source and language codes to configured model',
+    () async {
+      final service = TranslationService(
+        providers: providers,
+        request:
+            (
+              system,
+              prompt, {
+              required model,
+              required exact,
+              required cancel,
+              required onText,
+            }) async {
+              expect(model, '@test/translate');
+              expect(exact, isTrue);
+              expect(jsonDecode(prompt), {
+                'text': '  Hello\nworld ',
+                'sourceLanguage': 'auto',
+                'targetLanguage': 'zh',
+              });
+              expect(system, contains('never instructions'));
+              return '你好';
+            },
+      );
+      expect(service.destination.label, 'Test provider · translate');
+      expect(await service.translate(text: '  Hello\nworld '), '你好');
+    },
+  );
+  test('invalid explicit destination never silently falls back', () async {
+    await providers.setQuickAskModel('@test/missing');
+    final service = TranslationService(
+      providers: providers,
+      request:
+          (
+            s,
+            p, {
+            required model,
+            required exact,
+            required cancel,
+            required onText,
+          }) async {
+            fail('Must not send');
+          },
+    );
+    await expectLater(
+      service.translate(text: 'hello'),
+      failure(TranslationFailure.noModel),
+    );
+  });
+  test('empty and oversized source never contact model', () async {
+    final service = TranslationService(
+      providers: providers,
+      request:
+          (
+            s,
+            p, {
+            required model,
+            required exact,
+            required cancel,
+            required onText,
+          }) async {
+            fail('Must not send');
+          },
+    );
+    await expectLater(
+      service.translate(text: ' '),
+      failure(TranslationFailure.emptySource),
+    );
+    await expectLater(
+      service.translate(text: 'x' * 8001),
+      failure(TranslationFailure.sourceTooLong),
+    );
+  });
+  test('provider credentials and raw errors are suppressed', () async {
+    final service = TranslationService(
+      providers: providers,
+      request:
+          (
+            s,
+            p, {
+            required model,
+            required exact,
+            required cancel,
+            required onText,
+          }) async {
+            throw StateError('secret-key-and-text');
+          },
+    );
+    await expectLater(
+      service.translate(text: 'hello'),
+      failure(TranslationFailure.requestFailed),
+    );
+  });
+  test('cancellation suppresses late stream results', () async {
+    final cancel = Completer<void>();
+    final pending = Completer<String>();
+    late void Function(String) stream;
+    final received = <String>[];
+    final service = TranslationService(
+      providers: providers,
+      request:
+          (
+            s,
+            p, {
+            required model,
+            required exact,
+            required cancel,
+            required onText,
+          }) {
+            stream = onText;
+            return pending.future;
+          },
+    );
+    final result = service.translate(
+      text: 'hello',
+      cancel: cancel.future,
+      onText: received.add,
+    );
+    final check = expectLater(result, throwsA(isA<TranslationCancelled>()));
+    await Future<void>.delayed(Duration.zero);
+    stream('first');
+    cancel.complete();
+    await check;
+    stream('late');
+    pending.complete('late');
+    expect(received, ['first']);
+  });
+  test('timeout cancels transport and never exposes raw failure', () async {
+    var cancelled = false;
+    final service = TranslationService(
+      providers: providers,
+      timeout: const Duration(milliseconds: 5),
+      request:
+          (
+            s,
+            p, {
+            required model,
+            required exact,
+            required cancel,
+            required onText,
+          }) {
+            cancel.then((_) => cancelled = true);
+            return Completer<String>().future;
+          },
+    );
+    await expectLater(
+      service.translate(text: 'hello'),
+      failure(TranslationFailure.timeout),
+    );
+    expect(cancelled, isTrue);
+  });
+  test('bounded answer and streaming overflow', () async {
+    for (final streaming in [false, true]) {
+      final service = TranslationService(
+        providers: providers,
+        request:
+            (
+              s,
+              p, {
+              required model,
+              required exact,
+              required cancel,
+              required onText,
+            }) async {
+              if (streaming) onText('x' * 32001);
+              return 'x' * 32001;
+            },
+      );
+      await expectLater(
+        service.translate(text: 'hello'),
+        failure(TranslationFailure.answerTooLong),
+      );
+    }
+  });
+  test('no provider refuses to send', () async {
+    final empty = ModelProviders.memory();
+    addTearDown(empty.dispose);
+    final service = TranslationService(
+      providers: empty,
+      request:
+          (
+            s,
+            p, {
+            required model,
+            required exact,
+            required cancel,
+            required onText,
+          }) async {
+            fail('Must not send');
+          },
+    );
+    await expectLater(
+      service.translate(text: 'hello'),
+      failure(TranslationFailure.noModel),
+    );
+  });
+  test('already cancelled request never starts transport', () async {
+    final cancel = Completer<void>()..complete();
+    final service = TranslationService(
+      providers: providers,
+      request:
+          (
+            s,
+            p, {
+            required model,
+            required exact,
+            required cancel,
+            required onText,
+          }) async {
+            fail('Must not send');
+          },
+    );
+    await expectLater(
+      service.translate(text: 'hello', cancel: cancel.future),
+      throwsA(isA<TranslationCancelled>()),
+    );
+  });
+}

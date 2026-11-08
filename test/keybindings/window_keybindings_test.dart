@@ -7,6 +7,28 @@ import 'package:bao_editor/monaco/flutter/keybinding_entry.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('translation has an in-app fallback on every desktop', () {
+    for (final platform in KeybindingPlatform.values) {
+      final service = KeybindingService()..debugPlatform = platform;
+      final result = service.resolver().resolve(
+        service.withPlatformKeys((key) => {'chatMode': true}[key]),
+        const [],
+        KeyChord.parse(
+          platform == KeybindingPlatform.mac ? 'cmd+alt+t' : 'ctrl+alt+t',
+        )!,
+        canRun: (item) => service.isSupported(item.command),
+      );
+      expect(
+        result,
+        isA<KeybindingFound>().having(
+          (found) => found.command,
+          'command',
+          WindowCommandIds.translate,
+        ),
+      );
+    }
+  });
+
   test('the window\'s commands are in the catalog', () {
     for (final info in windowCommands) {
       expect(commandCatalog, contains(info.id));

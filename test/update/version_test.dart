@@ -77,8 +77,8 @@ void main() {
     });
 
     test('Inline review and context upgrade the published +46 build', () {
-      expect(currentAppVersion, v('1.9.1+47'));
-      expect(currentAppVersion > v('1.9.1+46'), isTrue);
+      expect(currentAppVersion, v('1.9.1+48'));
+      expect(currentAppVersion > v('1.9.1+47'), isTrue);
     });
 
     test("is pubspec.yaml's version", () {

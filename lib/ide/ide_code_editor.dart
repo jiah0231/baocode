@@ -22,6 +22,7 @@ import '../keybindings/keybinding_service.dart';
 import '../l10n/command_titles.dart';
 import '../l10n/l10n.dart';
 import '../quick_ask/quick_ask_context.dart';
+import '../translation/translation_selection.dart';
 import '../theme/app_theme.dart';
 import '../theme/workbench_theme.dart' hide ColorScheme;
 import 'builtin_formatting.dart';
@@ -656,6 +657,15 @@ class IdeCodeEditorState extends State<IdeCodeEditor> with QuickAskTarget {
           [
             editorItem('editor.action.clipboardCutAction', enabled: editable),
             editorItem('editor.action.clipboardCopyAction'),
+            IdeMenuAction(
+              l10n.localeName.startsWith('zh')
+                  ? '翻译选中文本'
+                  : 'Translate Selection',
+              enabled: _hasSelection,
+              onSelected: () => unawaited(
+                translateSelection(context, captureQuickAskContext()),
+              ),
+            ),
             editorItem('editor.action.clipboardPasteAction', enabled: editable),
           ],
           [wordWrapMenuAction(l10n)],

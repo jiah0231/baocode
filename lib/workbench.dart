@@ -90,6 +90,8 @@ import 'keybindings/window_keybindings.dart';
 import 'quick_ask/quick_ask_context.dart';
 import 'quick_ask/quick_ask_agent.dart';
 import 'quick_ask/quick_ask_dialog.dart';
+import 'translation/translation_dialog.dart';
+import 'translation/translation_host.dart';
 import 'l10n/command_titles.dart';
 import 'l10n/l10n.dart';
 import 'notifications/attention_host.dart';
@@ -605,6 +607,8 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     widget.window?.attach(this);
     _windows?.addListener(_windowsChanged);
     if (_main) {
+      TranslationHost.instance.onPressed = _translationPressed;
+      TranslationHost.instance.start(widget.settings?.files?.settings);
       // A link to a stash (#12 references) shows it here.
       StashController.current?.showPage = _showStash;
       // A stash's file opens as the Stash page shows it.
@@ -829,6 +833,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
   @override
   void dispose() {
+    if (_main) TranslationHost.instance.stop();
     ChannelGate.current?.removeListener(_channelGateChanged);
     for (final edits in _ideAgentEdits.values) {
       edits.dispose();
@@ -1123,6 +1128,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     final windows = _windows;
     final window = widget.window;
     final anyWindow = {
+      WindowCommandIds.translate: () => unawaited(_openTranslation()),
       WindowCommandIds.quickAsk: () => unawaited(_openQuickAsk()),
       if (WindowControls.canFullScreen)
         WindowCommandIds.toggleFullScreen: () =>
@@ -1151,6 +1157,47 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         _workspace.layout = WorkspaceLayout.chat;
       },
     };
+  }
+
+  bool _translationOpen = false;
+
+  void _translationPressed(TranslationCapture capture) {
+    if (!mounted) return;
+    // A selection in an IDE or agent window belongs to that window, not the
+    // hidden main chat. Native capture does not move focus for our own process.
+    if (capture.inApp) {
+      final focused = FocusManager.instance.primaryFocus?.context;
+      _WorkbenchState? owner;
+      focused?.visitAncestorElements((element) {
+        if (element is StatefulElement && element.state is _WorkbenchState) {
+          owner = element.state as _WorkbenchState;
+          return false;
+        }
+        return true;
+      });
+      unawaited((owner ?? this)._openTranslation());
+    } else {
+      unawaited(_openTranslation(capture: capture));
+    }
+  }
+
+  Future<void> _openTranslation({TranslationCapture? capture}) async {
+    if (_translationOpen || ChatKeys.isComposing || !mounted) return;
+    final source = capture == null ? QuickAskContext.captureFocused() : null;
+    _translationOpen = true;
+    try {
+      await showTranslationDialog(
+        context,
+        selectedText:
+            capture?.text ??
+            (source?.truncated == true ? '' : source?.selectedText ?? ''),
+        captureStatus:
+            capture?.status ?? (source?.truncated == true ? 'tooLong' : null),
+        onModelSettings: () => unawaited(openSettings(SettingsSection.models)),
+      );
+    } finally {
+      _translationOpen = false;
+    }
   }
 
   bool _quickAskOpen = false;
@@ -1524,6 +1571,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     return [
       ?action(ChatCommandIds.newChat, Codicons.add),
       ?action(WindowCommandIds.quickAsk, Codicons.sparkle),
+      ?action(WindowCommandIds.translate, Codicons.globe),
       ?action(_customizeCommand, Codicons.plug),
       ?action(openSettingsCommandId, Codicons.settingsGear),
       ?action(openKeybindingsCommandId, Codicons.keyboard),

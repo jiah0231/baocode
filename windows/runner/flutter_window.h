@@ -16,6 +16,7 @@
 #include "login_window.h"
 #include "open_requests.h"
 #include "stash_channel.h"
+#include "translation_channel.h"
 #include "view_window.h"
 
 // The main window: the chat's, the one the app starts with, which hosts the
@@ -65,6 +66,7 @@ class FlutterWindow : public ViewWindow {
 
   // The stash's shortcut, from any app (see stash_channel.h).
   std::unique_ptr<StashChannel> stash_;
+  std::unique_ptr<TranslationChannel> translation_;
 
   // The channel build's login window (see login_window.h).
   std::unique_ptr<LoginWindow> login_window_;

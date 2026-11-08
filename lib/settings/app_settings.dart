@@ -26,6 +26,7 @@ import '../tips/feature_tips_controller.dart';
 import '../update/update_controller.dart';
 import '../usage/ui/usage_dashboard.dart';
 import '../workspace/workspace.dart';
+import '../translation/translation_settings_card.dart';
 import 'app_locale.dart';
 import 'pages/about_page.dart';
 import 'pages/accounts_page.dart';
@@ -202,7 +203,7 @@ class AppSettings {
           workspace: workspace,
         );
       case SettingsSection.language:
-        return LanguageSettingsPage(locale: locale);
+        return LanguageSettingsPage(locale: locale, settings: files?.settings);
       case SettingsSection.keyboard:
         unawaited(refreshKeymaps());
         final sync = this.sync;
@@ -216,12 +217,18 @@ class AppSettings {
             onImport: installs == null
                 ? null
                 : () => unawaited(showImport(context)),
-            global: StashController.current == null
-                ? null
-                : StashHotkeyCard(
+            global: Column(
+              children: [
+                TranslationSettingsCard(settings: files?.settings),
+                if (StashController.current != null) ...[
+                  const SizedBox(height: 12),
+                  StashHotkeyCard(
                     settings: files?.settings,
                     label: context.l10n.stashHotkeyGlobal,
                   ),
+                ],
+              ],
+            ),
           ),
         );
       case SettingsSection.updates:

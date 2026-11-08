@@ -27,6 +27,8 @@ class StashHotkeyField extends StatefulWidget {
     required this.hotkey,
     required this.onChanged,
     this.semanticLabel,
+    this.onRecordingStart,
+    this.onRecordingStop,
   });
 
   /// As settings.json keeps it (`ctrl+shift+space`); empty for none.
@@ -35,6 +37,8 @@ class StashHotkeyField extends StatefulWidget {
   /// The keys recorded, as [hotkey] is written; empty for none.
   final ValueChanged<String> onChanged;
   final String? semanticLabel;
+  final Future<void> Function()? onRecordingStart;
+  final Future<void> Function()? onRecordingStop;
 
   /// [chord] as the shortcut's setting, when the system can take it as
   /// one from any app (macOS's and Windows' hot keys): a modifier and a
@@ -69,7 +73,11 @@ class _StashHotkeyFieldState extends State<StashHotkeyField> {
 
   @override
   void dispose() {
-    if (_recording) unawaited(StashController.current?.resumeHotkey());
+    if (_recording)
+      unawaited(
+        (widget.onRecordingStop?.call() ??
+            StashController.current?.resumeHotkey()),
+      );
     _focus.removeListener(_focusChanged);
     _focus.dispose();
     super.dispose();
@@ -85,14 +93,20 @@ class _StashHotkeyFieldState extends State<StashHotkeyField> {
       _recording = true;
       _refused = false;
     });
-    unawaited(StashController.current?.pauseHotkey());
+    unawaited(
+      (widget.onRecordingStart?.call() ??
+          StashController.current?.pauseHotkey()),
+    );
     _focus.requestFocus();
   }
 
   void _stop() {
     if (!_recording) return;
     setState(() => _recording = false);
-    unawaited(StashController.current?.resumeHotkey());
+    unawaited(
+      (widget.onRecordingStop?.call() ??
+          StashController.current?.resumeHotkey()),
+    );
     if (_focus.hasFocus) _focus.unfocus();
   }
 
@@ -200,10 +214,7 @@ class StashHotkeyCard extends StatelessWidget {
     if (settings == null) return;
     unawaited(
       settings
-          .update(
-            StashSettings.hotkeyKey,
-            spec.isEmpty ? null : spec,
-          )
+          .update(StashSettings.hotkeyKey, spec.isEmpty ? null : spec)
           .catchError((Object error) {
             debugPrint('${StashSettings.hotkeyKey} not kept: $error');
           }),

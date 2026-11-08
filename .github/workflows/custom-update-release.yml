@@ -88,6 +88,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Generated source differs from reviewed commit' }
       - run: flutter analyze --no-pub
         id: analyze
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Verify cross-app translation selection privacy
+        shell: pwsh
+        run: ./tool/ci/windows_translation_smoke.ps1
+      - name: Check translation source formatting
+        run: dart format --output=none --set-exit-if-changed lib/translation test/translation lib/settings/pages/language_page.dart lib/settings/pages/stash_hotkey_field.dart lib/settings/app_settings.dart
+      - name: Test translation routing, cancellation and theme layouts
+        run: flutter test --no-pub --reporter expanded --timeout 2m test/translation
       - name: Check Quick Ask source formatting
         run: >-
           dart format --output=none --set-exit-if-changed

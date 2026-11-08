@@ -16,6 +16,7 @@ import '../ide/ide_find_widget.dart';
 import '../ide/ide_hover.dart';
 import '../l10n/l10n.dart';
 import '../quick_ask/quick_ask_context.dart';
+import '../translation/translation_selection.dart';
 import '../theme/app_theme.dart';
 import '../theme/workbench_theme.dart' show themeColors;
 import 'chat_column.dart';
@@ -2585,8 +2586,21 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
       });
       return const SizedBox.shrink();
     }
-    return AdaptiveTextSelectionToolbar.selectableRegion(
-      selectableRegionState: selection,
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      anchors: selection.contextMenuAnchors,
+      buttonItems: [
+        ...selection.contextMenuButtonItems,
+        ContextMenuButtonItem(
+          label: context.l10n.localeName.startsWith('zh')
+              ? '翻译选中文本'
+              : 'Translate Selection',
+          onPressed: () {
+            final source = captureQuickAskContext();
+            selection.hideToolbar();
+            unawaited(translateSelection(this.context, source));
+          },
+        ),
+      ],
     );
   }
 
