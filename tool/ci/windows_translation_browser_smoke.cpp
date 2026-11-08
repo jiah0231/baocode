@@ -165,13 +165,33 @@ int wmain(int argc, wchar_t** argv) {
       std::wstring actual = capture.text;
       while (!actual.empty() && (actual.back() == L'\r' || actual.back() == L'\n')) actual.pop_back();
       const std::wstring expected = line ? L"Browser synthetic selection Foxtrot" : L"Browser synthetic selection Echo";
-      const bool passed = capture.status == "ok" && actual == expected && !capture.self && capture.bounds.has_value();
-      std::printf("DEFAULT_EDGE_CAPTURE|%s|status=%s|units=%zu|bounds=%d|copyProof=%d|%s\n",
+      const bool sourcePassed = capture.status == "ok" && actual == expected && !capture.self;
+      bool geometryPassed = line == 0; // Cold capture may use documented pointer fallback.
+      if (capture.bounds) {
+        const RECT& bounds = *capture.bounds;
+        RECT frame{}, clipped{};
+        geometryPassed = bounds.right > bounds.left && bounds.bottom > bounds.top &&
+            GetWindowRect(browser, &frame) && IntersectRect(&clipped, &bounds, &frame) &&
+            EqualRect(&clipped, &bounds) && MonitorFromRect(&bounds, MONITOR_DEFAULTTONULL);
+      }
+      const bool clipboardPassed = GetClipboardSequenceNumber() == sequence;
+      // Require valid selection geometry on repeat to retain browser geometry
+      // coverage, but do not conflate optional cold bounds with failed capture.
+      const bool passed = sourcePassed && geometryPassed && clipboardPassed;
+      const char* placement = capture.bounds ? (geometryPassed ? "selection_bounds" : "invalid_geometry") :
+          (line == 0 ? "pointer_fallback" : "missing_repeat_bounds");
+      std::printf("DEFAULT_EDGE_CAPTURE|%s|status=%s|units=%zu|bounds=%d|copyProof=%d|placement=%s|%s\n",
         line ? "repeat" : "cold", capture.status.c_str(), capture.text.size(),
-        capture.bounds.has_value() ? 1 : 0, capture.copy_proof.has_value() ? 1 : 0, passed ? "PASS" : "FAIL");
+        capture.bounds.has_value() ? 1 : 0, capture.copy_proof.has_value() ? 1 : 0, placement, passed ? "PASS" : "FAIL");
+      if (sourcePassed && geometryPassed && !capture.bounds) {
+        POINT pointer{};
+        Check(GetCursorPos(&pointer) != 0, "Cold capture fallback pointer unavailable");
+        std::printf("DEFAULT_EDGE_PLACEMENT|cold|placement=pointer_fallback|pointer=%ld,%ld|contract=optional_bounds\n",
+          pointer.x, pointer.y);
+      }
       if (!passed) {
         allPassed = false;
-        SyntheticMismatch(capture.text, expected);
+        if (!sourcePassed) SyntheticMismatch(capture.text, expected);
         RECT frame{}, content{}; GetWindowRect(browser, &frame); GetWindowRect(renderer, &content);
         std::printf("SYNTHETIC_EDGE_GEOMETRY|dpi=%u|frame=%ld,%ld,%ld,%ld|renderer=%ld,%ld,%ld,%ld\n",
           GetDpiForWindow(browser), frame.left, frame.top, frame.right, frame.bottom,
@@ -182,7 +202,7 @@ int wmain(int argc, wchar_t** argv) {
       Check(GetClipboardSequenceNumber() == sequence, "Browser capture changed clipboard");
     }
     Check(allPassed, "Default Edge UIA selection failed (see cold/repeat diagnostics); no accessibility override or Document Ctrl+C fallback used");
-    std::puts("PASS: default Edge real mouse selections, production Capture, exact fresh source, selection bounds, clipboard unchanged");
+    std::puts("PASS: default Edge real mouse selections, production Capture, exact fresh source, optional cold bounds/pointer fallback, required repeat bounds, clipboard unchanged");
   } catch (const std::exception& error) { std::fprintf(stderr, "FAIL: %s\n", error.what()); result = 1; }
   if (browser) PostMessageW(browser, WM_CLOSE, 0, 0);
   return result;
