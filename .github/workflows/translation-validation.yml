@@ -20,6 +20,8 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
       - name: Test cross-process selection and clipboard protection
         shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
         run: ./tool/ci/windows_translation_smoke.ps1
       - name: Test guarded explicit selection copying
         if: ${{ !cancelled() }}

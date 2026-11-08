@@ -21,7 +21,8 @@ class TranslationChannel {
  private:
   struct Pending;
   bool Register(const std::string& spec);
-  void Capture(std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
+  void Capture(std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result,
+               const char* origin = "manual");
   std::optional<int64_t> CreatePanel(int64_t engine_id);
   bool ShowPanel(std::optional<int64_t> request_id);
   void HidePanel(bool restore_focus, bool invalidate = true, bool notify = true);

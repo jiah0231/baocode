@@ -18,7 +18,7 @@ $app = $null
 $test = $null
 Push-Location $root
 try {
-  & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX $source /Fe:translation_window_smoke.exe /link user32.lib gdi32.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
+  & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX $source /Fe:translation_window_smoke.exe /link user32.lib advapi32.lib gdi32.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
   if ($LASTEXITCODE -ne 0) { throw 'Translation window harness compilation failed' }
   foreach ($theme in 'Dark', 'Light') {
     $env:BAOCODE_DATA_DIR = Join-Path $root $theme

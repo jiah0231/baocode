@@ -5,7 +5,7 @@ $build = Join-Path $env:TEMP ('baocode-translation-' + [guid]::NewGuid().ToStrin
 New-Item -ItemType Directory -Path $build | Out-Null
 try {
   Push-Location $build
-  & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX $source /Fe:translation_smoke.exe /link user32.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
+  & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX $source /Fe:translation_smoke.exe /link user32.lib advapi32.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
   if ($LASTEXITCODE -ne 0) { throw 'Translation native smoke compilation failed' }
   $test = Start-Process -FilePath (Join-Path $build 'translation_smoke.exe') -PassThru -NoNewWindow
   if (-not $test.WaitForExit(20000)) {
@@ -13,6 +13,18 @@ try {
     throw 'Translation native smoke timed out'
   }
   if ($test.ExitCode -ne 0) { throw "Translation native smoke failed ($($test.ExitCode))" }
+  foreach ($suite in @('target', 'console_binding')) {
+    $extraSource = Join-Path $PSScriptRoot "windows_translation_${suite}_smoke.cpp"
+    $extraExe = Join-Path $build "${suite}_smoke.exe"
+    & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX $extraSource "/Fe:$extraExe" /link user32.lib advapi32.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
+    if ($LASTEXITCODE -ne 0) { throw "Translation $suite smoke compilation failed" }
+    $extra = Start-Process -FilePath $extraExe -PassThru -NoNewWindow
+    if (-not $extra.WaitForExit(20000)) {
+      & taskkill /PID $extra.Id /T /F | Out-Null
+      throw "Translation $suite smoke timed out"
+    }
+    if ($extra.ExitCode -ne 0) { throw "Translation $suite smoke failed ($($extra.ExitCode))" }
+  }
 } finally {
   Pop-Location
   Remove-Item -Recurse -Force $build -ErrorAction SilentlyContinue

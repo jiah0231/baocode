@@ -9,6 +9,8 @@
 #include "translation_panel_geometry.h"
 #include "translation_capture_retry.h"
 #include "translation_clipboard_capture.h"
+#include "translation_console_binding.h"
+#include "translation_selection_target.h"
 
 namespace translation_selection {
 // Optional test diagnostics contain only operation names/HRESULTs, never text.
@@ -113,6 +115,16 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
       }
       ComPtr<IUIAutomationElement> original_element;
       bool require_text_control = false;
+      ConsoleBinding console_binding;
+      SelectionTarget selection_target;
+      const auto ready = [&] {
+        const ULONGLONG now = GetTickCount64();
+        if (stopped() || now >= deadline || GetForegroundWindow() != foreground) return false;
+        if (!bounded) return false;
+        const DWORD remaining = static_cast<DWORD>(std::min<ULONGLONG>(200, deadline - now));
+        return SUCCEEDED(bounded->put_ConnectionTimeout(std::min<DWORD>(150, remaining))) &&
+            !stopped() && SUCCEEDED(bounded->put_TransactionTimeout(remaining)) && !stopped();
+      };
       // Chromium may expose a focused Document before its accessibility text
       // pattern is ready, or time out before returning any element. Reacquire
       // only that initial timeout; once bound, retry the same security-checked
@@ -158,7 +170,9 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
           BOOL has_focus = FALSE;
           // Fail closed if the provider cannot affirm this is not a password.
           if (!stopped() && SUCCEEDED(observe("ProcessId", focused->get_CurrentProcessId(&focused_process))) &&
-              static_cast<DWORD>(focused_process) == process &&
+              (static_cast<DWORD>(focused_process) == process ||
+               console_binding.Verify(foreground, process, static_cast<DWORD>(focused_process),
+                   automation.Get(), focused.Get(), stopped, deadline)) &&
               !stopped() && SUCCEEDED(observe("HasKeyboardFocus", focused->get_CurrentHasKeyboardFocus(&has_focus))) &&
               !stopped() && SUCCEEDED(observe("IsPassword", focused->get_CurrentIsPassword(&password)))) {
             if (password) {
@@ -182,20 +196,20 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
                 }
               }
             } else {
-              BOOL same = FALSE;
-              if (original_element &&
-                  (FAILED(automation->CompareElements(original_element.Get(), focused.Get(), &same)) || !same)) {
+              if (!selection_target.Resolve(automation.Get(), focused.Get(), foreground,
+                      static_cast<DWORD>(focused_process), ready)) {
                 out.status = "focusChanged";
                 break;
               }
-              original_element = focused;
+              original_element = selection_target.Get();
+              ComPtr<IUIAutomationElement> target = original_element;
               if (stopped()) break;
               CONTROLTYPEID control_type = 0;
-              const bool text_control = SUCCEEDED(focused->get_CurrentControlType(&control_type)) &&
+              const bool text_control = SUCCEEDED(target->get_CurrentControlType(&control_type)) &&
                   (control_type == UIA_EditControlTypeId || control_type == UIA_DocumentControlTypeId);
               if (stopped() || (require_text_control && !text_control)) break;
               ComPtr<IUIAutomationTextPattern> pattern;
-              const HRESULT pattern_result = observe("TextPattern", focused->GetCurrentPatternAs(
+              const HRESULT pattern_result = observe("TextPattern", target->GetCurrentPatternAs(
                   UIA_TextPatternId, IID_PPV_ARGS(&pattern)));
               if (SUCCEEDED(pattern_result) && !pattern) observe("TextPattern.null", E_NOINTERFACE);
               retryable = text_control &&
@@ -238,6 +252,7 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
                   int length = 0;
                   if (SUCCEEDED(observe("Selection.Length", ranges->get_Length(&length)))) {
                     out.status = length > 16 ? "tooLong" : "noSelection";
+                    retryable = length == 0 && selection_target.NoteEmpty(ready);
                     // Request one extra UTF-16 unit to detect overflow, never
                     // accept a truncated source or a partial multi-range result.
                     bool failed = length < 0;
@@ -283,7 +298,7 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
             }
           }
         }
-        if (out.status != "unsupported" ||
+        if ((out.status != "unsupported" && out.status != "noSelection") ||
             !translation_retry::CanRetry(retryable, attempt + 1, GetTickCount64(), deadline,
                                          canceled && canceled->load())) break;
         // Small interruptible backoff, no replacement workers or provider retry
@@ -318,18 +333,17 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
             int final_process = 0;
             BOOL final_password = TRUE, final_has_focus = FALSE;
             if (FAILED(observe("FinalFocus.ProcessId", final_focus->get_CurrentProcessId(&final_process))) ||
-                static_cast<DWORD>(final_process) != process || stopped() ||
+                (static_cast<DWORD>(final_process) != process &&
+                 !console_binding.Verify(foreground, process, static_cast<DWORD>(final_process),
+                     automation.Get(), final_focus.Get(), stopped, deadline)) || stopped() ||
                 FAILED(observe("FinalFocus.IsPassword", final_focus->get_CurrentIsPassword(&final_password))) ||
                 final_password || stopped() ||
                 FAILED(observe("FinalFocus.HasKeyboardFocus", final_focus->get_CurrentHasKeyboardFocus(&final_has_focus))) ||
                 stopped()) break;
             if (final_has_focus) {
-              BOOL same = FALSE;
-              const HRESULT compared = observe("FinalFocus.CompareElements",
-                  automation->CompareElements(original_element.Get(), final_focus.Get(), &same));
-              verified = SUCCEEDED(compared) && same && !stopped() &&
-                  GetForegroundWindow() == foreground;
-              if (!verified && diagnostics && SUCCEEDED(compared)) {
+              verified = selection_target.Resolve(automation.Get(), final_focus.Get(), foreground,
+                  static_cast<DWORD>(final_process), ready, false);
+              if (!verified && diagnostics) {
                 diagnostics->last_failure_stage = "FinalFocus.DifferentElement";
                 diagnostics->last_failure = S_FALSE;
               }

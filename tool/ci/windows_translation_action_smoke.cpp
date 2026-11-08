@@ -48,6 +48,17 @@ void Pump(DWORD duration) {
 }
 void Mouse(DWORD flags) { INPUT input{}; input.type = INPUT_MOUSE; input.mi.dwFlags = flags; SendInput(1, &input, sizeof(input)); Pump(40); }
 bool Visible() { HWND entry = FindWindowW(L"BaoCodeTranslationSelectionAction", nullptr); return entry && IsWindowVisible(entry); }
+void Diagnose(const char* stage, HWND fixture) {
+  const HWND entry = FindWindowW(L"BaoCodeTranslationSelectionAction", nullptr);
+  DWORD foreground_pid = 0;
+  const HWND foreground = GetForegroundWindow();
+  GetWindowThreadProcessId(foreground, &foreground_pid);
+  std::printf("ACTION_STATE|stage=%s|entry=%p|visible=%d|clicks=%d|captured=%p|fixture=%p|foreground=%p|foregroundPid=%lu\n",
+      stage, static_cast<void*>(entry), entry && IsWindowVisible(entry) ? 1 : 0, clicks,
+      static_cast<void*>(captured), static_cast<void*>(fixture),
+      static_cast<void*>(foreground), foreground_pid);
+  std::fflush(stdout);
+}
 int Fail(const char* reason) { std::fprintf(stderr, "%s\n", reason); return 1; }
 }
 int wmain(int argc, wchar_t** argv) {
@@ -86,10 +97,14 @@ int wmain(int argc, wchar_t** argv) {
   SetCursorPos(rect.left + 3, rect.top + 8); Mouse(MOUSEEVENTF_LEFTDOWN);
   for (int i = 1; i <= 8; ++i) { SetCursorPos(rect.left + 3 + i * 15, rect.top + 8); Pump(35); }
   Mouse(MOUSEEVENTF_LEFTUP); Pump(600);
+  Diagnose("after_drag", fixture);
   if (!Visible()) result = Fail("Deliberate drag selection did not show entry");
   if (clicks || GetForegroundWindow() != fixture) result = Fail("Entry activated or invoked capture before click");
   HWND entry = FindWindowW(L"BaoCodeTranslationSelectionAction", nullptr);
+  Diagnose("before_entry_click", fixture);
+  bool click_attempted = false;
   if (entry && IsWindowVisible(entry)) {
+    click_attempted = true;
     RECT button{}; GetWindowRect(entry, &button);
     SetCursorPos((button.left + button.right) / 2, (button.top + button.bottom) / 2);
     Mouse(MOUSEEVENTF_LEFTDOWN); Mouse(MOUSEEVENTF_LEFTUP); Pump(100);
@@ -97,6 +112,9 @@ int wmain(int argc, wchar_t** argv) {
     if (clicks != 1 || captured != fixture || GetForegroundWindow() != fixture || start == end)
       result = Fail("Click lost selection/focus or failed capture callback");
   }
+  Diagnose("after_entry_click", fixture);
+  if (!click_attempted || clicks != 1 || captured != fixture)
+    result = Fail("Positive entry click did not complete; negative-case click baseline is invalid");
   // A drag gesture is not evidence of selected text. Keep the earlier
   // RichEdit selection intact and verify a focused ordinary button cannot
   // cause a stale selection from another control to expose an entry.
@@ -111,6 +129,7 @@ int wmain(int argc, wchar_t** argv) {
       SetCursorPos(ordinary_rect.left + 15 + i * 20, ordinary_rect.top + 15); Pump(35);
     }
     Mouse(MOUSEEVENTF_LEFTUP); Pump(900);
+    Diagnose("ordinary_button_negative", fixture);
     if (Visible() || clicks != 1)
       result = Fail("Ordinary button drag exposed an entry or capture");
     // Also drag over an empty part of the client area, without selecting text.
@@ -120,6 +139,7 @@ int wmain(int argc, wchar_t** argv) {
       SetCursorPos(empty.x + i * 20, empty.y); Pump(35);
     }
     Mouse(MOUSEEVENTF_LEFTUP); Pump(900);
+    Diagnose("empty_client_negative", fixture);
     if (Visible() || clicks != 1)
       result = Fail("Empty client-area drag exposed an entry or capture");
   }
@@ -128,6 +148,7 @@ int wmain(int argc, wchar_t** argv) {
   RECT secret_rect{}; GetWindowRect(secret, &secret_rect);
   SetCursorPos(secret_rect.left + 3, secret_rect.top + 8); Mouse(MOUSEEVENTF_LEFTDOWN);
   SetCursorPos(secret_rect.left + 100, secret_rect.top + 8); Pump(100); Mouse(MOUSEEVENTF_LEFTUP); Pump(900);
+  Diagnose("password_negative", fixture);
   if (Visible() || clicks != 1) result = Fail("Password selection exposed an entry or capture");
   action->Configure(false, false); Pump(200);
   if (Visible()) result = Fail("Disable did not hide entry");

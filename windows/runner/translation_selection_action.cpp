@@ -11,6 +11,8 @@
 #include <cstdint>
 #include "translation_panel_geometry.h"
 #include "translation_capture_retry.h"
+#include "translation_console_binding.h"
+#include "translation_selection_target.h"
 
 namespace {
 constexpr UINT kMouse = WM_APP + 0x391;
@@ -25,21 +27,28 @@ using Microsoft::WRL::ComPtr;
 std::optional<RECT> SelectionBounds(HWND source,
     ComPtr<IUIAutomationElement>& previous_element,
     ComPtr<IUIAutomationTextRange>& previous_range, bool& retryable,
-    bool& require_text_control) {
+    bool& require_text_control, translation_selection::SelectionTarget& selection_target,
+    translation_selection::ConsoleBinding& console_binding,
+    const std::function<bool()>& stopped, ULONGLONG deadline) {
   retryable = false;
   DWORD pid = 0;
   GetWindowThreadProcessId(source, &pid);
-  if (!pid || pid == GetCurrentProcessId() || GetForegroundWindow() != source)
+  if (stopped() || !pid || pid == GetCurrentProcessId() || GetForegroundWindow() != source)
     return std::nullopt;
   ComPtr<IUIAutomation> automation;
   if (FAILED(CoCreateInstance(CLSID_CUIAutomation8, nullptr, CLSCTX_INPROC_SERVER,
                               IID_PPV_ARGS(&automation)))) return std::nullopt;
+  const ULONGLONG now = GetTickCount64();
+  if (stopped() || now >= deadline) return std::nullopt;
+  const DWORD remaining = static_cast<DWORD>(std::min<ULONGLONG>(500, deadline - now));
   ComPtr<IUIAutomation2> bounded;
-  if (FAILED(automation.As(&bounded)) ||
-      FAILED(bounded->put_ConnectionTimeout(previous_element ? 150 : 300)) ||
-      FAILED(bounded->put_TransactionTimeout(previous_element ? 200 : 500))) return std::nullopt;
+  if (FAILED(automation.As(&bounded)) || stopped() ||
+      FAILED(bounded->put_ConnectionTimeout(std::min<DWORD>(previous_element ? 150 : 300, remaining))) ||
+      stopped() || FAILED(bounded->put_TransactionTimeout(
+          std::min<DWORD>(previous_element ? 200 : 500, remaining))) || stopped()) return std::nullopt;
   ComPtr<IUIAutomationElement> focused;
   const HRESULT focus_result = automation->GetFocusedElement(&focused);
+  if (stopped()) return std::nullopt;
   if (FAILED(focus_result) || !focused) {
     // No element or text has been accepted yet. Only the exact lazy-tree
     // discovery timeout may retry; Tick supplies the shared attempt/deadline
@@ -48,15 +57,22 @@ std::optional<RECT> SelectionBounds(HWND source,
         static_cast<uint32_t>(focus_result) == translation_retry::kInitialFocusTimeout;
     return std::nullopt;
   }
-  if (GetForegroundWindow() != source ||
-      FAILED(bounded->put_ConnectionTimeout(150)) ||
-      FAILED(bounded->put_TransactionTimeout(200))) return std::nullopt;
+  if (GetForegroundWindow() != source) return std::nullopt;
+  const auto ready = [&] {
+    const ULONGLONG current = GetTickCount64();
+    if (stopped() || current >= deadline || GetForegroundWindow() != source) return false;
+    const DWORD budget = static_cast<DWORD>(std::min<ULONGLONG>(200, deadline - current));
+    return SUCCEEDED(bounded->put_ConnectionTimeout(std::min<DWORD>(150, budget))) &&
+        !stopped() && SUCCEEDED(bounded->put_TransactionTimeout(budget)) && !stopped();
+  };
   int focused_pid = 0;
   BOOL password = TRUE, has_focus = FALSE;
-  if (FAILED(focused->get_CurrentProcessId(&focused_pid)) ||
-      static_cast<DWORD>(focused_pid) != pid ||
-      FAILED(focused->get_CurrentIsPassword(&password)) || password ||
-      FAILED(focused->get_CurrentHasKeyboardFocus(&has_focus)))
+  if (!ready() || FAILED(focused->get_CurrentProcessId(&focused_pid)) ||
+      (static_cast<DWORD>(focused_pid) != pid &&
+       !console_binding.Verify(source, pid, static_cast<DWORD>(focused_pid), automation.Get(),
+           focused.Get(), stopped, deadline)) ||
+      !ready() || FAILED(focused->get_CurrentIsPassword(&password)) || password ||
+      !ready() || FAILED(focused->get_CurrentHasKeyboardFocus(&has_focus)))
     return std::nullopt;
   if (!has_focus) {
     CONTROLTYPEID initial_type = 0;
@@ -71,19 +87,16 @@ std::optional<RECT> SelectionBounds(HWND source,
     if (retryable) require_text_control = true;
     return std::nullopt;
   }
-  BOOL same_element = FALSE;
-  if (previous_element &&
-      (FAILED(automation->CompareElements(previous_element.Get(), focused.Get(), &same_element)) || !same_element))
-    return std::nullopt;
-  // Pin identity before requesting a possibly not-yet-initialized browser
-  // pattern. A retry may never drift to another focused control.
-  previous_element = focused;
+  if (!selection_target.Resolve(automation.Get(), focused.Get(), source,
+          static_cast<DWORD>(focused_pid), ready)) return std::nullopt;
+  if (!previous_range) previous_element = focused;
+  ComPtr<IUIAutomationElement> target = selection_target.Get();
   CONTROLTYPEID control_type = 0;
-  const bool text_control = SUCCEEDED(focused->get_CurrentControlType(&control_type)) &&
+  const bool text_control = SUCCEEDED(target->get_CurrentControlType(&control_type)) &&
       (control_type == UIA_EditControlTypeId || control_type == UIA_DocumentControlTypeId);
   if (require_text_control && !text_control) return std::nullopt;
   ComPtr<IUIAutomationTextPattern> pattern;
-  const HRESULT pattern_result = focused->GetCurrentPatternAs(UIA_TextPatternId, IID_PPV_ARGS(&pattern));
+  const HRESULT pattern_result = target->GetCurrentPatternAs(UIA_TextPatternId, IID_PPV_ARGS(&pattern));
   if (FAILED(pattern_result) || !pattern) {
     retryable = text_control &&
         (pattern_result == UIA_E_NOTSUPPORTED || pattern_result == E_NOINTERFACE ||
@@ -100,7 +113,12 @@ std::optional<RECT> SelectionBounds(HWND source,
   }
   ComPtr<IUIAutomationTextRange> range;
   int count = 0, difference = 0;
-  if (FAILED(ranges->get_Length(&count)) || count != 1 ||
+  if (!ready() || FAILED(ranges->get_Length(&count))) return std::nullopt;
+  if (count == 0) {
+    retryable = !previous_range && selection_target.NoteEmpty(ready);
+    return std::nullopt;
+  }
+  if (count != 1 ||
       FAILED(ranges->GetElement(0, &range)) || !range ||
       FAILED(range->CompareEndpoints(TextPatternRangeEndpoint_Start, range.Get(),
                                     TextPatternRangeEndpoint_End, &difference)) ||
@@ -149,7 +167,12 @@ std::optional<RECT> SelectionBounds(HWND source,
   BOOL still_same = FALSE;
   if (GetForegroundWindow() != source ||
       FAILED(automation->GetFocusedElement(&final_focus)) || !final_focus ||
-      FAILED(automation->CompareElements(focused.Get(), final_focus.Get(), &still_same)) || !still_same) {
+      FAILED(automation->CompareElements(focused.Get(), final_focus.Get(), &still_same)) || !still_same ||
+      !selection_target.Resolve(automation.Get(), final_focus.Get(), source,
+          static_cast<DWORD>(focused_pid), ready, false) ||
+      (static_cast<DWORD>(focused_pid) != pid &&
+       !console_binding.Verify(source, pid, static_cast<DWORD>(focused_pid), automation.Get(),
+           final_focus.Get(), stopped, deadline))) {
     result.reset();
     retryable = false;
   }
@@ -163,7 +186,7 @@ struct TranslationSelectionAction::Worker {
   bool stop = false, busy = false, pending = false, ready = false;
   bool retryable = false;
   HWND source = nullptr;
-  unsigned generation = 0;
+  unsigned generation = 0, active_generation = 0;
   std::optional<RECT> result;
 };
 
@@ -179,6 +202,9 @@ TranslationSelectionAction::TranslationSelectionAction(HWND dispatcher,
     ComPtr<IUIAutomationElement> previous_element;
     ComPtr<IUIAutomationTextRange> previous_range;
     unsigned previous_generation = 0;
+    translation_selection::SelectionTarget selection_target;
+    auto console_binding = std::make_unique<translation_selection::ConsoleBinding>();
+    ULONGLONG discovery_deadline = 0;
     bool require_text_control = false;
     std::unique_lock<std::mutex> lock(worker->mutex);
     while (true) {
@@ -191,11 +217,21 @@ TranslationSelectionAction::TranslationSelectionAction(HWND dispatcher,
       if (generation != previous_generation) {
         previous_element.Reset(); previous_range.Reset();
         require_text_control = false;
+        selection_target.Reset();
+        console_binding = std::make_unique<translation_selection::ConsoleBinding>();
+        discovery_deadline = GetTickCount64() + 1500;
         previous_generation = generation;
       }
+      const ULONGLONG deadline = previous_range ? GetTickCount64() + 700 : discovery_deadline;
+      const auto stopped = [&] {
+        if (GetTickCount64() >= deadline) return true;
+        std::lock_guard<std::mutex> guard(worker->mutex);
+        return worker->stop || worker->active_generation != generation;
+      };
       bool retryable = false;
       auto result = SUCCEEDED(initialized)
-          ? SelectionBounds(source, previous_element, previous_range, retryable, require_text_control) : std::nullopt;
+          ? SelectionBounds(source, previous_element, previous_range, retryable, require_text_control,
+                            selection_target, *console_binding, stopped, deadline) : std::nullopt;
       lock.lock();
       worker->result = result;
       worker->retryable = retryable;
@@ -204,6 +240,8 @@ TranslationSelectionAction::TranslationSelectionAction(HWND dispatcher,
     }
     lock.unlock();
     previous_element.Reset(); previous_range.Reset();
+    selection_target.Reset();
+    console_binding.reset();
     if (SUCCEEDED(initialized)) CoUninitialize();
     }).detach();
   } catch (const std::system_error&) {
@@ -267,6 +305,7 @@ LRESULT CALLBACK TranslationSelectionAction::MouseHook(int code, WPARAM wparam, 
 
 void TranslationSelectionAction::Hide() {
   ++generation_;
+  { std::lock_guard<std::mutex> lock(worker_->mutex); worker_->active_generation = generation_; }
   candidate_ = false;
   discovery_attempts_ = 0;
   discovery_started_ = 0;
@@ -311,6 +350,7 @@ void TranslationSelectionAction::Request() {
   if (worker_->busy) return;
   worker_->source = source_;
   worker_->generation = generation_;
+  worker_->active_generation = generation_;
   worker_->busy = true;
   worker_->pending = true;
   worker_->ready = false;

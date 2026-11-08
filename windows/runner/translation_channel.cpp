@@ -21,12 +21,16 @@ FlutterDesktopEngineForId(int64_t engine_id);
 namespace {
 constexpr int kHotkey = 0x4254;
 flutter::EncodableValue Encode(const translation_selection::Selection& selection,
-                               int64_t request_id) {
+                               int64_t request_id, const char* origin = "manual") {
   return flutter::EncodableValue(flutter::EncodableMap{
       {flutter::EncodableValue("text"), flutter::EncodableValue(Utf8FromUtf16(selection.text.c_str()))},
       {flutter::EncodableValue("status"), flutter::EncodableValue(selection.status)},
       {flutter::EncodableValue("self"), flutter::EncodableValue(selection.self)},
-      {flutter::EncodableValue("requestId"), flutter::EncodableValue(request_id)}});
+      {flutter::EncodableValue("requestId"), flutter::EncodableValue(request_id)},
+      // Only the successful result of this exact explicit click carries intent.
+      // Empty/failed/stale captures never authorize translating later content.
+      {flutter::EncodableValue("origin"), flutter::EncodableValue(
+          selection.status == "ok" && !selection.text.empty() ? origin : "manual")}});
 }
 bool BoolArgument(const flutter::EncodableValue* arguments, const char* key) {
   const auto* map = arguments ? std::get_if<flutter::EncodableMap>(arguments) : nullptr;
@@ -97,6 +101,7 @@ struct TranslationChannel::Pending {
   std::atomic<bool> canceled{false};
   int64_t request_id = 0;
   HWND foreground = nullptr;
+  std::string origin = "manual";
   translation_selection::Selection selection;
 };
 TranslationChannel::TranslationChannel(flutter::BinaryMessenger* messenger, HWND window)
@@ -105,7 +110,7 @@ TranslationChannel::TranslationChannel(flutter::BinaryMessenger* messenger, HWND
           messenger, "baocode/translation", &flutter::StandardMethodCodec::GetInstance())) {
   selection_action_ = std::make_unique<TranslationSelectionAction>(window_,
       [this](HWND source) {
-        if (source && GetForegroundWindow() == source) Capture(nullptr);
+        if (source && GetForegroundWindow() == source) Capture(nullptr, "selectionEntryClick");
       });
   channel_->SetMethodCallHandler([this](const auto& call, auto result) {
     if (call.method_name() == "configure") {
@@ -283,11 +288,11 @@ bool TranslationChannel::HandleMessage(UINT message, WPARAM wparam, LPARAM lpara
 bool TranslationChannel::HandleHotkey(WPARAM id) {
   if (id != static_cast<WPARAM>(kHotkey)) return false;
   if (panel_shown_) HidePanel(true);
-  else Capture(nullptr);
+  else Capture(nullptr, "hotkey");
   return true;
 }
 void TranslationChannel::Capture(
-    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result, const char* origin) {
   selection_action_->Hide();
   const bool explicit_shortcut = result == nullptr;
   const HWND foreground = GetForegroundWindow();
@@ -316,6 +321,7 @@ void TranslationChannel::Capture(
   pending_ = std::make_shared<Pending>();
   pending_->request_id = request_id_;
   pending_->foreground = foreground;
+  pending_->origin = origin;
   result_ = std::move(result);
   delivered_ = false;
   started_ = GetTickCount64();
@@ -391,11 +397,11 @@ void TranslationChannel::Poll() {
     }
     if (!changed) anchor_ = selection.bounds;
     if (result_) {
-      result_->Success(Encode(selection, pending_->request_id));
+      result_->Success(Encode(selection, pending_->request_id, pending_->origin.c_str()));
       result_.reset();
     } else if (!changed && selection.status != "focusChanged") {
       channel_->InvokeMethod("pressed", std::make_unique<flutter::EncodableValue>(
-          Encode(selection, pending_->request_id)));
+          Encode(selection, pending_->request_id, pending_->origin.c_str())));
     }
   }
   if (done) {

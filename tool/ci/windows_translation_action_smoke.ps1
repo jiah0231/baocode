@@ -15,7 +15,7 @@ $build = Join-Path $env:TEMP ('baocode-action-' + [guid]::NewGuid().ToString('N'
 New-Item -ItemType Directory -Path $build | Out-Null
 try {
   Push-Location $build
-  & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /wd4100 /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX $source $implementation /Fe:action_smoke.exe /link user32.lib gdi32.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
+  & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /wd4100 /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX $source $implementation /Fe:action_smoke.exe /link user32.lib advapi32.lib gdi32.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
   if ($LASTEXITCODE -ne 0) { throw 'Selection action smoke compilation failed' }
   $test = Start-Process -FilePath (Join-Path $build 'action_smoke.exe') -PassThru -NoNewWindow
   if (-not $test.WaitForExit(20000)) {
