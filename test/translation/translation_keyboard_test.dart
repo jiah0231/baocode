@@ -20,6 +20,24 @@ void main() {
   testWidgets('single workspace never handles tool-view shortcuts', (
     tester,
   ) async {
+    var stage = 'initial setup';
+    final reportedErrors = <String>[];
+    final originalOnError = FlutterError.onError!;
+    FlutterError.onError = (details) {
+      reportedErrors.add(
+        '$stage: ${details.exceptionAsString()}\n${details.stack}',
+      );
+      originalOnError(details);
+    };
+    addTearDown(() => FlutterError.onError = originalOnError);
+    void assertNoFlutterError(String phase) {
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: '$phase\n${reportedErrors.join('\n')}',
+      );
+    }
+
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
     final oldPlatform = KeybindingService.instance.debugPlatform;
@@ -61,6 +79,7 @@ void main() {
       nextFrame: () => tester.binding.endOfFrame,
     );
     await windows.start();
+    stage = 'initial app construction';
     await tester.pumpWidget(
       BaoCodeApp(workspace: workspace, windows: windows),
       wrapWithView: false,
@@ -90,10 +109,12 @@ void main() {
     }
 
     await frames();
+    assertNoFlutterError('initial app construction');
     expect(windows.multi, isFalse);
     final mainFocus = FocusManager.instance.primaryFocus!;
     final translation = TranslationHost.instance;
     for (final closing in ['alt-f4', 'ctrl-w', 'ctrl-shift-w']) {
+      stage = 'opening panel for $closing';
       await translation.openPanel(
         const TranslationCapture(text: 'selected', status: 'ok'),
       );
@@ -105,6 +126,8 @@ void main() {
             .viewId,
         9,
       );
+      assertNoFlutterError(stage);
+      stage = 'isolated shortcuts before $closing';
       final before = List<String>.of(host.log);
       final layout = workspace.layout;
       await chord(LogicalKeyboardKey.equal, control: true);
@@ -122,6 +145,8 @@ void main() {
       expect(find.byType(QuickAskDialog), findsNothing);
       expect(host.log, before);
       expect(windows.chat.shown, isTrue);
+      assertNoFlutterError(stage);
+      stage = 'closing panel with $closing';
       // Focus still belongs to the tool while its close callback clears the
       // shown flag. The global handler must reject this same key event too.
       await chord(
@@ -133,8 +158,10 @@ void main() {
       expect(translation.panelCapture, isNull, reason: closing);
       expect(windows.chat.shown, isTrue, reason: closing);
       expect(host.log, before, reason: closing);
+      assertNoFlutterError(stage);
     }
     // The ordinary workbench retains its original zoom and close shortcuts.
+    stage = 'ordinary main-workbench shortcuts';
     mainFocus.requestFocus();
     await frames();
     await chord(LogicalKeyboardKey.equal, control: true);
@@ -142,18 +169,11 @@ void main() {
     await chord(LogicalKeyboardKey.keyW, control: true, shift: true);
     expect(windows.chat.shown, isFalse);
     expect(host.log, contains('hide 0'));
-    expect(
-      tester.takeException(),
-      isNull,
-      reason: 'shortcut handling before app teardown',
-    );
+    assertNoFlutterError('shortcut handling before app teardown');
+    stage = 'app teardown';
     await tester.pumpWidget(const SizedBox.shrink());
     translation.panelViewId = null;
     windows.dispose();
-    expect(
-      tester.takeException(),
-      isNull,
-      reason: 'app teardown must not notify disposing ancestors',
-    );
+    assertNoFlutterError('app teardown must not notify disposing ancestors');
   }, semanticsEnabled: false);
 }

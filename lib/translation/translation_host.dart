@@ -209,7 +209,11 @@ class TranslationHost extends ChangeNotifier {
       }
       return null;
     });
-    _changed();
+    // start is called by Workbench.initState under the app's host listener.
+    // Its initial pending state is already being built; notifying that
+    // ancestor now would mark it dirty during build. Native results notify
+    // asynchronously as usual.
+    unawaited(_sync(notify: false));
   }
 
   void _changed() => unawaited(_sync());

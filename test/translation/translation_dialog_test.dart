@@ -20,6 +20,52 @@ import 'package:baocode/usage/usage_ledger.dart';
 import 'translation_service_test.dart' show configured;
 
 void main() {
+  testWidgets('starting a workbench below a host listener is build-safe', (
+    tester,
+  ) async {
+    const channel = MethodChannel('test/translation-init');
+    final calls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
+      call,
+    ) async {
+      calls.add(call);
+      return true;
+    });
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        null,
+      ),
+    );
+    final host = TranslationHost(
+      channel: channel,
+      supported: true,
+      engineId: 42,
+    );
+    var builds = 0;
+    await tester.pumpWidget(
+      ListenableBuilder(
+        listenable: host,
+        builder: (context, _) {
+          builds++;
+          return _StartTranslationOnInit(host: host);
+        },
+      ),
+    );
+    await tester.pump();
+    await host.configureAppearance(true);
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(calls.map((call) => call.method), ['configure', 'setHotkey']);
+    expect(host.hotkeyTaken, isTrue);
+    expect(host.selectionActionTaken, isTrue);
+    expect(builds, greaterThan(1)); // Native completion still updates the UI.
+    await tester.pumpWidget(const SizedBox.shrink());
+    host.stop();
+    await host.configureAppearance(true);
+    host.dispose();
+  });
+
   testWidgets(
     'stopping a workbench during unmount never notifies a disposing ancestor',
     (tester) async {
@@ -861,6 +907,25 @@ class _StopTranslationOnDisposeState extends State<_StopTranslationOnDispose> {
   void dispose() {
     widget.host.stop();
     super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => const SizedBox.shrink();
+}
+
+class _StartTranslationOnInit extends StatefulWidget {
+  const _StartTranslationOnInit({required this.host});
+  final TranslationHost host;
+  @override
+  State<_StartTranslationOnInit> createState() =>
+      _StartTranslationOnInitState();
+}
+
+class _StartTranslationOnInitState extends State<_StartTranslationOnInit> {
+  @override
+  void initState() {
+    super.initState();
+    widget.host.start(null);
   }
 
   @override
