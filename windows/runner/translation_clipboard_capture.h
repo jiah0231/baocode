@@ -24,6 +24,16 @@ struct Proof {
   bool safe_text_control = false;
 };
 struct Result { std::wstring text; std::string status = "unsupported"; };
+// Optional diagnostics contain metadata only, never clipboard/source content.
+struct Diagnostics {
+  const char* stage = "initial";
+  DWORD previous_input = 0;
+  DWORD injected_time = 0;
+  DWORD initial_sequence = 0;
+  DWORD observed_sequence = 0;
+  DWORD last_error = ERROR_SUCCESS;
+  UINT injected_events = 0;
+};
 // A failed restoration is a separate user-visible warning, including when the
 // request was canceled or focus changed meanwhile. Keep that warning while
 // discarding source text; ordinary stale-result checks must not hide it.
@@ -159,14 +169,20 @@ inline Result ReadUnicode() {
 // caller must not launch further capture attempts while this one is pending.
 inline Result CopySelection(HWND owner, const Proof& proof,
                             const std::atomic<bool>* canceled = nullptr,
-                            ULONGLONG request_deadline = 0) {
+                            ULONGLONG request_deadline = 0,
+                            Diagnostics* diagnostics = nullptr) {
+  Diagnostics ignored;
+  Diagnostics& diag = diagnostics ? *diagnostics : ignored;
+  diag = Diagnostics{};
   Result result;
   const auto stopped = [&]() {
     return (canceled && canceled->load()) || !IsWindow(owner) ||
            (request_deadline && GetTickCount64() >= request_deadline);
   };
   if (stopped()) return result;
+  diag.stage = "eligibility";
   if (!SafeControl(proof)) return result;
+  diag.stage = "modifierRelease";
   const ULONGLONG release_deadline = GetTickCount64() + 450;
   while (!KeysReleased()) {
     if (stopped()) return result;
@@ -175,16 +191,22 @@ inline Result CopySelection(HWND owner, const Proof& proof,
     Sleep(10);
   }
   LASTINPUTINFO previous_input{}; previous_input.cbSize = sizeof(previous_input);
+  diag.stage = "inputBaseline";
   if (!GetLastInputInfo(&previous_input)) return result;
-  if (stopped() || !OpenClipboard(owner)) return result;
+  diag.previous_input = previous_input.dwTime;
+  diag.stage = "snapshotOpen";
+  if (stopped() || !OpenClipboard(owner)) { diag.last_error = GetLastError(); return result; }
+  diag.stage = "snapshotSave";
   Snapshot saved;
   const bool ready = Save(saved);
   const DWORD before = GetClipboardSequenceNumber();
+  diag.initial_sequence = before;
   CloseClipboard();
   if (!ready) { result.status = "clipboardUnsupported"; return result; }
   if (stopped() || !SafeControl(proof) || !KeysReleased() || GetClipboardSequenceNumber() != before) return result;
   // Standard Edit messages are marshalled by Windows. Never read the value or
   // whole document; only query selection endpoints, with a bounded provider wait.
+  diag.stage = "nativeSelection";
   DWORD_PTR endpoints = 0;
   if (!SendMessageTimeoutW(proof.focused, EM_GETSEL, 0, 0,
                           SMTO_ABORTIFHUNG | SMTO_BLOCK, 100, &endpoints)) return result;
@@ -196,6 +218,7 @@ inline Result CopySelection(HWND owner, const Proof& proof,
   // Use a known, nonzero stamp for every event in our batch. Zero asks Windows
   // to assign a timestamp; avoid it at tick wrap and avoid the preceding input's
   // tick so an unprocessed injection cannot look like a completed one.
+  diag.stage = "inputTimestamp";
   DWORD injected_time = GetTickCount();
   if (!injected_time || injected_time == previous_input.dwTime) {
     Sleep(20);
@@ -203,6 +226,7 @@ inline Result CopySelection(HWND owner, const Proof& proof,
   }
   if (!injected_time || injected_time == previous_input.dwTime ||
       !LastInputMatches(previous_input.dwTime)) return result;
+  diag.injected_time = injected_time;
   INPUT input[4]{};
   for (auto& key : input) { key.type = INPUT_KEYBOARD; key.ki.time = injected_time; }
   input[0].ki.wVk = VK_CONTROL; input[1].ki.wVk = 'C';
@@ -210,18 +234,24 @@ inline Result CopySelection(HWND owner, const Proof& proof,
   input[3].ki.wVk = VK_CONTROL; input[3].ki.dwFlags = KEYEVENTF_KEYUP;
   if (stopped() || !SameFocus(proof) || !KeysReleased() ||
       !LastInputMatches(previous_input.dwTime) || GetClipboardSequenceNumber() != before) return result;
+  diag.stage = "sendInput";
   const UINT inserted = SendInput(4, input, sizeof(INPUT));
+  diag.injected_events = inserted;
+  diag.last_error = inserted == 4 ? ERROR_SUCCESS : GetLastError();
   if (inserted != 4) {
     // Avoid leaving our synthetic Ctrl down if the OS inserted only a prefix.
     if (inserted) SendInput(2, input + 2, sizeof(INPUT));
     return result;
   }
+  diag.stage = "waitCopy";
   const ULONGLONG deadline = GetTickCount64() + 500;
   while (GetTickCount64() < deadline) {
     if (!SameFocus(proof)) { result.status = "focusChanged"; return result; }
     if (GetClipboardSequenceNumber() != before) {
-      if (!OpenClipboard(owner)) { Sleep(5); continue; }
+      if (!OpenClipboard(owner)) { diag.last_error = GetLastError(); Sleep(5); continue; }
+      diag.stage = "verifyCopy";
       const DWORD copied = GetClipboardSequenceNumber();
+      diag.observed_sequence = copied;
       DWORD writer = 0;
       const HWND clipboard_owner = GetClipboardOwner();
       GetWindowThreadProcessId(clipboard_owner, &writer);
@@ -229,15 +259,18 @@ inline Result CopySelection(HWND owner, const Proof& proof,
       if (copied != before && writer == proof.process && SameFocus(proof) &&
           LastInputMatches(injected_time) &&
           (clipboard_owner == proof.focused || clipboard_owner == proof.foreground)) {
+        diag.stage = "readCopy";
         if (!stopped()) result = ReadUnicode();
         else result.status = "canceled";
         // A delayed renderer may change the sequence during ReadUnicode.
         if (GetClipboardSequenceNumber() == copied && SameFocus(proof) &&
             LastInputMatches(injected_time)) {
+          diag.stage = "restore";
           if (!Restore(saved)) { result.text.clear(); result.status = "clipboardRestoreFailed"; }
         } else { result.text.clear(); result.status = "clipboardChanged"; }
       } else result.status = "clipboardChanged";
       CloseClipboard();
+      diag.stage = "finalize";
       FinalizeCaptureResult(result, SameFocus(proof),
                             LastInputMatches(injected_time), stopped());
       return result;

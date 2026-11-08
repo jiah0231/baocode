@@ -9,6 +9,28 @@ concurrency:
   group: translation-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  native:
+    if: github.repository == 'jiah0231/baocode'
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Test cross-process selection and clipboard protection
+        shell: pwsh
+        run: ./tool/ci/windows_translation_smoke.ps1
+      - name: Test guarded explicit selection copying
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: ./tool/ci/windows_translation_clipboard_smoke.ps1
+      - name: Test nonactivating selection action entry
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+        run: ./tool/ci/windows_translation_action_smoke.ps1
   validate:
     if: github.repository == 'jiah0231/baocode'
     runs-on: windows-2025
@@ -20,17 +42,6 @@ jobs:
         with:
           persist-credentials: false
       - uses: ilammy/msvc-dev-cmd@v1
-      - name: Test cross-process selection and clipboard protection
-        shell: pwsh
-        run: ./tool/ci/windows_translation_smoke.ps1
-      - name: Test guarded explicit selection copying
-        shell: pwsh
-        run: ./tool/ci/windows_translation_clipboard_smoke.ps1
-      - name: Test nonactivating selection action entry
-        shell: pwsh
-        env:
-          BAOCODE_DISPOSABLE_UI_TEST: '1'
-        run: ./tool/ci/windows_translation_action_smoke.ps1
       - name: Restore unchanged bundled assets
         shell: pwsh
         run: |

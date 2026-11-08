@@ -1,14 +1,21 @@
 // Intrusive synthetic test. Run only on disposable Windows CI desktops.
 #include "../../windows/runner/translation_clipboard_capture.h"
 #include <cstdio>
+#include <future>
+#include <chrono>
 namespace {
 constexpr UINT kPrepare = WM_APP + 71;
 HWND edit = nullptr, other = nullptr;
 WNDPROC original = nullptr;
 int mode = 0, copies = 0;
 bool Put(HWND owner, const std::wstring& text, bool locale = false) {
-  if (!OpenClipboard(owner)) return false;
+  if (!OpenClipboard(owner)) {
+    std::fprintf(stderr, "FIXTURE_PUT open_failed case=%d error=%lu lock_owner=%p\n",
+      mode, GetLastError(), static_cast<void*>(GetOpenClipboardWindow()));
+    return false;
+  }
   bool ok = EmptyClipboard() != FALSE;
+  if (!ok) std::fprintf(stderr, "FIXTURE_PUT empty_failed case=%d error=%lu\n", mode, GetLastError());
   HGLOBAL data = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, (text.size() + 1) * sizeof(wchar_t));
   void* buffer = data ? GlobalLock(data) : nullptr;
   if (buffer) {
@@ -103,6 +110,52 @@ bool StartFixture(std::wstring& command, STARTUPINFOW& startup, PROCESS_INFORMAT
   CloseHandle(token);
   return success;
 }
+void PumpMessages() {
+  MSG message{};
+  while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+    TranslateMessage(&message); DispatchMessageW(&message);
+  }
+}
+// Match the production threading model: the window-owning thread must continue
+// dispatching WM_DESTROYCLIPBOARD / rendering notifications while capture waits
+// on a worker. Running capture on this thread deadlocks the external writer's
+// EmptyClipboard against our old owner and makes the timeout look like bad input.
+translation_clipboard::Result CaptureWithPump(HWND owner,
+    const translation_clipboard::Proof& proof, translation_clipboard::Diagnostics& diag) {
+  auto pending = std::async(std::launch::async, [&]() {
+    return translation_clipboard::CopySelection(owner, proof, nullptr, 0, &diag);
+  });
+  while (pending.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+    PumpMessages();
+    MsgWaitForMultipleObjects(0, nullptr, FALSE, 10, QS_ALLINPUT);
+  }
+  PumpMessages();
+  return pending.get();
+}
+void Report(int test, const translation_clipboard::Result& captured,
+    const translation_clipboard::Proof& proof,
+    const translation_clipboard::Diagnostics& diag, DWORD_PTR count, bool count_ok) {
+  LASTINPUTINFO last{}; last.cbSize = sizeof(last);
+  const bool input_ok = GetLastInputInfo(&last) != FALSE;
+  const HWND clipboard_owner = GetClipboardOwner();
+  const HWND lock_owner = GetOpenClipboardWindow();
+  DWORD clipboard_pid = 0, lock_pid = 0;
+  GetWindowThreadProcessId(clipboard_owner, &clipboard_pid);
+  GetWindowThreadProcessId(lock_owner, &lock_pid);
+  std::fprintf(stderr,
+    "CLIPBOARD_DIAG case=%d status=%s stage=%s source_units=%llu copies=%llu count_ok=%d "
+    "seq_before=%lu seq_snapshot=%lu seq_now=%lu owner=%p owner_pid=%lu "
+    "lock_owner=%p lock_pid=%lu foreground=%p expected_foreground=%p focus_ok=%d "
+    "input_ok=%d input_before=%lu input_injected=%lu input_now=%lu injected=%u error=%lu\n",
+    test, captured.status.c_str(), diag.stage, static_cast<unsigned long long>(captured.text.size()),
+    static_cast<unsigned long long>(count), count_ok ? 1 : 0,
+    diag.initial_sequence, diag.observed_sequence, GetClipboardSequenceNumber(),
+    static_cast<void*>(clipboard_owner), clipboard_pid, static_cast<void*>(lock_owner), lock_pid,
+    static_cast<void*>(GetForegroundWindow()), static_cast<void*>(proof.foreground),
+    translation_clipboard::SameFocus(proof) ? 1 : 0, input_ok ? 1 : 0,
+    diag.previous_input, diag.injected_time, last.dwTime, diag.injected_events, diag.last_error);
+  std::fflush(stderr);
+}
 int Fail(const char* why) { std::fprintf(stderr, "%s\n", why); return 1; }
 }
 int wmain(int argc, wchar_t** argv) {
@@ -163,13 +216,16 @@ int wmain(int argc, wchar_t** argv) {
       INPUT held{}; held.type = INPUT_KEYBOARD; held.ki.wVk = VK_SHIFT;
       SendInput(1, &held, sizeof(INPUT)); Sleep(30);
     }
-    const auto captured = translation_clipboard::CopySelection(owner, proof);
+    translation_clipboard::Diagnostics diagnostics;
+    const auto captured = CaptureWithPump(owner, proof, diagnostics);
     if (test == 7) {
       INPUT release{}; release.type = INPUT_KEYBOARD; release.ki.wVk = VK_SHIFT;
       release.ki.dwFlags = KEYEVENTF_KEYUP; SendInput(1, &release, sizeof(INPUT));
     }
     DWORD_PTR count = 0;
-    SendMessageTimeoutW(fixture, kPrepare + 1, 0, 0, SMTO_ABORTIFHUNG, 2000, &count);
+    const bool count_ok = SendMessageTimeoutW(fixture, kPrepare + 1, 0, 0,
+      SMTO_ABORTIFHUNG, 2000, &count) != 0;
+    Report(test, captured, proof, diagnostics, count, count_ok);
     if (test == 0 && (captured.status != "ok" || captured.text != L"Selected source only" || count != 1))
       result = Fail("Actual SendInput copy did not capture exact selection");
     if (test == 1 && (captured.status != "clipboardTimeout" || GetClipboardSequenceNumber() != sequence))
