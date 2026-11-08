@@ -20,6 +20,14 @@ struct CaptureDiagnostics {
   unsigned attempts = 0;
   unsigned final_attempts = 0;
   DWORD console_host_integrity = 0, console_client_integrity = 0;
+  SelectionTargetDiagnostics target;
+  const char* bounds_stage = "notRequested";
+  HRESULT bounds_result = S_OK;
+  unsigned bounds_rectangles = 0, bounds_dimensions = 0;
+  VARTYPE bounds_vartype = VT_EMPTY;
+  LONG bounds_lower = 0, bounds_upper = -1;
+  double bounds_first[4]{};
+  RECT bounds_source{};
 };
 struct Selection {
   std::wstring text;
@@ -31,9 +39,20 @@ struct Selection {
 // Bounding rectangles are optional. A broken geometry provider must neither
 // expose arbitrary data nor invalidate otherwise valid selected text.
 inline std::optional<RECT> ReadBounds(IUIAutomationTextRange* range,
-                                      HWND foreground) {
+                                      HWND foreground, CaptureDiagnostics* diagnostics = nullptr) {
   SAFEARRAY* values = nullptr;
   const HRESULT read = range->GetBoundingRectangles(&values);
+  if (diagnostics) {
+    diagnostics->bounds_stage = FAILED(read) ? "GetBoundingRectangles.failed" : "invalidOrEmptyArray";
+    diagnostics->bounds_result = read;
+    diagnostics->bounds_rectangles = 0;
+    diagnostics->bounds_dimensions = values ? SafeArrayGetDim(values) : 0;
+    diagnostics->bounds_vartype = VT_EMPTY;
+    diagnostics->bounds_lower = 0;
+    diagnostics->bounds_upper = -1;
+    diagnostics->bounds_source = RECT{};
+    for (double& value : diagnostics->bounds_first) value = 0;
+  }
   std::optional<RECT> result;
   VARTYPE type = VT_EMPTY;
   LONG lower = 0, upper = -1;
@@ -48,6 +67,12 @@ inline std::optional<RECT> ReadBounds(IUIAutomationTextRange* range,
       RECT source = {};
       if (data && GetWindowRect(foreground, &source)) {
         const int count = static_cast<int>(static_cast<int64_t>(upper) - lower + 1);
+        if (diagnostics) {
+          diagnostics->bounds_stage = "noValidSourceIntersection";
+          diagnostics->bounds_rectangles = static_cast<unsigned>(count / 4);
+          diagnostics->bounds_source = source;
+          for (int i = 0; i < 4; ++i) diagnostics->bounds_first[i] = data[i];
+        }
         for (int i = 0; i < count && !result; i += 4) {
           const auto checked = translation_panel::SelectionRect(
               data[i], data[i + 1], data[i + 2], data[i + 3]);
@@ -61,7 +86,13 @@ inline std::optional<RECT> ReadBounds(IUIAutomationTextRange* range,
       SafeArrayUnaccessData(values);
     }
   }
+  if (diagnostics) {
+    diagnostics->bounds_vartype = type;
+    diagnostics->bounds_lower = lower;
+    diagnostics->bounds_upper = upper;
+  }
   if (values) SafeArrayDestroy(values);
+  if (result && diagnostics) diagnostics->bounds_stage = "accepted";
   return result;
 }
 // BSTRs are length-delimited, but downstream native string conversion is not.
@@ -211,7 +242,12 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
               }
             } else {
               if (!selection_target.Resolve(automation.Get(), focused.Get(), foreground,
-                      static_cast<DWORD>(focused_process), ready)) {
+                      static_cast<DWORD>(focused_process), ready, true,
+                      diagnostics ? &diagnostics->target : nullptr)) {
+                if (diagnostics) {
+                  diagnostics->last_failure_stage = diagnostics->target.stage;
+                  diagnostics->last_failure = diagnostics->target.result;
+                }
                 out.status = "focusChanged";
                 break;
               }
@@ -298,7 +334,7 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
                       SysFreeString(text);
                       if (FAILED(read) || !has_text) { failed = true; break; }
                       if (out.status == "tooLong") break;
-                      if (!out.bounds && !stopped()) out.bounds = ReadBounds(range.Get(), foreground);
+                      if (!out.bounds && !stopped()) out.bounds = ReadBounds(range.Get(), foreground, diagnostics);
                     }
                     if (failed || out.status == "tooLong") {
                       out.text.clear();
@@ -354,7 +390,8 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
                 stopped()) break;
             if (final_has_focus) {
               verified = selection_target.Resolve(automation.Get(), final_focus.Get(), foreground,
-                  static_cast<DWORD>(final_process), ready, false);
+                  static_cast<DWORD>(final_process), ready, false,
+                  diagnostics ? &diagnostics->target : nullptr);
               if (!verified && diagnostics) {
                 diagnostics->last_failure_stage = "FinalFocus.DifferentElement";
                 diagnostics->last_failure = S_FALSE;

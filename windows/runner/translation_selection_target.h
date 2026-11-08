@@ -5,6 +5,14 @@
 #include <wrl/client.h>
 
 namespace translation_selection {
+// Optional metadata-only diagnostics. No selected text or document values.
+struct SelectionTargetDiagnostics {
+  const char* stage = "none";
+  HRESULT result = S_OK;
+  int process = 0;
+  BOOL password = TRUE, offscreen = TRUE, has_focus = FALSE, same = FALSE;
+  CONTROLTYPEID type = 0;
+};
 namespace selection_target_detail {
 // Resolves only the current focus and a bounded CONTROL-parent chain. Chromium
 // PDF exposes focused Groups inside a selectable Document. No descendants,
@@ -103,21 +111,51 @@ class Target {
 class UiaTree {
  public:
   using Element = Microsoft::WRL::ComPtr<IUIAutomationElement>;
-  explicit UiaTree(IUIAutomation* automation) : automation_(automation) {}
-  bool Process(const Element& node, int* value) { return SUCCEEDED(node->get_CurrentProcessId(value)); }
-  bool Password(const Element& node, BOOL* value) { return SUCCEEDED(node->get_CurrentIsPassword(value)); }
-  bool Offscreen(const Element& node, BOOL* value) { return SUCCEEDED(node->get_CurrentIsOffscreen(value)); }
-  bool Focus(const Element& node, BOOL* value) { return SUCCEEDED(node->get_CurrentHasKeyboardFocus(value)); }
-  bool Type(const Element& node, CONTROLTYPEID* value) { return SUCCEEDED(node->get_CurrentControlType(value)); }
-  bool Same(const Element& first, const Element& second, BOOL* value) {
-    return SUCCEEDED(automation_->CompareElements(first.Get(), second.Get(), value));
+  explicit UiaTree(IUIAutomation* automation, SelectionTargetDiagnostics* diagnostics = nullptr)
+      : automation_(automation), diagnostics_(diagnostics) {}
+  bool Process(const Element& node, int* value) {
+    const bool ok = Observe("Target.ProcessId", node->get_CurrentProcessId(value));
+    if (ok && diagnostics_) diagnostics_->process = *value;
+    return ok;
   }
-  bool Walker() { return SUCCEEDED(automation_->get_ControlViewWalker(walker_.ReleaseAndGetAddressOf())) && walker_; }
+  bool Password(const Element& node, BOOL* value) {
+    const bool ok = Observe("Target.IsPassword", node->get_CurrentIsPassword(value));
+    if (ok && diagnostics_) diagnostics_->password = *value;
+    return ok;
+  }
+  bool Offscreen(const Element& node, BOOL* value) {
+    const bool ok = Observe("Target.IsOffscreen", node->get_CurrentIsOffscreen(value));
+    if (ok && diagnostics_) diagnostics_->offscreen = *value;
+    return ok;
+  }
+  bool Focus(const Element& node, BOOL* value) {
+    const bool ok = Observe("Target.HasKeyboardFocus", node->get_CurrentHasKeyboardFocus(value));
+    if (ok && diagnostics_) diagnostics_->has_focus = *value;
+    return ok;
+  }
+  bool Type(const Element& node, CONTROLTYPEID* value) {
+    const bool ok = Observe("Target.ControlType", node->get_CurrentControlType(value));
+    if (ok && diagnostics_) diagnostics_->type = *value;
+    return ok;
+  }
+  bool Same(const Element& first, const Element& second, BOOL* value) {
+    const bool ok = Observe("Target.CompareElements", automation_->CompareElements(first.Get(), second.Get(), value));
+    if (ok && diagnostics_) diagnostics_->same = *value;
+    return ok;
+  }
+  bool Walker() {
+    return Observe("Target.ControlWalker", automation_->get_ControlViewWalker(walker_.ReleaseAndGetAddressOf())) && walker_;
+  }
   bool Parent(const Element& node, Element* parent) {
-    return SUCCEEDED(walker_->GetParentElement(node.Get(), parent->GetAddressOf()));
+    return Observe("Target.Parent", walker_->GetParentElement(node.Get(), parent->GetAddressOf()));
   }
  private:
+  bool Observe(const char* stage, HRESULT result) {
+    if (diagnostics_) { diagnostics_->stage = stage; diagnostics_->result = result; }
+    return SUCCEEDED(result);
+  }
   IUIAutomation* automation_;
+  SelectionTargetDiagnostics* diagnostics_;
   Microsoft::WRL::ComPtr<IUIAutomationTreeWalker> walker_;
 };
 }  // namespace selection_target_detail
@@ -127,12 +165,14 @@ class SelectionTarget {
   IUIAutomationElement* Get() const { return state_.Get().Get(); }
   template <typename Ready>
   bool Resolve(IUIAutomation* automation, IUIAutomationElement* focus,
-               HWND source, DWORD pid, const Ready& ready, bool allow_transition = true) {
+               HWND source, DWORD pid, const Ready& ready, bool allow_transition = true,
+               SelectionTargetDiagnostics* diagnostics = nullptr) {
+    if (diagnostics) *diagnostics = SelectionTargetDiagnostics{};
     if (!automation || !focus || !ready()) return false;
     wchar_t window_class[64]{};
     const bool chrome = GetClassNameW(source, window_class, 64) &&
         wcscmp(window_class, L"Chrome_WidgetWin_1") == 0;
-    selection_target_detail::UiaTree tree(automation);
+    selection_target_detail::UiaTree tree(automation, diagnostics);
     return state_.Resolve(tree, focus, chrome, pid, ready, allow_transition);
   }
   template <typename Ready>

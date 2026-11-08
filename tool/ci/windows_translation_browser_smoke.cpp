@@ -108,19 +108,117 @@ void SyntheticScreenshot(const std::wstring& path) {
   fwrite(pixels, bytes, 1, file); fclose(file);
   SelectObject(dc, old); DeleteObject(bitmap); DeleteDC(dc); ReleaseDC(nullptr, screen);
 }
+struct NativeWindowSnapshot {
+  HWND window = nullptr, root = nullptr;
+  DWORD process = 0, thread = 0, cloaked = 0;
+  UINT dpi = 0;
+  BOOL visible = FALSE, iconic = FALSE, rect_ok = FALSE;
+  HRESULT cloak_result = E_FAIL;
+  RECT rect{};
+  wchar_t window_class[128]{};
+};
+NativeWindowSnapshot ReadNativeWindow(HWND window) {
+  NativeWindowSnapshot snapshot;
+  snapshot.window = window;
+  if (!window) return snapshot;
+  snapshot.root = GetAncestor(window, GA_ROOT);
+  snapshot.thread = GetWindowThreadProcessId(window, &snapshot.process);
+  snapshot.dpi = GetDpiForWindow(window);
+  snapshot.visible = IsWindowVisible(window);
+  snapshot.iconic = IsIconic(window);
+  snapshot.rect_ok = GetWindowRect(window, &snapshot.rect);
+  GetClassNameW(window, snapshot.window_class, 128);
+  snapshot.cloak_result = DwmGetWindowAttribute(window, DWMWA_CLOAKED,
+      &snapshot.cloaked, sizeof(snapshot.cloaked));
+  return snapshot;
+}
+struct NativeFocusSnapshot {
+  ULONGLONG tick = 0;
+  NativeWindowSnapshot source, content, foreground, focus;
+  GUITHREADINFO source_gui{}, foreground_gui{};
+  BOOL source_gui_ok = FALSE, foreground_gui_ok = FALSE;
+};
+NativeFocusSnapshot ReadNativeFocus() {
+  // Win32 only: observing input focus must not awaken the UIA provider before
+  // the cold production Capture call. Save both snapshots before printing.
+  NativeFocusSnapshot snapshot;
+  snapshot.tick = GetTickCount64();
+  snapshot.source = ReadNativeWindow(browser);
+  snapshot.content = ReadNativeWindow(renderer);
+  snapshot.foreground = ReadNativeWindow(GetForegroundWindow());
+  snapshot.source_gui.cbSize = sizeof(snapshot.source_gui);
+  snapshot.foreground_gui.cbSize = sizeof(snapshot.foreground_gui);
+  if (snapshot.source.thread)
+    snapshot.source_gui_ok = GetGUIThreadInfo(snapshot.source.thread, &snapshot.source_gui);
+  if (snapshot.foreground.thread)
+    snapshot.foreground_gui_ok = GetGUIThreadInfo(snapshot.foreground.thread, &snapshot.foreground_gui);
+  snapshot.focus = ReadNativeWindow(snapshot.source_gui.hwndFocus);
+  return snapshot;
+}
+void PrintNativeWindow(const char* selection, const char* phase, const char* role,
+                       const NativeWindowSnapshot& snapshot) {
+  std::printf("DEFAULT_EDGE_NATIVE_WINDOW|%s|%s|role=%s|hwnd=%p|root=%p|pid=%lu|tid=%lu|class=%ls|visible=%d|iconic=%d|dpi=%u|rectOK=%d|rect=%ld,%ld,%ld,%ld|cloakHR=0x%08lX|cloaked=%lu\n",
+      selection, phase, role, static_cast<void*>(snapshot.window),
+      static_cast<void*>(snapshot.root), snapshot.process, snapshot.thread,
+      snapshot.window_class, snapshot.visible, snapshot.iconic, snapshot.dpi,
+      snapshot.rect_ok, snapshot.rect.left, snapshot.rect.top,
+      snapshot.rect.right, snapshot.rect.bottom,
+      static_cast<unsigned long>(snapshot.cloak_result), snapshot.cloaked);
+}
+void PrintNativeFocus(const char* selection, const char* phase,
+                      const NativeFocusSnapshot& snapshot) {
+  std::printf("DEFAULT_EDGE_NATIVE_FOCUS|%s|%s|tick=%llu|sourceGUI=%d|sourceFlags=0x%08lX|sourceActive=%p|sourceFocus=%p|sourceCapture=%p|foregroundGUI=%d|foregroundFlags=0x%08lX|foregroundActive=%p|foregroundFocus=%p|foregroundCapture=%p\n",
+      selection, phase, static_cast<unsigned long long>(snapshot.tick),
+      snapshot.source_gui_ok, snapshot.source_gui.flags,
+      static_cast<void*>(snapshot.source_gui.hwndActive),
+      static_cast<void*>(snapshot.source_gui.hwndFocus),
+      static_cast<void*>(snapshot.source_gui.hwndCapture),
+      snapshot.foreground_gui_ok, snapshot.foreground_gui.flags,
+      static_cast<void*>(snapshot.foreground_gui.hwndActive),
+      static_cast<void*>(snapshot.foreground_gui.hwndFocus),
+      static_cast<void*>(snapshot.foreground_gui.hwndCapture));
+  PrintNativeWindow(selection, phase, "source", snapshot.source);
+  PrintNativeWindow(selection, phase, "renderer", snapshot.content);
+  PrintNativeWindow(selection, phase, "foreground", snapshot.foreground);
+  PrintNativeWindow(selection, phase, "sourceFocus", snapshot.focus);
+}
 void FocusDiagnostics() {
   const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   if (FAILED(initialized)) return;
   {
     Microsoft::WRL::ComPtr<IUIAutomation> uia;
     Microsoft::WRL::ComPtr<IUIAutomationElement> focus;
-    if (SUCCEEDED(CoCreateInstance(CLSID_CUIAutomation8, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&uia))) &&
-        SUCCEEDED(uia->GetFocusedElement(&focus)) && focus) {
-      CONTROLTYPEID type = 0; int pid = 0; BOOL hasFocus = FALSE, password = TRUE;
-      focus->get_CurrentControlType(&type); focus->get_CurrentProcessId(&pid);
-      focus->get_CurrentHasKeyboardFocus(&hasFocus); focus->get_CurrentIsPassword(&password);
+    const HRESULT created = CoCreateInstance(CLSID_CUIAutomation8, nullptr,
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&uia));
+    Microsoft::WRL::ComPtr<IUIAutomation2> bounded;
+    HRESULT focused = E_FAIL;
+    if (SUCCEEDED(created) && SUCCEEDED(uia.As(&bounded)) &&
+        SUCCEEDED(bounded->put_ConnectionTimeout(150)) &&
+        SUCCEEDED(bounded->put_TransactionTimeout(200))) {
+      focused = uia->GetFocusedElement(&focus);
+    }
+    std::printf("DEFAULT_EDGE_POST_FAILURE_UIA|createHR=0x%08lX|focusHR=0x%08lX\n",
+        static_cast<unsigned long>(created), static_cast<unsigned long>(focused));
+    if (SUCCEEDED(focused) && focus) {
+      CONTROLTYPEID type = 0; int pid = 0;
+      BOOL hasFocus = FALSE, password = TRUE, offscreen = TRUE;
+      UIA_HWND native{}; RECT rect{};
+      const HRESULT type_hr = focus->get_CurrentControlType(&type);
+      const HRESULT pid_hr = focus->get_CurrentProcessId(&pid);
+      const HRESULT focus_hr = focus->get_CurrentHasKeyboardFocus(&hasFocus);
+      const HRESULT password_hr = focus->get_CurrentIsPassword(&password);
+      const HRESULT offscreen_hr = focus->get_CurrentIsOffscreen(&offscreen);
+      const HRESULT native_hr = focus->get_CurrentNativeWindowHandle(&native);
+      const HRESULT rect_hr = focus->get_CurrentBoundingRectangle(&rect);
       DWORD owner = 0; GetWindowThreadProcessId(browser, &owner);
-      std::printf("Browser UIA diagnostics: type=%d, focusedPID=%d, ownerPID=%lu, hasFocus=%d, password=%d\n", type, pid, owner, hasFocus, password);
+      std::printf("DEFAULT_EDGE_POST_FAILURE_FOCUS|type=%d|typeHR=0x%08lX|focusedPID=%d|pidHR=0x%08lX|ownerPID=%lu|hasFocus=%d|focusHR=0x%08lX|isPassword=%d|passwordHR=0x%08lX|offscreen=%d|offscreenHR=0x%08lX|native=%p|nativeHR=0x%08lX|rect=%ld,%ld,%ld,%ld|rectHR=0x%08lX\n",
+          type, static_cast<unsigned long>(type_hr), pid,
+          static_cast<unsigned long>(pid_hr), owner, hasFocus,
+          static_cast<unsigned long>(focus_hr), password,
+          static_cast<unsigned long>(password_hr), offscreen,
+          static_cast<unsigned long>(offscreen_hr), reinterpret_cast<void*>(native),
+          static_cast<unsigned long>(native_hr), rect.left, rect.top, rect.right,
+          rect.bottom, static_cast<unsigned long>(rect_hr));
     }
   }
   CoUninitialize();
@@ -158,12 +256,31 @@ int wmain(int argc, wchar_t** argv) {
       // First call is intentionally cold: no prior UIA traversal, screen-reader
       // launch, Chromium accessibility flag, CDP, or script-created selection.
       translation_selection::CaptureDiagnostics diagnostics;
+      const NativeFocusSnapshot before = ReadNativeFocus();
       const ULONGLONG capture_started = GetTickCount64();
       const auto capture = translation_selection::Capture(browser, true, nullptr, 0, &diagnostics);
+      const ULONGLONG capture_elapsed = GetTickCount64() - capture_started;
+      const NativeFocusSnapshot after = ReadNativeFocus();
+      PrintNativeFocus(line ? "repeat" : "cold", "before", before);
+      PrintNativeFocus(line ? "repeat" : "cold", "after", after);
       std::printf("DEFAULT_EDGE_CAPTURE_DIAGNOSTICS|%s|stage=%s|HRESULT=0x%08lX|attempts=%u|finalAttempts=%u|elapsedMs=%llu\n",
         line ? "repeat" : "cold", diagnostics.last_failure_stage,
         static_cast<unsigned long>(diagnostics.last_failure), diagnostics.attempts,
-        diagnostics.final_attempts, static_cast<unsigned long long>(GetTickCount64() - capture_started));
+        diagnostics.final_attempts, static_cast<unsigned long long>(capture_elapsed));
+      std::printf("DEFAULT_EDGE_TARGET_DIAGNOSTICS|%s|stage=%s|HRESULT=0x%08lX|pid=%d|isPassword=%d|offscreen=%d|hasFocus=%d|same=%d|type=%d\n",
+        line ? "repeat" : "cold", diagnostics.target.stage,
+        static_cast<unsigned long>(diagnostics.target.result), diagnostics.target.process,
+        diagnostics.target.password, diagnostics.target.offscreen,
+        diagnostics.target.has_focus, diagnostics.target.same, diagnostics.target.type);
+      std::printf("DEFAULT_EDGE_BOUNDS_DIAGNOSTICS|%s|stage=%s|HRESULT=0x%08lX|rectangles=%u|dimensions=%u|vartype=%u|lower=%ld|upper=%ld|first=%.3f,%.3f,%.3f,%.3f|source=%ld,%ld,%ld,%ld\n",
+        line ? "repeat" : "cold", diagnostics.bounds_stage,
+        static_cast<unsigned long>(diagnostics.bounds_result), diagnostics.bounds_rectangles,
+        diagnostics.bounds_dimensions, static_cast<unsigned>(diagnostics.bounds_vartype),
+        diagnostics.bounds_lower, diagnostics.bounds_upper,
+        diagnostics.bounds_first[0], diagnostics.bounds_first[1],
+        diagnostics.bounds_first[2], diagnostics.bounds_first[3],
+        diagnostics.bounds_source.left, diagnostics.bounds_source.top,
+        diagnostics.bounds_source.right, diagnostics.bounds_source.bottom);
       std::wstring actual = capture.text;
       while (!actual.empty() && (actual.back() == L'\r' || actual.back() == L'\n')) actual.pop_back();
       const std::wstring expected = line ? L"Browser synthetic selection Foxtrot" : L"Browser synthetic selection Echo";
