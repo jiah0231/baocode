@@ -73,7 +73,16 @@ void TranslationChannel::Capture(
     return;
   }
   if (pending_) {
-    if (result) result->Success(Encode({L"", "busy", false}));
+    if (result) {
+      result->Success(Encode({L"", "busy", false}));
+    } else if (delivered_) {
+      // A provider that never returns cannot spawn more workers. A later
+      // explicit shortcut can still open a manual-entry panel.
+      ShowWindow(window_, IsIconic(window_) ? SW_RESTORE : SW_SHOW);
+      SetForegroundWindow(window_);
+      channel_->InvokeMethod("pressed", std::make_unique<flutter::EncodableValue>(
+          Encode({L"", "busy", false})));
+    }
     return;
   }
   foreground_ = foreground;

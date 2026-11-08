@@ -73,11 +73,12 @@ class _StashHotkeyFieldState extends State<StashHotkeyField> {
 
   @override
   void dispose() {
-    if (_recording)
+    if (_recording) {
       unawaited(
         (widget.onRecordingStop?.call() ??
             StashController.current?.resumeHotkey()),
       );
+    }
     _focus.removeListener(_focusChanged);
     _focus.dispose();
     super.dispose();

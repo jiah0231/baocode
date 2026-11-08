@@ -11,6 +11,14 @@ struct Selection {
   std::string status = "unsupported";
   bool self = false;
 };
+// BSTRs are length-delimited, but downstream native string conversion is not.
+// Never return a prefix of a selection containing an embedded null.
+inline void RejectEmbeddedNull(Selection& selection) {
+  if (selection.text.find(L'\0') != std::wstring::npos) {
+    selection.text.clear();
+    selection.status = "unsupported";
+  }
+}
 // Call only on an MTA worker after an explicit user action. Never reads the
 // clipboard, ValuePattern, document range, or arbitrary window captions.
 inline Selection Capture(HWND foreground) {
@@ -94,6 +102,7 @@ inline Selection Capture(HWND foreground) {
     }
   }
   CoUninitialize();
+  RejectEmbeddedNull(out);
   // Do not deliver text from an app the user switched away from meanwhile.
   if (GetForegroundWindow() != foreground) {
     out.text.clear();

@@ -61,6 +61,16 @@ int wmain(int argc, wchar_t** argv) {
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) { TranslateMessage(&msg); DispatchMessageW(&msg); }
     return 0;
   }
+  // Most native edit controls cannot hold embedded nulls. Exercise the same
+  // post-capture guard directly with a length-delimited UIA-style string.
+  translation_selection::Selection malformed{std::wstring(L"before\0after", 12), "ok", false};
+  translation_selection::RejectEmbeddedNull(malformed);
+  if (!malformed.text.empty() || malformed.status != "unsupported")
+    return Fail("Embedded null selection was accepted or truncated");
+  translation_selection::Selection valid{L"Selected words", "ok", false};
+  translation_selection::RejectEmbeddedNull(valid);
+  if (valid.text != L"Selected words" || valid.status != "ok")
+    return Fail("Valid selection was rejected");
   wchar_t executable[MAX_PATH]; GetModuleFileNameW(nullptr, executable, MAX_PATH);
   std::wstring command = L"\"" + std::wstring(executable) + L"\" --fixture";
   STARTUPINFOW startup{}; startup.cb = static_cast<DWORD>(sizeof(startup));
@@ -116,6 +126,6 @@ int wmain(int argc, wchar_t** argv) {
   if (fixture) PostMessageW(fixture, WM_CLOSE, 0, 0);
   if (WaitForSingleObject(process.hProcess, 3000) != WAIT_OBJECT_0) TerminateProcess(process.hProcess, 3);
   CloseHandle(process.hThread); CloseHandle(process.hProcess);
-  if (!result) std::puts("PASS: selected range, no selection, password, unsupported, oversized, changed focus, clipboard unchanged");
+  if (!result) std::puts("PASS: selected range, no selection, password, unsupported, oversized, changed focus, embedded null rejection, clipboard unchanged");
   return result;
 }
