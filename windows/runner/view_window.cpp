@@ -1,4 +1,5 @@
 #include "view_window.h"
+#include "view_window_keys.h"
 
 #include <windows.h>
 #include <windowsx.h>
@@ -8,6 +9,8 @@
 #include <utility>
 
 namespace {
+
+thread_local view_window_keys::OwnedKeyRelease g_owned_key_release;
 
 // The point the hit test at |window| names, in the window's own pixels (the
 // hit test names the screen; the mouse messages already name the client).
@@ -160,6 +163,10 @@ ViewWindow::ViewWindow() {}
 
 ViewWindow::~ViewWindow() {}
 
+void ViewWindow::OwnKeyRelease(UINT virtual_key) {
+  g_owned_key_release.Own(virtual_key);
+}
+
 void ViewWindow::SetObserver(WindowObserver* observer, int64_t view_id) {
   observer_ = observer;
   view_id_ = view_id;
@@ -218,6 +225,26 @@ LRESULT CALLBACK ViewWindow::ViewProc(HWND hwnd, UINT const message,
                                          LPARAM const lparam) noexcept {
   auto* that =
       static_cast<ViewWindow*>(GetThisFromHandle(::GetParent(hwnd)));
+
+  // The popup may already have returned focus to another BaoCode view.
+  // Finish its owned gesture there as well; unknown key-up/repeated down
+  // must not be interpreted as a fresh workspace shortcut by the engine.
+  if (that != nullptr && IsKeyMessage(message) &&
+      g_owned_key_release.Consume(static_cast<uint32_t>(wparam),
+          message == WM_KEYDOWN || message == WM_SYSKEYDOWN,
+          message == WM_KEYUP || message == WM_SYSKEYUP,
+          (lparam & (static_cast<LPARAM>(1) << 30)) != 0)) {
+    return 0;
+  }
+
+  // Tool-window close keys must not reach both native default handling
+  // and Flutter's shared asynchronous HardwareKeyboard dispatcher. Let the
+  // owning window consume its exact sequence before either path sees it.
+  if (that != nullptr) {
+    if (const auto handled = that->ViewMessage(hwnd, message, wparam, lparam)) {
+      return *handled;
+    }
+  }
 
   // The cursor's position, over the parts of the window that are the
   // window's own, is this window's to answer — its buttons, and the strip

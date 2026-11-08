@@ -1,5 +1,7 @@
 // Standalone Windows SDK test, deliberately out-of-process UIA provider.
 #include "../../windows/runner/translation_selection.h"
+#include "../../windows/runner/translation_panel_keys.h"
+#include "../../windows/runner/view_window_keys.h"
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -131,6 +133,37 @@ int wmain(int argc, wchar_t** argv) {
       CanRetryFinalFocus(true, true, true, false, 1, 1400, 1500) ||
       CanRetryFinalFocus(true, true, true, false, 1, 500, 1500, true))
     return Fail("Final focus retry weakened pinned identity/foreground/deadline/cancel policy");
+  translation_panel::CloseKeySequence close_key;
+  using translation_panel::CloseKeyAction;
+  if (close_key.Handle(true, false, false, false) != CloseKeyAction::pass ||
+      close_key.Handle(false, true, false, false) != CloseKeyAction::pass ||
+      close_key.Handle(true, false, true, false) != CloseKeyAction::close ||
+      close_key.Handle(true, false, true, true) != CloseKeyAction::consume ||
+      close_key.Handle(false, true, false, false) != CloseKeyAction::consume ||
+      close_key.Handle(false, true, false, false) != CloseKeyAction::pass)
+    return Fail("Popup Alt+F4 sequence escaped or closed twice");
+  // The prior key-up may have gone to an external app after restoration.
+  close_key.Handle(true, false, true, false);
+  if (close_key.Handle(true, false, false, false) != CloseKeyAction::pass ||
+      close_key.Handle(false, true, false, false) != CloseKeyAction::pass)
+    return Fail("Popup close-key ownership leaked into a later plain F4");
+  view_window_keys::OwnedKeyRelease owned_release;
+  owned_release.Own(VK_F4);
+  // Source=main: Alt released first, held F4 repeat, then F4 up. Only F4
+  // belongs to the popup; Alt must still reach Flutter's modifier bookkeeping.
+  if (owned_release.Consume(VK_MENU, false, true, false) ||
+      !owned_release.Consume(VK_F4, true, false, true) ||
+      !owned_release.Consume(VK_F4, false, true, false) ||
+      owned_release.Consume(VK_F4, true, false, false))
+    return Fail("Popup close gesture escaped into restored main view");
+  owned_release.Own(VK_F4);
+  if (!owned_release.Consume(VK_F4, false, true, false) ||
+      owned_release.Consume(VK_MENU, false, true, false))
+    return Fail("F4-first release swallowed an unrelated modifier");
+  owned_release.Own(VK_F4);  // External source received the old key-up.
+  if (owned_release.Consume(VK_F4, true, false, false) ||
+      owned_release.Consume(VK_F4, false, true, false))
+    return Fail("Old native ownership swallowed a new main-window gesture");
   wchar_t executable[MAX_PATH]; GetModuleFileNameW(nullptr, executable, MAX_PATH);
   std::wstring command = L"\"" + std::wstring(executable) + L"\" --fixture";
   STARTUPINFOW startup{}; startup.cb = static_cast<DWORD>(sizeof(startup));

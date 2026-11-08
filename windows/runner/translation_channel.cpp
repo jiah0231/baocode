@@ -10,6 +10,7 @@
 #include "stash_channel.h"
 #include "translation_selection.h"
 #include "translation_selection_action.h"
+#include "translation_panel_keys.h"
 #include "utils.h"
 
 // This engine export is omitted from the distributed public Flutter header.
@@ -57,6 +58,24 @@ class TranslationPanelWindow : public IdeWindow {
       : IdeWindow(engine, messenger), hide_(std::move(hide)) {}
   void Detach() { hide_ = nullptr; }
  protected:
+  std::optional<LRESULT> ViewMessage(HWND, UINT message, WPARAM wparam,
+                                     LPARAM lparam) override {
+    if (wparam != VK_F4) return std::nullopt;
+    const bool down = message == WM_SYSKEYDOWN || message == WM_KEYDOWN;
+    const bool up = message == WM_SYSKEYUP || message == WM_KEYUP;
+    if (!down && !up) return std::nullopt;
+    const bool alt = (lparam & (static_cast<LPARAM>(1) << 29)) != 0 ||
+        (::GetKeyState(VK_MENU) & 0x8000) != 0;
+    const bool repeat = (lparam & (static_cast<LPARAM>(1) << 30)) != 0;
+    const auto action = close_key_.Handle(down, up, alt, repeat);
+    if (action == translation_panel::CloseKeyAction::pass) return std::nullopt;
+    if (down) OwnKeyRelease(VK_F4);
+    // Close here, before Flutter can enqueue Alt+F4 for a hidden workspace's
+    // global key handler. Hiding retains this view, so this callback stays
+    // valid during synchronous deactivation and source-focus restoration.
+    if (action == translation_panel::CloseKeyAction::close && hide_) hide_(true);
+    return 0;
+  }
   LRESULT MessageHandler(HWND window, UINT message, WPARAM wparam,
                          LPARAM lparam) noexcept override {
     if (message == WM_CLOSE) {
@@ -69,6 +88,7 @@ class TranslationPanelWindow : public IdeWindow {
     return IdeWindow::MessageHandler(window, message, wparam, lparam);
   }
  private:
+  translation_panel::CloseKeySequence close_key_;
   std::function<void(bool)> hide_;
 };
 struct TranslationChannel::Pending {

@@ -58,6 +58,17 @@ class ViewWindow : public Win32Window {
   // channels gone.
   void ReleaseView();
 
+  // Consume the matching key-up/held repeats even if focus returns to a
+  // different view of this engine. A fresh non-repeat press clears ownership.
+  static void OwnKeyRelease(UINT virtual_key);
+
+  // An optional child-HWND message owner, before Flutter's asynchronous
+  // keyboard dispatch. Ordinary windows leave every message with Flutter;
+  // a transient tool window can consume its own native close-key sequence.
+  virtual std::optional<LRESULT> ViewMessage(HWND, UINT, WPARAM, LPARAM) {
+    return std::nullopt;
+  }
+
   // The engine's turn at the window's messages: a result when it handled
   // one.
   virtual std::optional<LRESULT> EngineMessage(HWND window, UINT message,

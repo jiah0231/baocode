@@ -12,6 +12,7 @@
 namespace {
 constexpr UINT kPrepare = WM_APP + 23;
 constexpr int kCloseModeCount = 7;
+constexpr int kAltF4StressCount = 6;
 HWND edit = nullptr;
 DWORD appPid = 0;
 HWND mainWindow = nullptr;
@@ -65,7 +66,7 @@ void TraceMain(int state, int close, const char* stage, BOOL expectedVisible, BO
   const BOOL placementRead = GetWindowPlacement(mainWindow, &placement);
   const char* modes[] = {"Escape", "WM_CLOSE", "AltF4", "blur", "hotkey_toggle", "CtrlW", "CtrlShiftW"};
   std::printf("WINDOW_STATE|state=%s|close=%s|stage=%s|main=%p|title=%s|class=%s|exists=%d|expectedVisibleRaw=%d|visibleRaw=%d|expectedIconicRaw=%d|iconicRaw=%d|expectedVisibleBool=%d|visibleBool=%d|expectedIconicBool=%d|iconicBool=%d|foreground=%p|foregroundPID=%lu|popup=%p|placementRead=%d|showCmd=%u|flags=%u\n",
-    state == 0 ? "tray_hidden" : state == 1 ? "minimized" : "startup",
+    state == 0 ? "tray_hidden" : state == 1 ? "minimized" : state == 2 ? "main_visible" : "startup",
     close >= 0 && close < kCloseModeCount ? modes[close] : "none", stage,
     static_cast<void*>(mainWindow), MetadataUtf8(title).c_str(), MetadataUtf8(cls).c_str(),
     IsWindow(mainWindow), expectedVisible, visible, expectedIconic, iconic,
@@ -90,6 +91,20 @@ void Keys(std::initializer_list<WORD> keys) {
   for (auto k : keys) { INPUT i{}; i.type = INPUT_KEYBOARD; i.ki.wVk = k; input.push_back(i); }
   for (auto i = keys.end(); i != keys.begin();) { INPUT k{}; k.type = INPUT_KEYBOARD; k.ki.wVk = *--i; k.ki.dwFlags = KEYEVENTF_KEYUP; input.push_back(k); }
   Check(SendInput(static_cast<UINT>(input.size()), input.data(), sizeof(INPUT)) == input.size(), "SendInput failed");
+}
+void AltF4ReleaseOrder(bool altFirst) {
+  INPUT down[2]{};
+  down[0].type = INPUT_KEYBOARD; down[0].ki.wVk = VK_MENU;
+  down[1].type = INPUT_KEYBOARD; down[1].ki.wVk = VK_F4;
+  Check(SendInput(2, down, sizeof(INPUT)) == 2, "AltF4 stress key-down failed");
+  Sleep(10); // Let native close race with Flutter's queued keyboard callbacks.
+  INPUT up{}; up.type = INPUT_KEYBOARD; up.ki.dwFlags = KEYEVENTF_KEYUP;
+  up.ki.wVk = altFirst ? VK_MENU : VK_F4;
+  const UINT first = SendInput(1, &up, sizeof(INPUT));
+  Sleep(10);
+  up.ki.wVk = altFirst ? VK_F4 : VK_MENU;
+  const UINT second = SendInput(1, &up, sizeof(INPUT));
+  Check(first == 1 && second == 1, "AltF4 stress key-up failed");
 }
 void Mouse(POINT point, DWORD flags) {
   const int left = GetSystemMetrics(SM_XVIRTUALSCREEN);
@@ -220,9 +235,21 @@ int wmain(int argc, wchar_t** argv) {
         Check(Wait([] { return IsIconic(mainWindow) != 0; }), "Main minimization failed");
       }
       const BOOL visible = IsWindowVisible(mainWindow), iconic = IsIconic(mainWindow);
-      for (int close = 0; close < kCloseModeCount; ++close) {
+      for (int iteration = 0; iteration < kCloseModeCount + kAltF4StressCount; ++iteration) {
+        // Keep the original seven-mode matrix intact, then rapidly reopen and
+        // close six extra times per main state, alternating actual source text.
+        const bool stress = iteration >= kCloseModeCount;
+        const int stressIndex = iteration - kCloseModeCount;
+        const int close = stress ? 2 : iteration;
+        const bool altFirst = stress && stressIndex % 2 == 0;
+        if (stress) {
+          std::printf("ALT_F4_STRESS|state=%s|iteration=%d|releaseOrder=%s\n",
+            state == 0 ? "tray_hidden" : "minimized", stressIndex + 1,
+            altFirst ? "Alt_then_F4" : "F4_then_Alt");
+          std::fflush(stdout);
+        }
         AllowSetForegroundWindow(fixtureProcess.dwProcessId);
-        SendMessageW(fixture, kPrepare, close % 2, 0);
+        SendMessageW(fixture, kPrepare, iteration % 2, 0);
         Check(Wait([&] { return GetForegroundWindow() == fixture; }), "Fixture could not take foreground");
         TraceMain(state, close, "before_open", visible, iconic);
         Keys({VK_CONTROL, VK_MENU, 'Y'});
@@ -237,15 +264,18 @@ int wmain(int argc, wchar_t** argv) {
         GetMonitorInfoW(MonitorFromWindow(fixture, MONITOR_DEFAULTTONEAREST), &monitor);
         Check(r.left >= monitor.rcWork.left && r.top >= monitor.rcWork.top && r.right <= monitor.rcWork.right && r.bottom <= monitor.rcWork.bottom, "Popup outside selection work area");
         Check(abs(r.left - (anchor.left+24)) < 800 && abs(r.top - (anchor.top+24)) < 500, "Popup not near selection fixture");
-        const std::wstring expected = close % 2 ? L"Fresh synthetic selection Bravo" : L"Synthetic selection Alpha";
-        const std::wstring stale = close % 2 ? L"Synthetic selection Alpha" : L"Fresh synthetic selection Bravo";
+        const std::wstring expected = iteration % 2 ? L"Fresh synthetic selection Bravo" : L"Synthetic selection Alpha";
+        const std::wstring stale = iteration % 2 ? L"Synthetic selection Alpha" : L"Fresh synthetic selection Bravo";
         Check(Wait([&] { auto text = AccessibleText(uia, popup); return text.find(expected) != std::wstring::npos && text.find(stale) == std::wstring::npos && text.find(L"Synthetic clipboard decoy") == std::wstring::npos; }), "Popup UIA missing fresh selection or retaining stale text");
         Check(Wait([] { return GetForegroundWindow() == popup; }), "Popup not active");
         if (state == 0 && close == 0) { Sleep(500); Screenshot(popup, argv[2]); }
         TraceMain(state, close, "before_close", visible, iconic);
         if (close == 0) Keys({VK_ESCAPE});
         if (close == 1) PostMessageW(popup, WM_CLOSE, 0, 0); // Native caption X message.
-        if (close == 2) Keys({VK_MENU, VK_F4});
+        if (close == 2) {
+          if (stress) AltF4ReleaseOrder(altFirst);
+          else Keys({VK_MENU, VK_F4});
+        }
         if (close == 4) Keys({VK_CONTROL, VK_MENU, 'Y'});
         if (close == 5) Keys({VK_CONTROL, 'W'});
         if (close == 6) Keys({VK_CONTROL, VK_SHIFT, 'W'});
@@ -253,6 +283,11 @@ int wmain(int argc, wchar_t** argv) {
         TraceMain(state, close, "after_close_input", visible, iconic);
         Check(Wait([] { return !IsWindowVisible(popup); }), "Popup failed to dismiss");
         Check(Wait([&] { return GetForegroundWindow() == fixture; }), "Dismissal failed to restore prior app focus");
+        if (stress) {
+          Sleep(40); // Also catch deferred Dart callbacks after both key-ups.
+          Check(!IsWindowVisible(popup), "AltF4 stress popup reopened after key release");
+          Check(GetForegroundWindow() == fixture, "AltF4 stress lost restored source focus after key release");
+        }
         TraceMain(state, close, "after_close_settled", visible, iconic);
         Check(IsWindow(mainWindow) != 0, "Popup close quit the application");
         Check((IsWindowVisible(mainWindow) != FALSE) == (visible != FALSE) && (IsIconic(mainWindow) != FALSE) == (iconic != FALSE), "Dismissal changed main state");
@@ -310,12 +345,52 @@ int wmain(int argc, wchar_t** argv) {
       Check(GetClipboardSequenceNumber() == sequence, "Mouse translation changed clipboard");
       Check(Wait([&] { return AccessibleText(uia, popup).find(expected) == std::wstring::npos; }), "Dismissed mouse popup retained accessible source text");
     }
+    // The source is now BaoCode's own main view. Releasing a popup's F4 after
+    // focus restoration must not produce a synthetic down in the main engine.
+    // A subsequent genuinely new main AltF4 must still work (no stale swallow).
+    for (int order = 0; order < 2; ++order) {
+      const bool altFirst = order == 0;
+      ShowWindow(mainWindow, SW_RESTORE); SetForegroundWindow(mainWindow);
+      Check(Wait([] { return IsWindowVisible(mainWindow) && !IsIconic(mainWindow) && GetForegroundWindow() == mainWindow; }),
+          "Main-source test could not restore/focus actual main window");
+      std::printf("ALT_F4_MAIN_SOURCE|iteration=%d|releaseOrder=%s\n", order + 1,
+          altFirst ? "Alt_then_F4" : "F4_then_Alt");
+      TraceMain(2, 2, "before_open", TRUE, FALSE);
+      Keys({VK_CONTROL, VK_MENU, 'Y'});
+      Check(Wait([] { EnumWindows(FindApp, 0); return popup && IsWindowVisible(popup) && GetForegroundWindow() == popup; }),
+          "Main-source shortcut did not open independent popup");
+      Check(popup != mainWindow, "Main-source popup reused main HWND");
+      TraceMain(2, 2, "after_open", TRUE, FALSE);
+      Check(IsWindowVisible(mainWindow) && !IsIconic(mainWindow), "Opening main-source popup changed main state");
+      Check(Wait([&] {
+        const auto text = AccessibleText(uia, popup);
+        return text.find(L"Mouse selection Charlie") == std::wstring::npos &&
+            text.find(L"Mouse selection Delta") == std::wstring::npos &&
+            text.find(L"Synthetic clipboard decoy") == std::wstring::npos;
+      }), "Main-source popup retained external source or clipboard decoy");
+      TraceMain(2, 2, "before_close", TRUE, FALSE);
+      AltF4ReleaseOrder(altFirst);
+      Check(Wait([] { return !IsWindowVisible(popup) && GetForegroundWindow() == mainWindow; }),
+          "Main-source popup close failed to restore main focus");
+      Sleep(40);
+      TraceMain(2, 2, "after_close_settled", TRUE, FALSE);
+      Check(IsWindow(mainWindow) && IsWindowVisible(mainWindow) && !IsIconic(mainWindow),
+          "Popup F4 key release leaked into its main-window source");
+      Check(!IsWindowVisible(popup) && GetForegroundWindow() == mainWindow,
+          "Main-source popup visibility/focus changed after F4 release");
+      Check(GetClipboardSequenceNumber() == sequence, "Main-source translation modified clipboard");
+      // No pointer or programmatic close here: this is a genuinely new chord.
+      Keys({VK_MENU, VK_F4});
+      Check(Wait([] { return IsWindow(mainWindow) && !IsWindowVisible(mainWindow); }),
+          "A new main AltF4 was swallowed instead of hiding main to tray");
+      TraceMain(0, 2, "genuine_main_chord_hid_to_tray", FALSE, FALSE);
+    }
     // Native application cleanup route, not full Dart graceful-quit confirmation.
     // Registration must be released without forcibly terminating the process.
     PostMessageW(mainWindow, WM_APP + 0x42, 0, 0);
     Check(Wait([] { return !IsWindow(mainWindow); }), "Native quit did not close main");
     Check(Wait([] { if (!RegisterHotKey(nullptr, 0x6123, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'Y')) return false; UnregisterHotKey(nullptr, 0x6123); return true; }), "Quit leaked global hotkey");
-    std::puts("PASS actual release app: selection UIA, hidden/minimized independence, toolwindow, positioning, Escape/X/Alt+F4/blur/hotkey toggle/Ctrl+W/Ctrl+Shift+W, fresh reopen, clipboard sequence, mouse drag/entry click/fresh reopen/focus, native cleanup and hotkey release");
+    std::puts("PASS actual release app: selection UIA, hidden/minimized independence, toolwindow, positioning, Escape/X/Alt+F4/blur/hotkey toggle/Ctrl+W/Ctrl+Shift+W, fresh reopen, six extra AltF4 cycles per main state with both release orders, main-source release isolation and fresh main chord, clipboard sequence, mouse drag/entry click/fresh reopen/focus, native cleanup and hotkey release");
   } catch (const std::exception& e) { std::fprintf(stderr, "FAIL: %s\n", e.what()); result = 1; }
   if (fixture) PostMessageW(fixture, WM_CLOSE, 0, 0);
   if (fixtureProcess.hProcess) { if (WaitForSingleObject(fixtureProcess.hProcess, 3000) == WAIT_TIMEOUT) TerminateProcess(fixtureProcess.hProcess, 1); CloseHandle(fixtureProcess.hProcess); CloseHandle(fixtureProcess.hThread); }
