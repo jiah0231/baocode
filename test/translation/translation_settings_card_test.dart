@@ -36,7 +36,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.textContaining('Only an explicit Translate click'),
+        find.textContaining('only an explicit Translate click in the panel'),
         findsOneWidget,
       );
       final copy = find.text('Automatically copy selected text');

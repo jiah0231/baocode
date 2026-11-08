@@ -18,7 +18,7 @@ $app = $null
 $test = $null
 Push-Location $root
 try {
-  & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX $source /Fe:translation_window_smoke.exe /link user32.lib advapi32.lib gdi32.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
+  & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX $source /Fe:translation_window_smoke.exe /link user32.lib advapi32.lib gdi32.lib dwmapi.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
   if ($LASTEXITCODE -ne 0) { throw 'Translation window harness compilation failed' }
   foreach ($theme in 'Dark', 'Light') {
     $env:BAOCODE_DATA_DIR = Join-Path $root $theme
@@ -40,7 +40,7 @@ try {
     $app.Refresh()
     if ($app.HasExited) { throw "Release app startup failed: $($app.ExitCode)" }
     $screenshot = Join-Path $output "bao-$($theme.ToLowerInvariant())-floating-window.bmp"
-    $test = Start-Process -FilePath (Join-Path $root 'translation_window_smoke.exe') -ArgumentList @($app.Id, "`"$screenshot`"") -PassThru -NoNewWindow
+    $test = Start-Process -FilePath (Join-Path $root 'translation_window_smoke.exe') -ArgumentList @($app.Id, "`"$screenshot`"", $theme) -PassThru -NoNewWindow
     if (!$test.WaitForExit(180000)) { throw 'Real-app translation integration timed out' }
     if ($test.ExitCode -ne 0) { throw "Real-app translation integration failed: $($test.ExitCode) ($theme)" }
     $test.Dispose(); $test = $null

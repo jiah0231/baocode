@@ -62,6 +62,10 @@ struct Result {
   bool clipboard = false, exact = false, proof = false, callback_source = false;
   bool request_not_canceled = false;
   bool stale_changed = false, stale_click_attempted = false, stale_rejected = false;
+  bool stale_same_source = false, stale_focus_identity_changed = false, stale_focus_metadata_safe = false;
+  DWORD stale_original_focus_pid = 0, stale_changed_focus_pid = 0;
+  int stale_original_type = 0, stale_changed_type = 0;
+  std::string stale_mutation = "notRun";
   unsigned stale_callbacks = 0;
   std::string stale_status = "notRun";
   unsigned callbacks_before_click = 0, callbacks = 0, capture_calls = 0;
@@ -103,7 +107,15 @@ struct Result {
          << ",\n  \"captureCalls\":" << capture_calls
          << ",\n  \"entryWaitMs\":" << entry_ms << ",\n  \"captureMs\":" << capture_ms
          << ",\n  \"selectedUnits\":" << units
-         << ",\n  \"staleKeyboardSelectionChanged\":" << (stale_changed ? "true" : "false")
+         << ",\n  \"staleKeyboardTargetChanged\":" << (stale_changed ? "true" : "false")
+         << ",\n  \"mutationKind\":" << Quote(stale_mutation)
+         << ",\n  \"staleFocusIdentityChanged\":" << (stale_focus_identity_changed ? "true" : "false")
+         << ",\n  \"staleFocusMetadataVerified\":" << (stale_focus_metadata_safe ? "true" : "false")
+         << ",\n  \"staleOriginalFocusPid\":" << stale_original_focus_pid
+         << ",\n  \"staleChangedFocusPid\":" << stale_changed_focus_pid
+         << ",\n  \"staleSameSourceWindow\":" << (stale_same_source ? "true" : "false")
+         << ",\n  \"staleOriginalFocusType\":" << stale_original_type
+         << ",\n  \"staleChangedFocusType\":" << stale_changed_type
          << ",\n  \"staleEntryClickAttempted\":" << (stale_click_attempted ? "true" : "false")
          << ",\n  \"staleSelectionRejected\":" << (stale_rejected ? "true" : "false")
          << ",\n  \"staleCallbacks\":" << stale_callbacks
@@ -736,27 +748,99 @@ void Arm(Driver& driver, HWND source) {
   Check(driver.action->Configure(true, false), "Cannot enable the production selection action");
   Check(NoMainWindow(), "Action arming opened an unexpected main window");
 }
-void ChangeSelectionWithKeyboard(HWND window, bool pdf) {
+void ChangeTargetWithKeyboard(HWND window, bool pdf) {
   Check(monitored_source && monitored_source->Valid() && !foreground_lost &&
       GetForegroundWindow() == window, "Refusing keyboard input outside the synthetic source");
   INPUT input[4]{};
   const WORD modifier = static_cast<WORD>(pdf ? VK_CONTROL : VK_SHIFT);
-  const WORD key = pdf ? static_cast<WORD>('A') : static_cast<WORD>(VK_LEFT);
+  const WORD key = pdf ? static_cast<WORD>('F') : static_cast<WORD>(VK_LEFT);
   const WORD keys[] = {modifier, key, key, modifier};
   for (int i = 0; i < 4; ++i) {
     input[i].type = INPUT_KEYBOARD; input[i].ki.wVk = keys[i];
     input[i].ki.dwFlags = i >= 2 ? KEYEVENTF_KEYUP : 0;
   }
-  Check(SendInput(4, input, sizeof(INPUT)) == 4, "Synthetic keyboard selection mutation failed");
+  Check(SendInput(4, input, sizeof(INPUT)) == 4, "Synthetic keyboard target mutation failed");
   Pump(40);
 }
-void RejectChangedSelection(HWND window, Driver& driver, Result& result,
+// Used ONLY after the real cold entry and its explicit-click capture passed.
+// Ctrl+A is a no-op in some Edge PDF versions. Ctrl+F instead changes keyboard
+// focus to a real in-window Edit. Prove that identity transition using metadata
+// only; never use a name, value, text, document range, child scan or fresh Capture.
+class KeyboardFocusProof {
+ public:
+  explicit KeyboardFocusProof(HWND source) : source_(source) {
+    GetWindowThreadProcessId(source_, &pid_);
+    initialized_ = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    Check(SUCCEEDED(initialized_), "Cannot initialize post-positive keyboard-focus proof");
+    Check(SUCCEEDED(CoCreateInstance(CLSID_CUIAutomation8, nullptr, CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(&automation_))) && SUCCEEDED(automation_.As(&bounded_)),
+        "Cannot create post-positive metadata-only focus verifier");
+    deadline_ = GetTickCount64()+1500;
+    Check(Ready() && SUCCEEDED(automation_->GetFocusedElement(&original_)) && original_ &&
+        SafeFocus(original_.Get(), &original_type_), "Original entry focus is not a verified source control");
+  }
+  ~KeyboardFocusProof() {
+    original_.Reset(); bounded_.Reset(); automation_.Reset();
+    if (SUCCEEDED(initialized_)) CoUninitialize();
+  }
+  int OriginalType() const { return original_type_; }
+  DWORD SourcePid() const { return pid_; }
+  bool WaitForChangedEdit(int* changed_type, bool* identity_changed, DWORD* changed_pid) {
+    deadline_ = GetTickCount64()+1500;
+    while (Ready()) {
+      Microsoft::WRL::ComPtr<IUIAutomationElement> current;
+      int type = 0; BOOL same = TRUE;
+      if (SUCCEEDED(automation_->GetFocusedElement(&current)) && current &&
+          SafeFocus(current.Get(), &type) && Ready() &&
+          SUCCEEDED(automation_->CompareElements(original_.Get(), current.Get(), &same)) && Ready()) {
+        *changed_type = type;
+        *changed_pid = pid_;  // SafeFocus verified this exact process ID.
+        *identity_changed = same == FALSE;
+        if (*identity_changed && type == UIA_EditControlTypeId) return true;
+      }
+      Pump(25);
+    }
+    return false;
+  }
+ private:
+  bool Ready() {
+    auto now = GetTickCount64();
+    if (!bounded_ || now >= deadline_ || !monitored_source ||
+        !monitored_source->Valid() || foreground_lost || GetForegroundWindow() != source_) return false;
+    if (FAILED(bounded_->put_ConnectionTimeout(static_cast<DWORD>(
+        std::min<ULONGLONG>(150, deadline_-now))))) return false;
+    now = GetTickCount64();
+    return now < deadline_ && GetForegroundWindow() == source_ &&
+        SUCCEEDED(bounded_->put_TransactionTimeout(static_cast<DWORD>(
+            std::min<ULONGLONG>(200, deadline_-now)))) &&
+        GetTickCount64() < deadline_ && GetForegroundWindow() == source_;
+  }
+  bool SafeFocus(IUIAutomationElement* focus, int* type) {
+    int owner = 0; BOOL password = TRUE, has_focus = FALSE, offscreen = TRUE;
+    return Ready() && SUCCEEDED(focus->get_CurrentProcessId(&owner)) &&
+        static_cast<DWORD>(owner) == pid_ && Ready() &&
+        SUCCEEDED(focus->get_CurrentIsPassword(&password)) && password == FALSE && Ready() &&
+        SUCCEEDED(focus->get_CurrentHasKeyboardFocus(&has_focus)) && has_focus == TRUE && Ready() &&
+        SUCCEEDED(focus->get_CurrentIsOffscreen(&offscreen)) && offscreen == FALSE && Ready() &&
+        SUCCEEDED(focus->get_CurrentControlType(type)) && Ready();
+  }
+  HWND source_ = nullptr;
+  DWORD pid_ = 0;
+  HRESULT initialized_ = E_FAIL;
+  ULONGLONG deadline_ = 0;
+  int original_type_ = 0;
+  Microsoft::WRL::ComPtr<IUIAutomation> automation_;
+  Microsoft::WRL::ComPtr<IUIAutomation2> bounded_;
+  Microsoft::WRL::ComPtr<IUIAutomationElement> original_;
+};
+void RejectChangedTarget(HWND window, Driver& driver, Result& result,
                             const std::wstring& mode, const std::wstring& root,
                             const std::wstring& output, const Frame& baseline,
                             RECT text_area, double scale, POINT from, POINT to,
                             DWORD clipboard) {
   // This phase runs only after the independent first cold entry has passed.
-  // A changed selection within the same HWND must invalidate the old marker.
+  // A changed selected range OR focused control within the same HWND must
+  // invalidate the marker bound to the original focus/target/range.
   driver.ResetRequest();
   Pump(GetDoubleClickTime()+100);
   Mouse(window, from, 0); Mouse(window, from, MOUSEEVENTF_LEFTDOWN);
@@ -773,21 +857,27 @@ void RejectChangedSelection(HWND window, Driver& driver, Result& result,
   const HWND entry = OwnedEntry(); RECT button{};
   Check(GetWindowRect(entry, &button) != 0, "Stale entry bounds unavailable");
   const POINT center{(button.left+button.right)/2, (button.top+button.bottom)/2};
-  const auto changed = GetTickCount64();
-  ChangeSelectionWithKeyboard(window, mode == L"edgePdf");
+  std::unique_ptr<KeyboardFocusProof> focus_proof;
   if (mode == L"edgePdf") {
-    RECT decoy = text_area; OffsetRect(&decoy, 0, static_cast<int>(60*scale));
-    for (int i = 0; i < 30 && !result.stale_changed; ++i) {
-      const auto frame = Frame::Read(window);
-      result.stale_changed = VisiblePdfSelection(baseline, frame, text_area) &&
-          VisiblePdfSelection(baseline, frame, decoy);
-      if (!result.stale_changed) Pump(25);
-    }
-  } else result.stale_changed = ConsoleSelection(root, changed, -1);
-  Check(result.stale_changed, "Keyboard mutation did not visibly/provably change the selected range in the same HWND");
+    focus_proof = std::make_unique<KeyboardFocusProof>(window);
+    result.stale_original_type = focus_proof->OriginalType();
+    result.stale_original_focus_pid = focus_proof->SourcePid();
+    result.stale_mutation = "focusedControlChange";
+  } else result.stale_mutation = "selectedRangeEndpointChange";
+  const auto changed = GetTickCount64();
+  ChangeTargetWithKeyboard(window, mode == L"edgePdf");
+  result.stale_changed = mode == L"edgePdf" ?
+      focus_proof->WaitForChangedEdit(&result.stale_changed_type, &result.stale_focus_identity_changed,
+          &result.stale_changed_focus_pid) : ConsoleSelection(root, changed, -1);
+  result.stale_focus_metadata_safe = mode == L"edgePdf" && result.stale_changed;
+  result.stale_same_source = GetForegroundWindow() == window && !foreground_lost &&
+      monitored_source && monitored_source->Valid();
   Frame::Read(window).Save(output+L"\\"+mode+L"-stale-changed.bmp");
-  Check(GetForegroundWindow() == window && !foreground_lost,
-      "Keyboard mutation left the verified source HWND");
+  std::printf("DESKTOP_ENTRY_KEYBOARD_MUTATION|%s|method=%s|changed=%d|sameSource=%d|beforeType=%d|afterType=%d\n",
+      result.id.c_str(), result.stale_mutation.c_str(), result.stale_changed ? 1 : 0,
+      result.stale_same_source ? 1 : 0, result.stale_original_type, result.stale_changed_type);
+  Check(result.stale_changed, "Keyboard mutation did not prove a different selected range or focused Edit in the same HWND");
+  Check(result.stale_same_source, "Keyboard mutation left the verified source HWND");
   // The regular metadata poll may already have dismissed the stale entry.
   // If still present, use a real click, never a fabricated window message.
   if (EntryVisible() && WindowFromPoint(center) == entry) {
@@ -816,7 +906,7 @@ void RejectChangedSelection(HWND window, Driver& driver, Result& result,
     result.stale_rejected = driver.callbacks == 1 && driver.capture_calls == 1 &&
         selection.status != "ok" && selection.text.empty() && !selection.copy_proof;
   }
-  Check(result.stale_rejected, "Old entry returned text after the same HWND selected range changed");
+  Check(result.stale_rejected, "Old entry returned text after the same HWND selected range or focused control changed");
   Check(driver.correct_source && NoMainWindow() && !foreground_lost && ClipboardUnchanged(clipboard),
       "Stale-selection rejection changed source, clipboard or window activation");
   Frame::Read(window).Save(output+L"\\"+mode+L"-stale-rejected.bmp");
@@ -1002,10 +1092,10 @@ int wmain(int argc, wchar_t** argv) {
     result.request_not_canceled = !captured.canceled.load();
     Check(result.request_not_canceled, "Finished request was canceled before acceptance");
     driver.action->ReleaseClickedSelection(captured.accepted_generation);
-    RejectChangedSelection(window, driver, result, mode, root, output,
+    RejectChangedTarget(window, driver, result, mode, root, output,
         before, text_area, pdf_scale, from, to, clipboard);
     result.outcome = "exactEntryCaptured";
-    result.detail = "Single cold drag showed a nonactivating entry; only its physical click captured exact selected text, excluding decoy, with selection/foreground/clipboard preserved. A later same-HWND keyboard range change invalidated the stale entry. Native pinned-entry selection only; Flutter popup/model routing is separate coverage.";
+    result.detail = "Single cold drag showed a nonactivating entry; only its physical click captured exact selected text, excluding decoy, with selection/foreground/clipboard preserved. A later same-HWND keyboard range/control change invalidated the stale entry. Native pinned-entry selection only; Flutter popup/model routing is separate coverage.";
   } catch (const std::exception& error) {
     result.detail = error.what();
     if (!result.exact) { result.callbacks = driver.callbacks; result.capture_calls = driver.capture_calls; }

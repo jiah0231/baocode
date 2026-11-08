@@ -116,13 +116,21 @@ function Run-EntryCase([string]$Id, [string]$Application, [string]$Path, [string
       foreach ($field in @('entryVisible', 'entryNonactivating', 'entryHiddenAfterClick',
           'selectionBeforeClick', 'selectionAfterClick', 'sourceForegroundPreserved',
           'noMainWindow', 'clipboardUnchanged', 'exactSelectedText', 'callbackSourceMatches',
-          'staleKeyboardSelectionChanged', 'staleSelectionRejected', 'requestNotCanceledAtConsumption')) {
+          'staleKeyboardTargetChanged', 'staleSameSourceWindow', 'staleSelectionRejected', 'requestNotCanceledAtConsumption')) {
         if ($result.$field -ne $true) { throw "Missing positive entry assertion for $Id`: $field" }
       }
       if ($result.callbacksBeforeClick -ne 0 -or $result.callbacksAfterClick -ne 1 -or
           $result.captureCalls -ne 1 -or $result.gestureAttempts -ne 1 -or $result.copyProof -ne $false -or
           $result.firstUiaCaller -ne 'productionSelectionEntry' -or $result.captureStatus -ne 'ok') {
         throw "Incomplete cold-entry/click-only capture assertions for $Id"
+      }
+      if ($Id -eq 'edgePdf' -and ($result.mutationKind -ne 'focusedControlChange' -or $result.staleChangedFocusType -ne 50004 -or
+          $result.staleFocusIdentityChanged -ne $true -or $result.staleFocusMetadataVerified -ne $true -or
+          $result.staleOriginalFocusPid -le 0 -or $result.staleOriginalFocusPid -ne $result.staleChangedFocusPid)) {
+        throw 'PDF keyboard negative did not prove a distinct focused Edit in the same source window'
+      }
+      if ($Id -eq 'console' -and $result.mutationKind -ne 'selectedRangeEndpointChange') {
+        throw 'Console keyboard negative did not prove a changed selected range'
       }
       foreach ($phase in @('before', 'entry', 'after-click', 'stale-before', 'stale-changed', 'stale-rejected')) {
         if (!(Test-Path -LiteralPath (Join-Path $output "$Id-$phase.bmp"))) {
@@ -231,7 +239,7 @@ try {
   $summary = [ordered]@{
     schemaVersion = 1; observedUtc = [DateTime]::UtcNow.ToString('o')
     commit = $env:GITHUB_SHA; runnerImage = $env:ImageVersion
-    scope = 'Real desktop cold selection -> production nonactivating entry -> physical click -> pinned-range capture on the original MTA. Then verify rejection after a same-HWND keyboard range change. No model request or Flutter popup in this native probe.'
+    scope = 'Real desktop cold selection -> production nonactivating entry -> physical click -> pinned-range capture on the original MTA. Then verify rejection after a same-HWND keyboard selected-range or focused-control change. No model request or Flutter popup in this native probe.'
     coldIsolation = 'Separate positive process per application; new Edge PDF profile; no positive-source UIA preflight or accessibility-forcing flags; one cold positive drag, then a warm stale-selection negative phase. Console integrity diagnosis uses a different subprocess and host that exit before the fresh positive source is launched.'
     consoleIntegrity = 'RIDs: 8192=medium, 12288=high. The inherited-token diagnostic preserves elevated production rejection. Only after that exact rejection may the shared test-only launcher create an independent restricted-medium synthetic host; production acceptance and system settings are unchanged.'
     results = @($results.ToArray())
@@ -241,6 +249,8 @@ try {
   $lines.Add('# Windows desktop translation entry observations')
   $lines.Add('')
   $lines.Add($summary.scope)
+  $lines.Add('')
+  $lines.Add('PDF negative: Ctrl+F must move keyboard focus to a different same-process, visible, non-password Edit in the same source HWND, proved by metadata and element identity. This is a focused-control change, not evidence of a changed PDF text range. Console negative: Shift+Left must change the selected range endpoint, proved by fresh native console-selection coordinates. Both must invalidate the old entry.')
   $lines.Add('')
   $lines.Add('These are per-application entry tests, not universal desktop support. Existing cold Capture probes run separately and remain unchanged. An unsupported or unavailable required app fails this entry gate.')
   $lines.Add('')

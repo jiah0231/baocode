@@ -99,8 +99,10 @@ both identities. These metadata-only counts can inspect an unfocused element
 only while it remains in the same source PID, affirmatively non-password and in
 the synthetic foreground source. No selected text is read.
 `console-uia-metadata.json` records the foreground-window PID separately from the
-previously verified Console Host PID; metadata inspection may use that verified
-host provider without changing production's same-PID capture policy.
+previously verified Console Host PID. Production permits this specific provider
+relationship only after its retained process/thread handles prove membership of
+the exact foreground HWND, and both client and official System32 host are at
+medium integrity. Ordinary application capture still requires the source PID.
 Console diagnostics also record the HWND-reported TID/PID, limited-query thread
 handle's kernel owner PID, image path and errors. A separate Toolhelp pass checks
 at most 128 threads belonging to the already verified host PID; EnumThreadWindows

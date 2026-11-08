@@ -72,6 +72,12 @@ struct FakeTree {
   bool Verify() { return Verify(&focus); }
 };
 void DeterministicChecks() {
+  static_assert((translation_test_fixture::kRestrictedFixtureTokenAccess & TOKEN_ADJUST_DEFAULT) != 0,
+      "CreateRestrictedToken must inherit ADJUST_DEFAULT for the disposable integrity setter");
+  static_assert((translation_test_fixture::kRestrictedFixtureTokenAccess &
+      (TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY)) ==
+      (TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY),
+      "Restricted fixture launch requires query, duplicate, and primary-token access");
   using translation_test_fixture::ConfirmedElevatedRejection;
   Check(ConfirmedElevatedRejection(false, "Console.HostIntegrity", 0x3000, 0) &&
       ConfirmedElevatedRejection(false, "Console.ClientIntegrity", 0x2000, 0x3000),

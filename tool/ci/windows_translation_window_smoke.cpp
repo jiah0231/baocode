@@ -1,6 +1,7 @@
 // Runs ONLY from the guarded Actions script. Tests the actual release executable.
 #include <windows.h>
 #include <UIAutomation.h>
+#include <dwmapi.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -153,7 +154,7 @@ std::wstring AccessibleText(IUIAutomation* uia, HWND w) {
   }
   if (condition) condition->Release(); root->Release(); return text;
 }
-void Screenshot(HWND w, const std::wstring& path, HWND syntheticSource = nullptr) {
+void Screenshot(HWND w, const std::wstring& path, HWND syntheticSource = nullptr, bool darkEntry = false) {
   if (!syntheticSource) {
     Check(GetForegroundWindow() == w, "Refusing screenshot of obscured popup");
   } else {
@@ -168,7 +169,10 @@ void Screenshot(HWND w, const std::wstring& path, HWND syntheticSource = nullptr
         (GetWindowLongPtrW(w, GWL_EXSTYLE) & WS_EX_NOACTIVATE),
         "Refusing screenshot of unverified nonactivating entry");
   }
-  RECT r{}; Check(GetWindowRect(w, &r) != 0, "Popup rectangle missing");
+  RECT r{};
+  if (syntheticSource) Check(GetWindowRect(w, &r) != 0, "Entry rectangle missing");
+  else Check(SUCCEEDED(DwmGetWindowAttribute(w, DWMWA_EXTENDED_FRAME_BOUNDS, &r, sizeof(r))),
+      "Popup visible-frame bounds unavailable");
   if (syntheticSource) {
     const POINT corners[] = {{r.left, r.top}, {r.right-1, r.top},
         {r.left, r.bottom-1}, {r.right-1, r.bottom-1}};
@@ -185,14 +189,64 @@ void Screenshot(HWND w, const std::wstring& path, HWND syntheticSource = nullptr
   void* pixels = nullptr; HBITMAP bitmap = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
   Check(bitmap && pixels, "Screenshot allocation failed");
   auto old = SelectObject(dc, bitmap);
-  Check(BitBlt(dc, 0, 0, width, height, screen, r.left, r.top, SRCCOPY) != 0, "Screenshot failed");
-  GdiFlush();
+  bool paintedEntry = false, captured = false;
+  const ULONGLONG paintStarted = GetTickCount64();
+  std::vector<DWORD> previous;
+  unsigned stableFrames = 0, attempt = 0;
+  do {
+    if ((!syntheticSource && GetForegroundWindow() != w) ||
+        (syntheticSource && (!IsWindowVisible(w) || GetForegroundWindow() != syntheticSource ||
+        GetAncestor(WindowFromPoint(POINT{(r.left+r.right)/2, (r.top+r.bottom)/2}), GA_ROOT) != w))) break;
+    Check(SUCCEEDED(DwmFlush()), "Compositor screenshot synchronization failed");
+    Check(BitBlt(dc, 0, 0, width, height, screen, r.left, r.top, SRCCOPY) != 0, "Screenshot failed");
+    GdiFlush(); captured = true;
+    // Observe real on-screen pixels only. Do not SendMessage(WM_PAINT), redraw
+    // the control, choose a font for it, or manufacture glyphs in the bitmap.
+    const auto* rgb = static_cast<const DWORD*>(pixels);
+    const DWORD background = darkEntry ? 0x00303137u : 0x00fafafcu;
+    const int backgroundLuma = darkEntry ? 51 : 251;
+    int ink = 0, backgroundPixels = 0;
+    bool unchanged = previous.size() == static_cast<size_t>(width * height);
+    for (int y = 0; y < height; ++y) {
+      for (int x = 0; x < width; ++x) {
+        const size_t index = static_cast<size_t>(y * width + x);
+        const DWORD pixel = rgb[index] & 0x00ffffffu;
+        if (pixel == background) ++backgroundPixels;
+        if (unchanged && previous[index] != pixel) unchanged = false;
+        if (x >= 2 && x < width-2 && y >= 2 && y < height-2) {
+          const int luma = static_cast<int>(((pixel >> 16) & 255u) + ((pixel >> 8) & 255u) + (pixel & 255u)) / 3;
+          if (darkEntry ? luma >= backgroundLuma + 80 : luma <= backgroundLuma - 80) ++ink;
+        }
+      }
+    }
+    const bool visibleInk = !syntheticSource || (ink >= 8 && backgroundPixels >= width * height / 2);
+    stableFrames = visibleInk ? (unchanged ? stableFrames + 1 : 1) : 0;
+    if (syntheticSource) {
+      std::printf("ENTRY_PAINT|theme=%s|attempt=%u|elapsedMs=%llu|inkPixels=%d|backgroundPixels=%d|stableFrames=%u\n",
+          darkEntry ? "Dark" : "Light", ++attempt,
+          static_cast<unsigned long long>(GetTickCount64()-paintStarted), ink, backgroundPixels, stableFrames);
+    } else {
+      std::printf("POPUP_PAINT|attempt=%u|elapsedMs=%llu|stableFrames=%u|crop=visible_frame\n",
+          ++attempt, static_cast<unsigned long long>(GetTickCount64()-paintStarted), stableFrames);
+    }
+    std::fflush(stdout);
+    paintedEntry = stableFrames >= (syntheticSource ? 2u : 3u);
+    if (paintedEntry) break;
+    previous.resize(static_cast<size_t>(width * height));
+    for (size_t i = 0; i < previous.size(); ++i) previous[i] = rgb[i] & 0x00ffffffu;
+    Sleep(40);
+  } while (GetTickCount64()-paintStarted < 2000);
+  // Preserve the last genuine capture even on timeout, then fail the test.
+  Check(captured, "No safe foreground screenshot could be captured");
   BITMAPFILEHEADER header{}; header.bfType = 0x4d42;
   header.bfOffBits = sizeof(header) + sizeof(BITMAPINFOHEADER);
   const DWORD bytes = static_cast<DWORD>(width * height * 4); header.bfSize = header.bfOffBits + bytes;
   FILE* file = nullptr; _wfopen_s(&file, path.c_str(), L"wb"); Check(file != nullptr, "Screenshot file failed");
   fwrite(&header, sizeof(header), 1, file); fwrite(&info.bmiHeader, sizeof(BITMAPINFOHEADER), 1, file); fwrite(pixels, bytes, 1, file); fclose(file);
   SelectObject(dc, old); DeleteObject(bitmap); DeleteDC(dc); ReleaseDC(nullptr, screen);
+  Check(paintedEntry, syntheticSource
+      ? "Actual selection entry never displayed stable contrasting glyph pixels in its expected theme"
+      : "Actual popup pixels did not settle before screenshot deadline");
 }
 }
 int wmain(int argc, wchar_t** argv) {
@@ -204,7 +258,8 @@ int wmain(int argc, wchar_t** argv) {
     if (!w || !edit) return 2;
     MSG m; while (GetMessageW(&m, nullptr, 0, 0) > 0) { TranslateMessage(&m); DispatchMessageW(&m); } return 0;
   }
-  if (argc != 3) return 2;
+  if (argc != 4 || (std::wstring(argv[3]) != L"Dark" && std::wstring(argv[3]) != L"Light")) return 2;
+  const bool darkTheme = std::wstring(argv[3]) == L"Dark";
   appPid = wcstoul(argv[1], nullptr, 10);
   PROCESS_INFORMATION fixtureProcess{}; HWND fixture = nullptr;
   IUIAutomation* uia = nullptr; int result = 0;
@@ -319,8 +374,7 @@ int wmain(int argc, wchar_t** argv) {
       RECT bounds{}; Check(GetWindowRect(action, &bounds) != 0, "Selection entry bounds missing");
       const POINT center{(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2};
       if (selection == 0) {
-        Sleep(150); // Allow the real entry's first WM_PAINT before cropping it.
-        Screenshot(action, std::wstring(argv[2]) + L".entry.bmp", fixture);
+        Screenshot(action, std::wstring(argv[2]) + L".entry.bmp", fixture, darkTheme);
       }
       Mouse(center, 0); Mouse(center, MOUSEEVENTF_LEFTDOWN); Sleep(50); Mouse(center, MOUSEEVENTF_LEFTUP);
       Check(Wait([] { EnumWindows(FindApp, 0); return popup && IsWindowVisible(popup); }), "Clicking selection entry did not open independent popup");

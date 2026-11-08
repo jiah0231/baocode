@@ -24,6 +24,21 @@ class Handle {
 inline void Require(bool condition, const char* message) {
   if (!condition) throw std::runtime_error(message);
 }
+// Capture immediately, before diagnostics or a second Win32 call can overwrite
+// the failing operation's last-error value. Exceptions reach both CI logs and
+// the desktop-entry result JSON.
+inline void RequireWin32(BOOL succeeded, const char* operation) {
+  if (succeeded) return;
+  const DWORD error = GetLastError();
+  std::printf("CONSOLE_BINDING|mediumTokenFailure|operation=%s|win32Error=%lu\n", operation, error);
+  throw std::runtime_error(std::string(operation) + " failed (Win32 error " + std::to_string(error) + ")");
+}
+// CreateRestrictedToken returns a handle with the SAME access rights as its
+// source handle. SetTokenInformation(TokenIntegrityLevel) needs ADJUST_DEFAULT
+// on that new disposable handle; QUERY/DUPLICATE/ASSIGN_PRIMARY alone cannot set
+// its integrity. This handle is never used to modify the running process token.
+inline constexpr DWORD kRestrictedFixtureTokenAccess =
+    TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY | TOKEN_ADJUST_DEFAULT;
 // A lowered child cannot write a high-integrity parent's default kernel
 // objects. Grant only this same account access to fresh, private medium-label
 // IPC objects or newly created fixture directories. This never edits an existing permission.
@@ -80,19 +95,22 @@ inline bool SupportedMediumFixtureTransition(DWORD own_integrity, const char* st
        (std::strcmp(stage, "Console.ClientIntegrity") == 0 &&
         client_integrity == SECURITY_MANDATORY_HIGH_RID));
 }
-inline DWORD Integrity(HANDLE process) {
-  HANDLE raw = nullptr;
-  if (!OpenProcessToken(process, TOKEN_QUERY, &raw)) return 0;
-  Handle token(raw);
+inline DWORD TokenIntegrity(HANDLE token) {
   DWORD length = 0;
-  GetTokenInformation(token.get(), TokenIntegrityLevel, nullptr, 0, &length);
+  GetTokenInformation(token, TokenIntegrityLevel, nullptr, 0, &length);
   if (length < sizeof(TOKEN_MANDATORY_LABEL) || length > 65536) return 0;
   std::vector<BYTE> data(length);
-  if (!GetTokenInformation(token.get(), TokenIntegrityLevel, data.data(), length, &length)) return 0;
+  if (!GetTokenInformation(token, TokenIntegrityLevel, data.data(), length, &length)) return 0;
   const auto* label = reinterpret_cast<const TOKEN_MANDATORY_LABEL*>(data.data());
   if (!IsValidSid(label->Label.Sid)) return 0;
   const BYTE count = *GetSidSubAuthorityCount(label->Label.Sid);
   return count ? *GetSidSubAuthority(label->Label.Sid, count - 1) : 0;
+}
+inline DWORD Integrity(HANDLE process) {
+  HANDLE raw = nullptr;
+  if (!OpenProcessToken(process, TOKEN_QUERY, &raw)) return 0;
+  Handle token(raw);
+  return TokenIntegrity(token.get());
 }
 // Hosted Windows runners can execute as an elevated administrator. Lower ONLY
 // these disposable processes. Never change the account, a persistent token,
@@ -130,30 +148,39 @@ inline void LaunchMediumConsole(const std::wstring& image, const std::wstring& a
     return;
   }
   HANDLE raw_original = nullptr;
-  Require(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY,
-      &raw_original) != FALSE, "Cannot query own token for a restricted fixture launch");
+  RequireWin32(OpenProcessToken(GetCurrentProcess(), kRestrictedFixtureTokenAccess,
+      &raw_original), "OpenProcessToken(fixture source)");
   Handle original(raw_original);
   BYTE admin_sid[SECURITY_MAX_SID_SIZE]{};
   DWORD admin_size = sizeof(admin_sid);
-  Require(CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, admin_sid, &admin_size) != FALSE,
-      "Cannot create Administrators SID for the disposable restricted token");
+  RequireWin32(CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, admin_sid, &admin_size),
+      "CreateWellKnownSid(Administrators)");
   SID_AND_ATTRIBUTES disabled_admin{admin_sid, 0};
   HANDLE raw_restricted = nullptr;
-  Require(CreateRestrictedToken(original.get(), DISABLE_MAX_PRIVILEGE, 1, &disabled_admin,
-      0, nullptr, 0, nullptr, &raw_restricted) != FALSE,
-      "Cannot create a privilege-restricted copy of the fixture runner token");
+  RequireWin32(CreateRestrictedToken(original.get(), DISABLE_MAX_PRIVILEGE, 1, &disabled_admin,
+      0, nullptr, 0, nullptr, &raw_restricted), "CreateRestrictedToken(fixture)");
   Handle restricted(raw_restricted);
   BYTE medium_sid[SECURITY_MAX_SID_SIZE]{};
   DWORD medium_size = sizeof(medium_sid);
-  Require(CreateWellKnownSid(WinMediumLabelSid, nullptr, medium_sid, &medium_size) != FALSE,
-      "Cannot create the medium-integrity SID");
+  RequireWin32(CreateWellKnownSid(WinMediumLabelSid, nullptr, medium_sid, &medium_size),
+      "CreateWellKnownSid(MediumLabel)");
   TOKEN_MANDATORY_LABEL label{};
   label.Label.Sid = medium_sid;
   label.Label.Attributes = SE_GROUP_INTEGRITY;
-  Require(SetTokenInformation(restricted.get(), TokenIntegrityLevel, &label,
-      static_cast<DWORD>(sizeof(label)) + GetLengthSid(medium_sid)) != FALSE &&
-      Integrity(GetCurrentProcess()) == own_integrity,
-      "Cannot lower only the disposable token integrity");
+  const DWORD restricted_before = TokenIntegrity(restricted.get());
+  const BOOL lowered = SetTokenInformation(restricted.get(), TokenIntegrityLevel, &label,
+      static_cast<DWORD>(sizeof(label)) + GetLengthSid(medium_sid));
+  const DWORD lower_error = lowered ? ERROR_SUCCESS : GetLastError();
+  const DWORD own_after = Integrity(GetCurrentProcess());
+  const DWORD restricted_after = TokenIntegrity(restricted.get());
+  std::printf("CONSOLE_BINDING|mediumToken|operation=SetTokenInformation(TokenIntegrityLevel)|ok=%d|win32Error=%lu|requestedAccess=%lu|runnerBefore=%lu|runnerAfter=%lu|restrictedBefore=%lu|restrictedAfter=%lu\n",
+      lowered ? 1 : 0, lower_error, kRestrictedFixtureTokenAccess,
+      own_integrity, own_after, restricted_before, restricted_after);
+  if (!lowered) throw std::runtime_error("SetTokenInformation(TokenIntegrityLevel) failed (Win32 error " +
+      std::to_string(lower_error) + ")");
+  Require(own_after == own_integrity, "Running process integrity changed during disposable-token setup");
+  Require(restricted_after == SECURITY_MANDATORY_MEDIUM_RID,
+      "Disposable token did not actually reach medium integrity");
   BOOL created = CreateProcessAsUserW(restricted.get(), image.c_str(), command.data(),
       nullptr, nullptr, FALSE, 0, nullptr, nullptr, startup, process);
   const DWORD primary_error = created ? ERROR_SUCCESS : GetLastError();

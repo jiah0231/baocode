@@ -121,8 +121,8 @@ class _TranslationSettingsCardState extends State<TranslationSettingsCard> {
               SettingsSwitchRow(
                 label: zh ? '自动复制选中文字' : 'Automatically copy selected text',
                 description: zh
-                    ? '仅点击选词按钮或按翻译快捷键后，在支持的非敏感控件中尝试复制无法直接读取的选中文字。会临时使用剪贴板，剪贴板管理器或云同步可能看到这些文字。明确点击选词后的「译」或面板翻译后才发送到模型；关闭本选项后可手动粘贴。'
-                    : 'After clicking the selection button or pressing the translation shortcut, try copying the selection from supported non-sensitive controls when direct reading fails. This temporarily uses the clipboard; clipboard managers or cloud sync may see the text. Only an explicit Translate click on the selection button or in the panel sends it to the model. Turn this off to paste manually.',
+                    ? '仅按翻译快捷键且 UI Automation 不支持读取选区时，才尝试从已验证的非密码普通 Edit / RichEdit 控件复制选中文字。先预览，再点击面板翻译发送到模型；选词「译」入口不使用此复制回退。会临时使用剪贴板，剪贴板管理器或云同步可能看到这些文字。关闭本选项后可手动粘贴。'
+                    : 'Only after pressing the translation shortcut, if UI Automation cannot read the selection, try copying from verified ordinary, non-password Edit / RichEdit controls. Preview first; only an explicit Translate click in the panel sends it to the model. The selection Translate button does not use this copy fallback. This temporarily uses the clipboard; clipboard managers or cloud sync may see the text. Turn this off to paste manually.',
                 value:
                     widget.settings?[TranslationHost.clipboardFallbackKey] !=
                     false,
