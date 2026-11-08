@@ -149,18 +149,18 @@ std::wstring WindowImage(HWND window) {
   if (!process) return {};
   const auto image = ProcessImage(process); CloseHandle(process); return image;
 }
-struct Windows {
+struct TerminalWindows {
   std::wstring image;
   std::vector<HWND> handles;
   static BOOL CALLBACK Collect(HWND window, LPARAM value) {
-    auto& self = *reinterpret_cast<Windows*>(value);
+    auto& self = *reinterpret_cast<TerminalWindows*>(value);
     // Do not read any window title or UIA Name/Value to find our source.
     if (IsWindowVisible(window) && SamePath(WindowImage(window), self.image))
       self.handles.push_back(window);
     return TRUE;
   }
   static std::vector<HWND> Read(const std::wstring& image) {
-    Windows self{image, {}};
+    TerminalWindows self{image, {}};
     Check(EnumWindows(Collect, reinterpret_cast<LPARAM>(&self)) != 0,
           "Cannot enumerate Windows Terminal window metadata");
     return self.handles;
@@ -441,7 +441,7 @@ int wmain(int argc, wchar_t** argv) {
   try {
     Check(WithinTemp(root) && WithinTemp(OwnImage()), "Terminal test executable and fixture must be inside RUNNER_TEMP");
     VisualProofSelfTest(root);
-    const auto old_windows = Windows::Read(source_image);
+    const auto old_windows = TerminalWindows::Read(source_image);
     // Documented per-invocation overrides, no settings.json or delegation edits:
     // https://learn.microsoft.com/windows/terminal/command-line-arguments
     // -w -1 forces a NEW window. A commandline replaces the profile shell.
@@ -453,7 +453,7 @@ int wmain(int argc, wchar_t** argv) {
     session.BindFixture(); result.fixture_pid = GetProcessId(session.fixture);
     for (int i = 0; i < 100 && !session.source; ++i) {
       std::vector<HWND> fresh;
-      for (HWND window : Windows::Read(source_image))
+      for (HWND window : TerminalWindows::Read(source_image))
         if (std::find(old_windows.begin(), old_windows.end(), window) == old_windows.end()) fresh.push_back(window);
       Check(fresh.size() <= 1, "Ambiguous new Terminal windows; refusing input or arbitrary cleanup");
       if (fresh.size() == 1) session.source = fresh.front(); else Sleep(100);

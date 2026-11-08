@@ -343,13 +343,21 @@ bool NotepadSelectionMetadata(HWND window, size_t units) {
 }
 void PointParentMetadata(std::ofstream& out, IUIAutomation* uia,
                          IUIAutomationElement* original_focus, HWND source,
-                         DWORD source_pid, bool original_focus_safe) {
+                         DWORD source_pid, bool original_focus_safe,
+                         IUIAutomationElement* current_focus = nullptr,
+                         IUIAutomationElement* starting_element = nullptr) {
   POINT point{}; const bool have_point = GetCursorPos(&point) != 0;
   out << ",\n  \"pointer\":[" << point.x << ',' << point.y << ']'
       << ",\n  \"pointerAvailable\":" << (have_point ? "true" : "false");
   Microsoft::WRL::ComPtr<IUIAutomationElement> hit;
-  const HRESULT hit_hr = have_point && GetForegroundWindow() == source ? uia->ElementFromPoint(point, &hit) : E_ABORT;
-  out << ",\n  \"pointHRESULT\":" << static_cast<unsigned long>(hit_hr);
+  HRESULT hit_hr = E_ABORT;
+  if (GetForegroundWindow() == source) {
+    if (starting_element) { hit = starting_element; hit_hr = S_OK; }
+    else if (have_point) hit_hr = uia->ElementFromPoint(point, &hit);
+  }
+  out << ",\n  \"chainOrigin\":" << Quote(starting_element ? std::string("providedElement") : std::string("currentPointer"))
+      << ",\n  \"startingElementHRESULT\":" << static_cast<unsigned long>(hit_hr);
+  if (!starting_element) out << ",\n  \"pointHRESULT\":" << static_cast<unsigned long>(hit_hr);
   if (FAILED(hit_hr) || !hit) return;
   for (int view = 0; view < 2; ++view) {
     Microsoft::WRL::ComPtr<IUIAutomationTreeWalker> walker;
@@ -383,6 +391,12 @@ void PointParentMetadata(std::ofstream& out, IUIAutomation* uia,
           << ",\"frameworkId\":" << Quote(framework ? std::wstring(framework, SysStringLen(framework)) : std::wstring{})
           << ",\"frameworkHRESULT\":" << static_cast<unsigned long>(framework_hr);
       SysFreeString(cls); SysFreeString(framework);
+      if (current_focus) {
+        BOOL current_same = FALSE;
+        const HRESULT current_hr = uia->CompareElements(current_focus, element.Get(), &current_same);
+        out << ",\"sameAsCurrentFocus\":" << (current_same ? "true" : "false")
+            << ",\"compareCurrentFocusHRESULT\":" << static_cast<unsigned long>(current_hr);
+      }
       int count = -1, noncollapsed = 0;
       const bool metadata_safe = original_focus_safe && SUCCEEDED(pid_hr) && static_cast<DWORD>(pid) == source_pid &&
           SUCCEEDED(password_hr) && !password && GetForegroundWindow() == source;
@@ -475,11 +489,121 @@ void DelayedFocusMetadata(std::ofstream& out, IUIAutomation* uia,
       out << ",\"selectionCount\":" << count << ",\"nonCollapsedRanges\":" << noncollapsed;
       std::printf("DESKTOP_DELAYED_UIA|scheduledMs=%lu|observedMs=%llu|sameIdentity=%d|pid=%d|type=%d|hasFocus=%d|password=%d|ranges=%d|nonCollapsed=%d\n",
           delays[index], observed, same, pid, type, has_focus, password, count, noncollapsed);
+      // A single test-only transition snapshot at 500 ms distinguishes a new
+      // focused Group from replacement of the initial Document's UIA object.
+      // The held original reference is never rebound. Counts/endpoint metadata
+      // may be inspected without HasFocus, but only for same-PID, non-password
+      // elements while the synthetic source remains foreground.
+      const bool transition_safe = initial_safe && SUCCEEDED(pid_hr) && static_cast<DWORD>(pid) == initial_pid &&
+          SUCCEEDED(has_focus_hr) && has_focus && SUCCEEDED(password_hr) && !password && GetForegroundWindow() == source;
+      if (delays[index] == 500 && transition_safe) {
+        out << ",\"transitionSnapshot\":{\"focusReference\":\"heldInitialPostCaptureDocument\"";
+        out << ",\"pinnedOriginal\":{\"reference\":\"unchangedOriginalObject\"";
+        PointParentMetadata(out, uia, initial_focus, source, initial_pid, initial_safe, focus.Get(), initial_focus);
+        out << "},\"newFocusAncestors\":{\"reference\":\"current500msFocus\"";
+        PointParentMetadata(out, uia, initial_focus, source, initial_pid, initial_safe, focus.Get(), focus.Get());
+        out << "},\"pointerAncestors\":{\"reference\":\"currentPointer\"";
+        PointParentMetadata(out, uia, initial_focus, source, initial_pid, initial_safe, focus.Get());
+        out << "}}";
+      }
     }
     out << ",\"completedAfterCaptureMs\":" << static_cast<unsigned long long>(GetTickCount64()-capture_finished) << '}';
     if (!foreground || GetForegroundWindow() != source) break;
   }
   out << ']';
+}
+struct HostWindowMembership {
+  HWND source = nullptr; DWORD current_thread = 0, matching_thread = 0;
+  unsigned window_count = 0; bool found = false;
+};
+BOOL CALLBACK MatchExactHostWindow(HWND window, LPARAM parameter) {
+  auto& evidence = *reinterpret_cast<HostWindowMembership*>(parameter);
+  ++evidence.window_count;
+  if (window == evidence.source) { evidence.found = true; evidence.matching_thread = evidence.current_thread; }
+  return TRUE; // Compare handles only. Never read window contents or captions.
+}
+void ConsoleKernelOwnershipMetadata(std::ofstream& out, HWND source,
+                                    DWORD reported_thread, DWORD verified_host_pid) {
+  DWORD owner = 0, open_error = ERROR_SUCCESS, owner_error = ERROR_SUCCESS;
+  HANDLE thread = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, reported_thread);
+  if (thread) {
+    owner = GetProcessIdOfThread(thread);
+    if (!owner) owner_error = GetLastError();
+    CloseHandle(thread);
+  } else open_error = GetLastError();
+  std::wstring image; DWORD process_open_error = ERROR_SUCCESS, image_error = ERROR_SUCCESS;
+  if (owner) {
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, owner);
+    if (process) {
+      image = ProcessImagePath(process);
+      if (image.empty()) image_error = GetLastError();
+      CloseHandle(process);
+    } else process_open_error = GetLastError();
+  }
+  HostWindowMembership evidence; evidence.source = source;
+  DWORD snapshot_error = ERROR_SUCCESS, first_error = ERROR_SUCCESS, enumeration_error = ERROR_SUCCESS;
+  unsigned host_threads = 0; bool capped = false;
+  HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+  if (snapshot == INVALID_HANDLE_VALUE) snapshot_error = GetLastError();
+  else {
+    THREADENTRY32 entry{}; entry.dwSize = sizeof(entry);
+    if (Thread32First(snapshot, &entry)) do {
+      // No window enumeration for any other process. The target PID was pinned
+      // and verified during this test's explicit system-conhost launch.
+      if (entry.th32OwnerProcessID != verified_host_pid) continue;
+      if (host_threads >= 128) { capped = true; break; }
+      ++host_threads; evidence.current_thread = entry.th32ThreadID;
+      SetLastError(ERROR_SUCCESS);
+      if (!EnumThreadWindows(entry.th32ThreadID, MatchExactHostWindow, reinterpret_cast<LPARAM>(&evidence))) {
+        const DWORD error = GetLastError(); if (error) enumeration_error = error;
+      }
+    } while (Thread32Next(snapshot, &entry));
+    else first_error = GetLastError();
+    CloseHandle(snapshot);
+  }
+  out << ",\n  \"consoleKernelOwnership\":{\"reportedThreadId\":" << reported_thread
+      << ",\"openThreadError\":" << open_error << ",\"kernelThreadOwnerPid\":" << owner
+      << ",\"getProcessIdOfThreadError\":" << owner_error
+      << ",\"kernelThreadOwnerImagePath\":" << Quote(image)
+      << ",\"openOwnerProcessError\":" << process_open_error << ",\"ownerImageQueryError\":" << image_error
+      << ",\"kernelOwnerMatchesVerifiedHost\":" << (owner && owner == verified_host_pid ? "true" : "false")
+      << ",\"hostThreadSnapshotError\":" << snapshot_error << ",\"hostThreadFirstError\":" << first_error
+      << ",\"enumThreadWindowsError\":" << enumeration_error << ",\"hostThreadsEnumerated\":" << host_threads
+      << ",\"hostThreadLimitReached\":" << (capped ? "true" : "false")
+      << ",\"hostWindowsCompared\":" << evidence.window_count
+      << ",\"membershipFound\":" << (evidence.found ? "true" : "false")
+      << ",\"matchingThreadId\":" << evidence.matching_thread << '}';
+  std::printf("DESKTOP_CONSOLE_KERNEL|reportedTid=%lu|kernelOwnerPid=%lu|verifiedHostPid=%lu|membershipFound=%d|matchingTid=%lu|threads=%u|windows=%u\n",
+      reported_thread, owner, verified_host_pid, evidence.found ? 1 : 0, evidence.matching_thread, host_threads, evidence.window_count);
+}
+void ConsoleRootMetadata(std::ofstream& out, IUIAutomation* uia,
+                         IUIAutomationElement* focus, HWND source,
+                         DWORD provider_pid, bool focus_safe) {
+  Microsoft::WRL::ComPtr<IUIAutomationElement> root;
+  const HRESULT root_hr = GetForegroundWindow() == source ? uia->ElementFromHandle(source, &root) : E_ABORT;
+  out << ",\n  \"consoleSourceRoot\":{\"elementFromHandleHRESULT\":" << static_cast<unsigned long>(root_hr);
+  if (SUCCEEDED(root_hr) && root) {
+    int pid = 0; CONTROLTYPEID type = 0; UIA_HWND native = {};
+    BOOL password = TRUE, offscreen = TRUE;
+    const HRESULT pid_hr = root->get_CurrentProcessId(&pid);
+    const HRESULT native_hr = root->get_CurrentNativeWindowHandle(&native);
+    const HRESULT type_hr = root->get_CurrentControlType(&type);
+    const HRESULT password_hr = root->get_CurrentIsPassword(&password);
+    const HRESULT offscreen_hr = root->get_CurrentIsOffscreen(&offscreen);
+    out << ",\"pid\":" << pid << ",\"pidHRESULT\":" << static_cast<unsigned long>(pid_hr)
+        << ",\"nativeHandle\":" << reinterpret_cast<uintptr_t>(reinterpret_cast<HWND>(native))
+        << ",\"nativeHandleHRESULT\":" << static_cast<unsigned long>(native_hr)
+        << ",\"nativeHandleMatchesSource\":" << (reinterpret_cast<HWND>(native) == source ? "true" : "false")
+        << ",\"controlType\":" << type << ",\"typeHRESULT\":" << static_cast<unsigned long>(type_hr)
+        << ",\"isPassword\":" << (password ? "true" : "false")
+        << ",\"passwordHRESULT\":" << static_cast<unsigned long>(password_hr)
+        << ",\"isOffscreen\":" << (offscreen ? "true" : "false")
+        << ",\"offscreenHRESULT\":" << static_cast<unsigned long>(offscreen_hr)
+        << ",\"focusedAncestorsToRoot\":{\"originalComparisonReference\":\"elementFromSourceHwnd\"";
+    PointParentMetadata(out, uia, root.Get(), source, provider_pid, focus_safe, focus, focus);
+    out << '}';
+  }
+  out << '}';
 }
 // Post-capture diagnostics only: never call before the measured production
 // capture, never read Name/Value/DocumentRange/GetText, and never change focus.
@@ -488,10 +612,12 @@ void SourceSelectionMetadata(HWND source, const std::wstring& path,
                              DWORD verified_console_host_pid = 0) {
   std::ofstream out(path.c_str());
   if (!out) return;
-  DWORD source_pid = 0; GetWindowThreadProcessId(source, &source_pid);
+  DWORD source_pid = 0; const DWORD source_thread = GetWindowThreadProcessId(source, &source_pid);
   out << "{\n  \"phase\":\"afterOnlyProductionCapture\",\n  \"focusReference\":\"postCaptureGetFocusedElement\",\n  \"sourcePid\":" << source_pid
       << ",\n  \"foregroundMatches\":" << (GetForegroundWindow() == source ? "true" : "false")
+      << ",\n  \"sourceThreadId\":" << source_thread
       << ",\n  \"verifiedConsoleHostPid\":" << verified_console_host_pid;
+  if (verified_console_host_pid) ConsoleKernelOwnershipMetadata(out, source, source_thread, verified_console_host_pid);
   const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   out << ",\n  \"initializeHRESULT\":" << static_cast<unsigned long>(initialized);
   if (SUCCEEDED(initialized)) {
@@ -574,6 +700,8 @@ void SourceSelectionMetadata(HWND source, const std::wstring& path,
             }
           }
           PointParentMetadata(out, uia.Get(), focus.Get(), source,
+              known_provider ? static_cast<DWORD>(pid) : source_pid, safe);
+          if (verified_console_host_pid) ConsoleRootMetadata(out, uia.Get(), focus.Get(), source,
               known_provider ? static_cast<DWORD>(pid) : source_pid, safe);
           if (observe_delayed && capture_finished) {
             DelayedFocusMetadata(out, uia.Get(), focus.Get(), source, static_cast<DWORD>(pid), safe, capture_finished);

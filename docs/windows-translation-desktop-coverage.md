@@ -93,9 +93,23 @@ measured capture, pinning and comparing the same initial post-capture focus
 identity. A foreground change stops the timeline.
 Scheduled, actual start and completion times are recorded. These observations do
 not invoke production Capture again and cannot replace its initial result.
+The 500 ms observation inspects the held original Document without rebinding it,
+plus the new focused element and its bounded parent chains. Pointer chains mark
+both identities. These metadata-only counts can inspect an unfocused element
+only while it remains in the same source PID, affirmatively non-password and in
+the synthetic foreground source. No selected text is read.
 `console-uia-metadata.json` records the foreground-window PID separately from the
 previously verified Console Host PID; metadata inspection may use that verified
 host provider without changing production's same-PID capture policy.
+Console diagnostics also record the HWND-reported TID/PID, limited-query thread
+handle's kernel owner PID, image path and errors. A separate Toolhelp pass checks
+at most 128 threads belonging to the already verified host PID; EnumThreadWindows
+only compares exact handles against the source HWND. No other process's windows
+or window contents are inspected. Membership and errors remain evidence, not a
+production authorization change. `ElementFromHandle(source)` root metadata and
+a bounded focused-element parent chain separately test association with that
+exact source HWND, including native handle, PID, type, password/offscreen flags
+and element identity. They do not substitute for OS membership evidence.
 
 | Outcome | Meaning |
 | --- | --- |
