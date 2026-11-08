@@ -7,6 +7,7 @@
 namespace {
 HWND edit = nullptr;
 HWND password = nullptr;
+HWND ordinary_button = nullptr;
 std::unique_ptr<TranslationSelectionAction> action;
 int clicks = 0;
 HWND captured = nullptr;
@@ -17,11 +18,16 @@ LRESULT CALLBACK Fixture(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) 
       WS_CHILD | WS_VISIBLE | ES_MULTILINE, 20, 20, 480, 80, hwnd, nullptr, nullptr, nullptr);
     password = CreateWindowW(L"EDIT", L"private password words", WS_CHILD | WS_VISIBLE | ES_PASSWORD,
       20, 110, 480, 30, hwnd, nullptr, nullptr, nullptr);
+    ordinary_button = CreateWindowW(L"BUTTON", L"Ordinary button, not selectable text",
+      WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 20, 155, 300, 35,
+      hwnd, nullptr, nullptr, nullptr);
     return 0;
   }
   if (message == kPrepare) {
-    SetForegroundWindow(hwnd); SetFocus(wparam ? password : edit);
-    SendMessage(wparam ? password : edit, EM_SETSEL, 0, 0);
+    SetForegroundWindow(hwnd);
+    const HWND target = wparam == 2 ? ordinary_button : (wparam == 1 ? password : edit);
+    SetFocus(target);
+    if (wparam != 2) SendMessage(target, EM_SETSEL, 0, 0);
     return 0;
   }
   if (message == WM_DESTROY) { PostQuitMessage(0); return 0; }
@@ -51,7 +57,7 @@ int wmain(int argc, wchar_t** argv) {
     RegisterClassW(&cls);
     const std::wstring title = L"Action fixture " + std::to_wstring(GetCurrentProcessId());
     CreateWindowW(cls.lpszClassName, title.c_str(), WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-       100, 100, 540, 200, nullptr, nullptr, cls.hInstance, nullptr);
+       100, 100, 540, 260, nullptr, nullptr, cls.hInstance, nullptr);
     MSG msg; while (GetMessage(&msg, nullptr, 0, 0) > 0) { TranslateMessage(&msg); DispatchMessage(&msg); }
     return 0;
   }
@@ -91,6 +97,32 @@ int wmain(int argc, wchar_t** argv) {
     if (clicks != 1 || captured != fixture || GetForegroundWindow() != fixture || start == end)
       result = Fail("Click lost selection/focus or failed capture callback");
   }
+  // A drag gesture is not evidence of selected text. Keep the earlier
+  // RichEdit selection intact and verify a focused ordinary button cannot
+  // cause a stale selection from another control to expose an entry.
+  SendMessage(fixture, kPrepare, 2, 0); Pump(150);
+  HWND ordinary = FindWindowExW(fixture, nullptr, L"BUTTON", nullptr);
+  RECT ordinary_rect{};
+  if (!ordinary || !GetWindowRect(ordinary, &ordinary_rect)) {
+    result = Fail("Non-text button fixture missing");
+  } else {
+    SetCursorPos(ordinary_rect.left + 15, ordinary_rect.top + 15); Mouse(MOUSEEVENTF_LEFTDOWN);
+    for (int i = 1; i <= 8; ++i) {
+      SetCursorPos(ordinary_rect.left + 15 + i * 20, ordinary_rect.top + 15); Pump(35);
+    }
+    Mouse(MOUSEEVENTF_LEFTUP); Pump(900);
+    if (Visible() || clicks != 1)
+      result = Fail("Ordinary button drag exposed an entry or capture");
+    // Also drag over an empty part of the client area, without selecting text.
+    POINT empty{350, 175}; ClientToScreen(fixture, &empty);
+    SetCursorPos(empty.x, empty.y); Mouse(MOUSEEVENTF_LEFTDOWN);
+    for (int i = 1; i <= 6; ++i) {
+      SetCursorPos(empty.x + i * 20, empty.y); Pump(35);
+    }
+    Mouse(MOUSEEVENTF_LEFTUP); Pump(900);
+    if (Visible() || clicks != 1)
+      result = Fail("Empty client-area drag exposed an entry or capture");
+  }
   SendMessage(fixture, kPrepare, 1, 0); Pump(150);
   HWND secret = FindWindowExW(fixture, nullptr, L"EDIT", nullptr);
   RECT secret_rect{}; GetWindowRect(secret, &secret_rect);
@@ -103,6 +135,6 @@ int wmain(int argc, wchar_t** argv) {
   if (FindWindowW(L"BaoCodeTranslationSelectionAction", nullptr)) result = Fail("Destructor leaked entry window");
   DestroyWindow(dispatcher); PostMessage(fixture, WM_CLOSE, 0, 0);
   WaitForSingleObject(process.hProcess, 2000); CloseHandle(process.hProcess); CloseHandle(process.hThread);
-  if (!result) std::puts("Translation action drag/no-selection/nonactivation/click/cleanup passed");
+  if (!result) std::puts("Translation action drag/no-selection/non-text/password/nonactivation/click/cleanup passed");
   return result;
 }

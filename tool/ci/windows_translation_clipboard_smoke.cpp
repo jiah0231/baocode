@@ -34,6 +34,13 @@ LRESULT CALLBACK EditProc(HWND window, UINT message, WPARAM wparam, LPARAM lpara
   // Simulate a control with no selected-text UIA provider, but standard edit
   // semantics and a copy command. The actual physical path is SendInput.
   if (message == WM_GETOBJECT) return 0;
+  if (message == WM_TIMER && wparam == 1) {
+    KillTimer(window, 1);
+    const bool written = Put(window, mode == 10 ? L"DELAYED SELECTED SOURCE" : L"LATE TARGET COPY SENTINEL");
+    std::fprintf(stderr, "FIXTURE_DELAYED_COPY case=%d written=%d sequence=%lu\n",
+      mode, written ? 1 : 0, GetClipboardSequenceNumber());
+    return 0;
+  }
   // TranslateMessage queues Ctrl+C as WM_CHAR U+0003 before our WM_KEYDOWN
   // handler runs. We implement copy entirely above the original Edit proc;
   // forwarding this character would invoke a second, default copy, including
@@ -62,6 +69,13 @@ LRESULT CALLBACK EditProc(HWND window, UINT message, WPARAM wparam, LPARAM lpara
       } else Put(window, L"SAME TARGET USER COPY SENTINEL");
       return 0;
     }
+    if (mode == 10 || mode == 11) {
+      const UINT delay = mode == 10 ? 350 : 900;
+      const bool scheduled = SetTimer(window, 1, delay, nullptr) != 0;
+      std::fprintf(stderr, "FIXTURE_DELAYED_COPY scheduled case=%d delay_ms=%u ok=%d\n",
+        mode, delay, scheduled ? 1 : 0);
+      return 0;
+    }
     if (mode == 1) return 0;
     if (mode == 2) { Put(other, L"CONCURRENT COPY SENTINEL"); return 0; }
     if (mode == 3) { ShowWindow(other, SW_SHOW); SetForegroundWindow(other); return 0; }
@@ -82,6 +96,7 @@ LRESULT CALLBACK Fixture(HWND window, UINT message, WPARAM wparam, LPARAM lparam
     return 0;
   }
   if (message == kPrepare) {
+    KillTimer(edit, 1);
     mode = static_cast<int>(wparam); copies = 0;
     SetWindowLongPtrW(edit, GWL_STYLE, WS_CHILD | WS_VISIBLE | (mode == 6 ? ES_PASSWORD : 0));
     ShowWindow(window, SW_SHOW); SetForegroundWindow(window); SetFocus(edit);
@@ -129,9 +144,10 @@ void PumpMessages() {
 // on a worker. Running capture on this thread deadlocks the external writer's
 // EmptyClipboard against our old owner and makes the timeout look like bad input.
 translation_clipboard::Result CaptureWithPump(HWND owner,
-    const translation_clipboard::Proof& proof, translation_clipboard::Diagnostics& diag) {
+    const translation_clipboard::Proof& proof, translation_clipboard::Diagnostics& diag,
+    const std::atomic<bool>* canceled = nullptr, ULONGLONG request_deadline = 0) {
   auto pending = std::async(std::launch::async, [&]() {
-    return translation_clipboard::CopySelection(owner, proof, nullptr, 0, &diag);
+    return translation_clipboard::CopySelection(owner, proof, canceled, request_deadline, &diag);
   });
   while (pending.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
     PumpMessages();
@@ -207,7 +223,7 @@ int wmain(int argc, wchar_t** argv) {
   for (int i = 0; i < 100 && !fixture; ++i) { Sleep(30); fixture = FindWindowW(L"BaoClipboardFixture", title.c_str()); }
   HWND owner = CreateWindowW(L"STATIC", L"Snapshot owner", 0, 0, 0, 1, 1, nullptr, nullptr, nullptr, nullptr);
   int result = !fixture || !owner ? Fail("Fixture unavailable") : 0;
-  for (int test = 0; test < 10 && !result; ++test) {
+  for (int test = 0; test < 14 && !result; ++test) {
     AllowSetForegroundWindow(child.dwProcessId);
     DWORD_PTR target = 0;
     if (!SendMessageTimeoutW(fixture, kPrepare, test, 0, SMTO_ABORTIFHUNG, 2000, &target)) {
@@ -225,7 +241,29 @@ int wmain(int argc, wchar_t** argv) {
       SendInput(1, &held, sizeof(INPUT)); Sleep(30);
     }
     translation_clipboard::Diagnostics diagnostics;
-    const auto captured = CaptureWithPump(owner, proof, diagnostics);
+    std::atomic<bool> canceled{test == 12};
+    const ULONGLONG capture_started = GetTickCount64();
+    const ULONGLONG request_deadline = test == 13 ? capture_started - 1 : 0;
+    const auto captured = CaptureWithPump(owner, proof, diagnostics, &canceled, request_deadline);
+    const ULONGLONG capture_elapsed = GetTickCount64() - capture_started;
+    if (test == 11) {
+      if (captured.status != "clipboardTimeout" || !captured.text.empty() ||
+          GetClipboardSequenceNumber() != sequence || diagnostics.observed_sequence != 0)
+        result = Fail("Slow target was read or changed clipboard before timeout boundary");
+      // The capture future has completed: there must be no late read/restore.
+      // Keep pumping the owner UI so the target's already-requested copy can
+      // finish. Windows cannot retract that command after our 500ms timeout.
+      const ULONGLONG observation_end = GetTickCount64() + 650;
+      while (GetTickCount64() < observation_end) {
+        PumpMessages();
+        MsgWaitForMultipleObjects(0, nullptr, FALSE, 10, QS_ALLINPUT);
+      }
+      std::fprintf(stderr,
+        "LATE_COPY_BOUNDARY elapsed_ms=%llu capture_status=%s source_units=%llu "
+        "sequence_before=%lu sequence_after_late_target=%lu late_restore=none\n",
+        static_cast<unsigned long long>(capture_elapsed), captured.status.c_str(),
+        static_cast<unsigned long long>(captured.text.size()), sequence, GetClipboardSequenceNumber());
+    }
     if (test == 7) {
       INPUT release{}; release.type = INPUT_KEYBOARD; release.ki.wVk = VK_SHIFT;
       release.ki.dwFlags = KEYEVENTF_KEYUP; SendInput(1, &release, sizeof(INPUT));
@@ -247,13 +285,22 @@ int wmain(int argc, wchar_t** argv) {
     if (test == 8 && (count || captured.status != "noSelection")) result = Fail("Collapsed selection copied whole document");
     if (test == 9 && (count != 2 || !captured.text.empty() || captured.status != "clipboardChanged"))
       result = Fail("Same-target concurrent user copy was read or accepted");
+    if (test == 10 && (captured.status != "ok" || captured.text != L"DELAYED SELECTED SOURCE" || count != 1))
+      result = Fail("350ms target copy did not complete within capture timeout");
+    if (test == 11 && (count != 1 || captured.status != "clipboardTimeout" ||
+        !captured.text.empty() || GetClipboardSequenceNumber() == sequence))
+      result = Fail("Late target copy boundary was not observed without source delivery");
+    if ((test == 12 || test == 13) && (count || diagnostics.injected_events ||
+        !captured.text.empty() || GetClipboardSequenceNumber() != sequence))
+      result = Fail("Canceled or expired request caused a copy side effect");
     if (!OpenClipboard(owner)) result = Fail("Cannot inspect final clipboard");
     else {
       const auto clipboard = translation_clipboard::ReadUnicode();
       const std::wstring expected = test == 2 ? L"CONCURRENT COPY SENTINEL" :
-        (test == 9 ? L"SAME TARGET USER COPY SENTINEL" : L"ORIGINAL UNICODE \u4e2d\u6587");
+        (test == 9 ? L"SAME TARGET USER COPY SENTINEL" :
+          (test == 11 ? L"LATE TARGET COPY SENTINEL" : L"ORIGINAL UNICODE \u4e2d\u6587"));
       if (clipboard.text != expected) result = Fail("Original or concurrent clipboard was not preserved");
-      if (test != 2 && test != 9) {
+      if (test != 2 && test != 9 && test != 11) {
         HANDLE data = GetClipboardData(CF_LOCALE);
         const auto* value = data ? static_cast<const LCID*>(GlobalLock(data)) : nullptr;
         if (!value || *value != 0x0409) result = Fail("Binary locale snapshot was not restored");

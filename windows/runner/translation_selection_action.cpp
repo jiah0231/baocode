@@ -35,10 +35,21 @@ std::optional<RECT> SelectionBounds(HWND source,
                               IID_PPV_ARGS(&automation)))) return std::nullopt;
   ComPtr<IUIAutomation2> bounded;
   if (FAILED(automation.As(&bounded)) ||
+      FAILED(bounded->put_ConnectionTimeout(previous_element ? 150 : 300)) ||
+      FAILED(bounded->put_TransactionTimeout(previous_element ? 200 : 500))) return std::nullopt;
+  ComPtr<IUIAutomationElement> focused;
+  const HRESULT focus_result = automation->GetFocusedElement(&focused);
+  if (FAILED(focus_result) || !focused) {
+    // No element or text has been accepted yet. Only the exact lazy-tree
+    // discovery timeout may retry; Tick supplies the shared attempt/deadline
+    // budget. Once identity is bound, this never reacquires a different one.
+    retryable = !previous_element && GetForegroundWindow() == source &&
+        static_cast<uint32_t>(focus_result) == translation_retry::kInitialFocusTimeout;
+    return std::nullopt;
+  }
+  if (GetForegroundWindow() != source ||
       FAILED(bounded->put_ConnectionTimeout(150)) ||
       FAILED(bounded->put_TransactionTimeout(200))) return std::nullopt;
-  ComPtr<IUIAutomationElement> focused;
-  if (FAILED(automation->GetFocusedElement(&focused)) || !focused) return std::nullopt;
   int focused_pid = 0;
   BOOL password = TRUE, has_focus = FALSE;
   if (FAILED(focused->get_CurrentProcessId(&focused_pid)) ||

@@ -17,5 +17,14 @@ inline bool CanRetry(bool incomplete, unsigned completed_attempts,
       completed_attempts < kMaxAttempts && now < deadline &&
       deadline - now > Delay(completed_attempts) + 200;
 }
+// Windows UIA's timeout HRESULT. This is the sole pre-identity retry: it
+// repeats only GetFocusedElement, before any text or control was accepted.
+constexpr uint32_t kInitialFocusTimeout = 0x80131505u;
+inline bool CanRetryInitialFocus(uint32_t hresult, bool identity_bound,
+                                 bool same_foreground, unsigned completed_attempts,
+                                 uint64_t now, uint64_t deadline, bool canceled = false) {
+  return hresult == kInitialFocusTimeout && !identity_bound && same_foreground &&
+      CanRetry(true, completed_attempts, now, deadline, canceled);
+}
 }  // namespace translation_retry
 #endif

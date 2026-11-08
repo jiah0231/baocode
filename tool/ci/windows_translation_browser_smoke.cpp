@@ -1,6 +1,7 @@
 // Default Edge + local synthetic HTML, no forced accessibility switches.
 // Calls the production capture header; never sends Ctrl+C or reads document text.
 #include "../../windows/runner/translation_selection.h"
+#include <dwmapi.h>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
@@ -39,17 +40,25 @@ void Mouse(POINT p, DWORD flags) {
 void DragLine(int line) {
   RECT r{}; Check(GetWindowRect(renderer, &r) != 0, "Renderer bounds unavailable");
   const int dpi = static_cast<int>(GetDpiForWindow(browser));
-  // Start inside paragraph padding before the first glyph, not on a glyph's
-  // caret boundary. This avoids subpixel/DPI rounding dropping initial letters.
-  // End beyond the full line; selection is still exclusively real mouse input.
-  const POINT from{r.left+MulDiv(48, dpi, 96), r.top+MulDiv(92+100*line, dpi, 96)};
+  // First click an actual glyph to give the document keyboard focus, rather
+  // than starting from paragraph padding. No UIA warm-up or scripted selection.
+  // CSS paragraph left40 + padding32 places its first glyph at72. Start one
+  // pixel into that glyph's leading half, which maps to its initial caret.
+  const POINT from{r.left+MulDiv(73, dpi, 96), r.top+MulDiv(92+100*line, dpi, 96)};
+  const POINT focus{r.left+MulDiv(120, dpi, 96), from.y};
   const POINT to{r.left+MulDiv(800, dpi, 96), from.y};
   Check(to.x < r.right && to.y < r.bottom, "Browser viewport too small for fixture");
+  Mouse(focus, 0); Mouse(focus, MOUSEEVENTF_LEFTDOWN); Sleep(40); Mouse(focus, MOUSEEVENTF_LEFTUP);
+  Sleep(GetDoubleClickTime() + 80); // Next down must be a drag, not word selection.
   Mouse(from, 0); Sleep(80); Mouse(from, MOUSEEVENTF_LEFTDOWN);
   for (int i = 1; i <= 16; ++i) {
     Mouse(POINT{from.x+(to.x-from.x)*i/16, from.y}, 0); Sleep(20);
   }
-  Mouse(to, MOUSEEVENTF_LEFTUP); Sleep(300);
+  Mouse(to, MOUSEEVENTF_LEFTUP);
+  // Edge's default selection mini-menu can appear beside the release point.
+  // Move away without clicking or pressing Escape, preserving selection/focus.
+  Mouse(POINT{r.left+MulDiv(24, dpi, 96), r.top+MulDiv(400, dpi, 96)}, 0);
+  Sleep(350);
 }
 void SyntheticMismatch(const std::wstring& actual, const std::wstring& expected) {
   // Test fixture only: never add selected-text diagnostics to production code.
@@ -73,7 +82,11 @@ void SyntheticMismatch(const std::wstring& actual, const std::wstring& expected)
 void SyntheticScreenshot(const std::wstring& path) {
   // Only the isolated browser's rectangle, while foreground, on guarded CI.
   Check(GetForegroundWindow() == browser, "Refusing screenshot of background browser");
-  RECT r{}; Check(GetWindowRect(browser, &r) != 0, "Browser screenshot bounds unavailable");
+  RECT r{};
+  Check(SUCCEEDED(DwmGetWindowAttribute(browser, DWMWA_EXTENDED_FRAME_BOUNDS,
+      &r, sizeof(r))), "Browser visible-frame screenshot bounds unavailable");
+  // GetWindowRect includes invisible resize borders and can capture desktop
+  // strips. DWM's visible frame is required; do not fall back to outer bounds.
   const int width = r.right-r.left, height = r.bottom-r.top;
   Check(width > 0 && height > 0, "Browser screenshot dimensions invalid");
   HDC screen = GetDC(nullptr), dc = CreateCompatibleDC(screen);

@@ -101,6 +101,16 @@ int wmain(int argc, wchar_t** argv) {
       CanRetry(true, 1, 100, 1500, true) || CanRetry(true, 1, 1500, 1500) ||
       CanRetry(true, 2, 1200, 1500) || CanRetry(true, 0, 100, 1500))
     return Fail("Cold-provider retry policy exceeded attempts/deadline or retried denial");
+  using translation_retry::CanRetryInitialFocus;
+  constexpr uint32_t timeout_hr = translation_retry::kInitialFocusTimeout;
+  if (!CanRetryInitialFocus(timeout_hr, false, true, 1, 500, 1500) ||
+      CanRetryInitialFocus(0x80004005u, false, true, 1, 500, 1500) ||
+      CanRetryInitialFocus(timeout_hr, true, true, 1, 500, 1500) ||
+      CanRetryInitialFocus(timeout_hr, false, false, 1, 500, 1500) ||
+      CanRetryInitialFocus(timeout_hr, false, true, 1, 500, 1500, true) ||
+      CanRetryInitialFocus(timeout_hr, false, true, 4, 500, 1500) ||
+      CanRetryInitialFocus(timeout_hr, false, true, 1, 1400, 1500))
+    return Fail("Initial focus timeout retry weakened identity/focus/error/deadline gates");
   wchar_t executable[MAX_PATH]; GetModuleFileNameW(nullptr, executable, MAX_PATH);
   std::wstring command = L"\"" + std::wstring(executable) + L"\" --fixture";
   STARTUPINFOW startup{}; startup.cb = static_cast<DWORD>(sizeof(startup));

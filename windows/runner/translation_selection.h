@@ -112,8 +112,9 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
       }
       ComPtr<IUIAutomationElement> original_element;
       // Chromium may expose a focused Document before its accessibility text
-      // pattern is ready. Retry only that incomplete, security-checked element,
-      // within this one gesture; never scan descendants or change focus.
+      // pattern is ready, or time out before returning any element. Reacquire
+      // only that initial timeout; once bound, retry the same security-checked
+      // identity. Never scan descendants or change focus.
       for (unsigned attempt = 0; attempt < translation_retry::kMaxAttempts && !stopped(); ++attempt) {
         if (diagnostics) diagnostics->attempts = attempt + 1;
         bool retryable = false;
@@ -124,20 +125,41 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
           const ULONGLONG now = GetTickCount64();
           if (now >= deadline) break;
           const DWORD remaining = static_cast<DWORD>(deadline - now);
-          if (FAILED(bounded->put_ConnectionTimeout(std::min<DWORD>(150, remaining))) ||
-              FAILED(bounded->put_TransactionTimeout(std::min<DWORD>(200, remaining)))) break;
+          // The first accessibility connection can wake Chromium's lazy tree.
+          // Give discovery the original 500ms transaction budget, but never
+          // exceed this request's remaining lifetime. Bound later transactions.
+          const DWORD connection = original_element ? 150 : 300;
+          const DWORD transaction = original_element ? 200 : 500;
+          if (FAILED(bounded->put_ConnectionTimeout(std::min(connection, remaining))) ||
+              FAILED(bounded->put_TransactionTimeout(std::min(transaction, remaining)))) break;
         }
         ComPtr<IUIAutomationElement> focused;
-        if (SUCCEEDED(observe("GetFocusedElement", automation->GetFocusedElement(&focused))) && focused) {
+        const HRESULT focus_result = observe("GetFocusedElement", automation->GetFocusedElement(&focused));
+        if (stopped()) break;
+        if (GetForegroundWindow() != foreground) { out.status = "focusChanged"; break; }
+        retryable = translation_retry::CanRetryInitialFocus(
+            static_cast<uint32_t>(focus_result), original_element != nullptr,
+            GetForegroundWindow() == foreground, attempt + 1, GetTickCount64(), deadline,
+            canceled && canceled->load());
+        if (SUCCEEDED(focus_result) && focused) {
+          // The longer budget is solely for initial focus discovery, not for
+          // later security properties or reading selection text.
+          if (bounded) {
+            const ULONGLONG now = GetTickCount64();
+            if (now >= deadline) break;
+            const DWORD remaining = static_cast<DWORD>(deadline - now);
+            if (FAILED(bounded->put_ConnectionTimeout(std::min<DWORD>(150, remaining))) ||
+                FAILED(bounded->put_TransactionTimeout(std::min<DWORD>(200, remaining)))) break;
+          }
           int focused_process = 0;
           BOOL password = TRUE;
           BOOL has_focus = FALSE;
           // Fail closed if the provider cannot affirm this is not a password.
-          if (SUCCEEDED(observe("ProcessId", focused->get_CurrentProcessId(&focused_process))) &&
+          if (!stopped() && SUCCEEDED(observe("ProcessId", focused->get_CurrentProcessId(&focused_process))) &&
               static_cast<DWORD>(focused_process) == process &&
-              SUCCEEDED(observe("HasKeyboardFocus", focused->get_CurrentHasKeyboardFocus(&has_focus))) &&
+              !stopped() && SUCCEEDED(observe("HasKeyboardFocus", focused->get_CurrentHasKeyboardFocus(&has_focus))) &&
               has_focus &&
-              SUCCEEDED(observe("IsPassword", focused->get_CurrentIsPassword(&password)))) {
+              !stopped() && SUCCEEDED(observe("IsPassword", focused->get_CurrentIsPassword(&password)))) {
             if (password) {
               out.status = "password";
             } else {
@@ -152,6 +174,7 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
               CONTROLTYPEID control_type = 0;
               const bool text_control = SUCCEEDED(focused->get_CurrentControlType(&control_type)) &&
                   (control_type == UIA_EditControlTypeId || control_type == UIA_DocumentControlTypeId);
+              if (stopped()) break;
               ComPtr<IUIAutomationTextPattern> pattern;
               const HRESULT pattern_result = observe("TextPattern", focused->GetCurrentPatternAs(
                   UIA_TextPatternId, IID_PPV_ARGS(&pattern)));
@@ -192,6 +215,7 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
                     (selected == UIA_E_NOTSUPPORTED || selected == E_NOINTERFACE ||
                      selected == E_FAIL || (SUCCEEDED(selected) && !ranges));
                 if (SUCCEEDED(selected) && ranges) {
+                  if (stopped()) break;
                   int length = 0;
                   if (SUCCEEDED(observe("Selection.Length", ranges->get_Length(&length)))) {
                     out.status = length > 16 ? "tooLong" : "noSelection";
@@ -226,7 +250,7 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
                       SysFreeString(text);
                       if (FAILED(read) || !has_text) { failed = true; break; }
                       if (out.status == "tooLong") break;
-                      if (!out.bounds) out.bounds = ReadBounds(range.Get(), foreground);
+                      if (!out.bounds && !stopped()) out.bounds = ReadBounds(range.Get(), foreground);
                     }
                     if (failed || out.status == "tooLong") {
                       out.text.clear();

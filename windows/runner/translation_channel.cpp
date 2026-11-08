@@ -12,6 +12,11 @@
 #include "translation_selection_action.h"
 #include "utils.h"
 
+// This engine export is omitted from the distributed public Flutter header.
+// Keep its ABI identical to app_windows.cpp's existing multi-view declaration.
+extern "C" FLUTTER_EXPORT FlutterDesktopEngineRef
+FlutterDesktopEngineForId(int64_t engine_id);
+
 namespace {
 constexpr int kHotkey = 0x4254;
 flutter::EncodableValue Encode(const translation_selection::Selection& selection,
