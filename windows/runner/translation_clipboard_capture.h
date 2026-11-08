@@ -175,6 +175,14 @@ inline Result CopySelection(HWND owner, const Proof& proof,
   Diagnostics& diag = diagnostics ? *diagnostics : ignored;
   diag = Diagnostics{};
   Result result;
+  constexpr ULONGLONG kCopyWaitMs = 500;
+  constexpr ULONGLONG kCleanupReserveMs = 50;
+  const auto has_copy_budget = [&]() {
+    if (!request_deadline) return true;
+    const ULONGLONG now = GetTickCount64();
+    return now < request_deadline &&
+           request_deadline - now >= kCopyWaitMs + kCleanupReserveMs;
+  };
   const auto stopped = [&]() {
     return (canceled && canceled->load()) || !IsWindow(owner) ||
            (request_deadline && GetTickCount64() >= request_deadline);
@@ -182,6 +190,9 @@ inline Result CopySelection(HWND owner, const Proof& proof,
   if (stopped()) return result;
   diag.stage = "eligibility";
   if (!SafeControl(proof)) return result;
+  // Earlier UIA work shares this request's deadline. Do not begin a copy that
+  // already lacks its full response window plus cleanup reserve.
+  if (!has_copy_budget()) { diag.stage = "copyBudget"; result.status = "clipboardTimeout"; return result; }
   diag.stage = "modifierRelease";
   const ULONGLONG release_deadline = GetTickCount64() + 450;
   while (!KeysReleased()) {
@@ -234,6 +245,9 @@ inline Result CopySelection(HWND owner, const Proof& proof,
   input[3].ki.wVk = VK_CONTROL; input[3].ki.dwFlags = KEYEVENTF_KEYUP;
   if (stopped() || !SameFocus(proof) || !KeysReleased() ||
       !LastInputMatches(previous_input.dwTime) || GetClipboardSequenceNumber() != before) return result;
+  // Recheck immediately before the side effect: modifier release, snapshot
+  // rendering and native selection queries may have consumed the budget.
+  if (!has_copy_budget()) { diag.stage = "copyBudget"; result.status = "clipboardTimeout"; return result; }
   diag.stage = "sendInput";
   const UINT inserted = SendInput(4, input, sizeof(INPUT));
   diag.injected_events = inserted;
@@ -244,7 +258,7 @@ inline Result CopySelection(HWND owner, const Proof& proof,
     return result;
   }
   diag.stage = "waitCopy";
-  const ULONGLONG deadline = GetTickCount64() + 500;
+  const ULONGLONG deadline = GetTickCount64() + kCopyWaitMs;
   while (GetTickCount64() < deadline) {
     if (!SameFocus(proof)) { result.status = "focusChanged"; return result; }
     if (GetClipboardSequenceNumber() != before) {

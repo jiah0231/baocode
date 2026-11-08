@@ -24,7 +24,8 @@ using Microsoft::WRL::ComPtr;
 // ValuePattern, document range, clipboard, or keyboard monitoring is used.
 std::optional<RECT> SelectionBounds(HWND source,
     ComPtr<IUIAutomationElement>& previous_element,
-    ComPtr<IUIAutomationTextRange>& previous_range, bool& retryable) {
+    ComPtr<IUIAutomationTextRange>& previous_range, bool& retryable,
+    bool& require_text_control) {
   retryable = false;
   DWORD pid = 0;
   GetWindowThreadProcessId(source, &pid);
@@ -55,8 +56,21 @@ std::optional<RECT> SelectionBounds(HWND source,
   if (FAILED(focused->get_CurrentProcessId(&focused_pid)) ||
       static_cast<DWORD>(focused_pid) != pid ||
       FAILED(focused->get_CurrentIsPassword(&password)) || password ||
-      FAILED(focused->get_CurrentHasKeyboardFocus(&has_focus)) || !has_focus)
+      FAILED(focused->get_CurrentHasKeyboardFocus(&has_focus)))
     return std::nullopt;
+  if (!has_focus) {
+    CONTROLTYPEID initial_type = 0;
+    wchar_t source_class[64] = {};
+    const bool known_type = SUCCEEDED(focused->get_CurrentControlType(&initial_type));
+    const bool chromium = GetClassNameW(source, source_class, 64) &&
+        _wcsicmp(source_class, L"Chrome_WidgetWin_1") == 0;
+    retryable = translation_retry::IsInitialChromiumPane(
+        previous_element != nullptr, GetForegroundWindow() == source,
+        static_cast<DWORD>(focused_pid) == pid, password == FALSE,
+        has_focus == FALSE, known_type && initial_type == UIA_PaneControlTypeId, chromium);
+    if (retryable) require_text_control = true;
+    return std::nullopt;
+  }
   BOOL same_element = FALSE;
   if (previous_element &&
       (FAILED(automation->CompareElements(previous_element.Get(), focused.Get(), &same_element)) || !same_element))
@@ -67,6 +81,7 @@ std::optional<RECT> SelectionBounds(HWND source,
   CONTROLTYPEID control_type = 0;
   const bool text_control = SUCCEEDED(focused->get_CurrentControlType(&control_type)) &&
       (control_type == UIA_EditControlTypeId || control_type == UIA_DocumentControlTypeId);
+  if (require_text_control && !text_control) return std::nullopt;
   ComPtr<IUIAutomationTextPattern> pattern;
   const HRESULT pattern_result = focused->GetCurrentPatternAs(UIA_TextPatternId, IID_PPV_ARGS(&pattern));
   if (FAILED(pattern_result) || !pattern) {
@@ -164,6 +179,7 @@ TranslationSelectionAction::TranslationSelectionAction(HWND dispatcher,
     ComPtr<IUIAutomationElement> previous_element;
     ComPtr<IUIAutomationTextRange> previous_range;
     unsigned previous_generation = 0;
+    bool require_text_control = false;
     std::unique_lock<std::mutex> lock(worker->mutex);
     while (true) {
       worker->wake.wait(lock, [&] { return worker->stop || worker->pending; });
@@ -174,11 +190,12 @@ TranslationSelectionAction::TranslationSelectionAction(HWND dispatcher,
       lock.unlock();
       if (generation != previous_generation) {
         previous_element.Reset(); previous_range.Reset();
+        require_text_control = false;
         previous_generation = generation;
       }
       bool retryable = false;
       auto result = SUCCEEDED(initialized)
-          ? SelectionBounds(source, previous_element, previous_range, retryable) : std::nullopt;
+          ? SelectionBounds(source, previous_element, previous_range, retryable, require_text_control) : std::nullopt;
       lock.lock();
       worker->result = result;
       worker->retryable = retryable;

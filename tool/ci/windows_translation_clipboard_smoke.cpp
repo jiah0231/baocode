@@ -223,7 +223,7 @@ int wmain(int argc, wchar_t** argv) {
   for (int i = 0; i < 100 && !fixture; ++i) { Sleep(30); fixture = FindWindowW(L"BaoClipboardFixture", title.c_str()); }
   HWND owner = CreateWindowW(L"STATIC", L"Snapshot owner", 0, 0, 0, 1, 1, nullptr, nullptr, nullptr, nullptr);
   int result = !fixture || !owner ? Fail("Fixture unavailable") : 0;
-  for (int test = 0; test < 14 && !result; ++test) {
+  for (int test = 0; test < 15 && !result; ++test) {
     AllowSetForegroundWindow(child.dwProcessId);
     DWORD_PTR target = 0;
     if (!SendMessageTimeoutW(fixture, kPrepare, test, 0, SMTO_ABORTIFHUNG, 2000, &target)) {
@@ -243,7 +243,8 @@ int wmain(int argc, wchar_t** argv) {
     translation_clipboard::Diagnostics diagnostics;
     std::atomic<bool> canceled{test == 12};
     const ULONGLONG capture_started = GetTickCount64();
-    const ULONGLONG request_deadline = test == 13 ? capture_started - 1 : 0;
+    const ULONGLONG request_deadline = test == 13 ? capture_started - 1 :
+      (test == 14 ? capture_started + 100 : 0);
     const auto captured = CaptureWithPump(owner, proof, diagnostics, &canceled, request_deadline);
     const ULONGLONG capture_elapsed = GetTickCount64() - capture_started;
     if (test == 11) {
@@ -290,9 +291,12 @@ int wmain(int argc, wchar_t** argv) {
     if (test == 11 && (count != 1 || captured.status != "clipboardTimeout" ||
         !captured.text.empty() || GetClipboardSequenceNumber() == sequence))
       result = Fail("Late target copy boundary was not observed without source delivery");
-    if ((test == 12 || test == 13) && (count || diagnostics.injected_events ||
+    if ((test == 12 || test == 13 || test == 14) && (count || diagnostics.injected_events ||
         !captured.text.empty() || GetClipboardSequenceNumber() != sequence))
-      result = Fail("Canceled or expired request caused a copy side effect");
+      result = Fail("Canceled, expired or insufficient-budget request caused a copy side effect");
+    if (test == 14 && (captured.status != "clipboardTimeout" ||
+        std::string(diagnostics.stage) != "copyBudget"))
+      result = Fail("Near-expired request was not rejected by copy budget guard");
     if (!OpenClipboard(owner)) result = Fail("Cannot inspect final clipboard");
     else {
       const auto clipboard = translation_clipboard::ReadUnicode();

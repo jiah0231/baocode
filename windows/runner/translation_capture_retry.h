@@ -7,17 +7,17 @@ constexpr unsigned kMaxAttempts = 4;
 inline uint64_t Delay(unsigned completed_attempts) {
   return 80 * static_cast<uint64_t>(completed_attempts);
 }
-// The caller must already have affirmed non-password, text-control type,
-// keyboard focus, source process and stable UIA element identity. This policy
-// only budgets retries of incomplete initialization; empty/denied selections
-// are not initialization failures. Reserve one bounded provider transaction.
+// Budget only: the caller must separately establish a permitted initial
+// discovery category below, or an incomplete pattern on an already verified
+// non-password focused text control with stable identity. Empty/denied
+// selections do not qualify. Reserve one bounded provider transaction.
 inline bool CanRetry(bool incomplete, unsigned completed_attempts,
                      uint64_t now, uint64_t deadline, bool canceled = false) {
   return incomplete && !canceled && completed_attempts > 0 &&
       completed_attempts < kMaxAttempts && now < deadline &&
       deadline - now > Delay(completed_attempts) + 200;
 }
-// Windows UIA's timeout HRESULT. This is the sole pre-identity retry: it
+// Windows UIA's timeout HRESULT. This pre-identity retry
 // repeats only GetFocusedElement, before any text or control was accepted.
 constexpr uint32_t kInitialFocusTimeout = 0x80131505u;
 inline bool CanRetryInitialFocus(uint32_t hresult, bool identity_bound,
@@ -25,6 +25,16 @@ inline bool CanRetryInitialFocus(uint32_t hresult, bool identity_bound,
                                  uint64_t now, uint64_t deadline, bool canceled = false) {
   return hresult == kInitialFocusTimeout && !identity_bound && same_foreground &&
       CanRetry(true, completed_attempts, now, deadline, canceled);
+}
+// A Chromium accessibility root may exist before its actual focused text
+// control. This permits metadata requery only, never accepting that Pane's
+// focus state or reading its value/descendants. All properties must be known.
+inline bool IsInitialChromiumPane(bool identity_bound, bool same_foreground,
+                                  bool same_process, bool known_non_password,
+                                  bool known_unfocused, bool is_pane,
+                                  bool chromium_window) {
+  return !identity_bound && same_foreground && same_process &&
+      known_non_password && known_unfocused && is_pane && chromium_window;
 }
 }  // namespace translation_retry
 #endif

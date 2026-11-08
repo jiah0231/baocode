@@ -111,6 +111,7 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
         bounded->put_TransactionTimeout(500);
       }
       ComPtr<IUIAutomationElement> original_element;
+      bool require_text_control = false;
       // Chromium may expose a focused Document before its accessibility text
       // pattern is ready, or time out before returning any element. Reacquire
       // only that initial timeout; once bound, retry the same security-checked
@@ -158,10 +159,27 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
           if (!stopped() && SUCCEEDED(observe("ProcessId", focused->get_CurrentProcessId(&focused_process))) &&
               static_cast<DWORD>(focused_process) == process &&
               !stopped() && SUCCEEDED(observe("HasKeyboardFocus", focused->get_CurrentHasKeyboardFocus(&has_focus))) &&
-              has_focus &&
               !stopped() && SUCCEEDED(observe("IsPassword", focused->get_CurrentIsPassword(&password)))) {
             if (password) {
               out.status = "password";
+            } else if (!has_focus) {
+              CONTROLTYPEID initial_type = 0;
+              wchar_t source_class[64] = {};
+              const bool known_type = !stopped() &&
+                  SUCCEEDED(observe("InitialPane.ControlType", focused->get_CurrentControlType(&initial_type)));
+              const bool chromium = GetClassNameW(foreground, source_class, 64) &&
+                  _wcsicmp(source_class, L"Chrome_WidgetWin_1") == 0;
+              retryable = translation_retry::IsInitialChromiumPane(
+                  original_element != nullptr, GetForegroundWindow() == foreground,
+                  static_cast<DWORD>(focused_process) == process, password == FALSE,
+                  has_focus == FALSE, known_type && initial_type == UIA_PaneControlTypeId, chromium);
+              if (retryable) {
+                require_text_control = true;
+                if (diagnostics) {
+                  diagnostics->last_failure_stage = "InitialPane.notReady";
+                  diagnostics->last_failure = S_FALSE;
+                }
+              }
             } else {
               BOOL same = FALSE;
               if (original_element &&
@@ -174,7 +192,7 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
               CONTROLTYPEID control_type = 0;
               const bool text_control = SUCCEEDED(focused->get_CurrentControlType(&control_type)) &&
                   (control_type == UIA_EditControlTypeId || control_type == UIA_DocumentControlTypeId);
-              if (stopped()) break;
+              if (stopped() || (require_text_control && !text_control)) break;
               ComPtr<IUIAutomationTextPattern> pattern;
               const HRESULT pattern_result = observe("TextPattern", focused->GetCurrentPatternAs(
                   UIA_TextPatternId, IID_PPV_ARGS(&pattern)));
