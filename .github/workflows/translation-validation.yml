@@ -36,7 +36,12 @@ jobs:
         shell: pwsh
         env:
           BAOCODE_DISPOSABLE_UI_TEST: '1'
-        run: ./tool/ci/windows_translation_browser_smoke.ps1
+        run: |
+          1..3 | ForEach-Object {
+            Write-Host "Fresh Edge cold-start verification $_ / 3"
+            ./tool/ci/windows_translation_browser_smoke.ps1
+            if ($LASTEXITCODE -ne 0) { throw 'Fresh Edge selection verification failed' }
+          }
   validate:
     if: github.repository == 'jiah0231/baocode' && github.ref != 'refs/heads/feat/global-translation-native-tests'
     runs-on: windows-2025

@@ -36,5 +36,15 @@ inline bool IsInitialChromiumPane(bool identity_bound, bool same_foreground,
   return !identity_bound && same_foreground && same_process &&
       known_non_password && known_unfocused && is_pane && chromium_window;
 }
+// Final validation may wait for the already-bound element to become visible
+// to UIA again. It must never adopt a replacement identity or reread text.
+inline bool CanRetryFinalFocus(bool identity_bound, bool same_foreground,
+                               bool exact_timeout, bool transient_chromium_pane,
+                               unsigned completed_attempts, uint64_t now,
+                               uint64_t deadline, bool canceled = false) {
+  return identity_bound && same_foreground && completed_attempts < 3 &&
+      CanRetry(exact_timeout || transient_chromium_pane, completed_attempts,
+               now, deadline, canceled);
+}
 }  // namespace translation_retry
 #endif

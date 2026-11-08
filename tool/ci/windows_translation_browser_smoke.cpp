@@ -158,10 +158,12 @@ int wmain(int argc, wchar_t** argv) {
       // First call is intentionally cold: no prior UIA traversal, screen-reader
       // launch, Chromium accessibility flag, CDP, or script-created selection.
       translation_selection::CaptureDiagnostics diagnostics;
+      const ULONGLONG capture_started = GetTickCount64();
       const auto capture = translation_selection::Capture(browser, true, nullptr, 0, &diagnostics);
-      std::printf("DEFAULT_EDGE_CAPTURE_DIAGNOSTICS|%s|stage=%s|HRESULT=0x%08lX|attempts=%u\n",
+      std::printf("DEFAULT_EDGE_CAPTURE_DIAGNOSTICS|%s|stage=%s|HRESULT=0x%08lX|attempts=%u|finalAttempts=%u|elapsedMs=%llu\n",
         line ? "repeat" : "cold", diagnostics.last_failure_stage,
-        static_cast<unsigned long>(diagnostics.last_failure), diagnostics.attempts);
+        static_cast<unsigned long>(diagnostics.last_failure), diagnostics.attempts,
+        diagnostics.final_attempts, static_cast<unsigned long long>(GetTickCount64() - capture_started));
       std::wstring actual = capture.text;
       while (!actual.empty() && (actual.back() == L'\r' || actual.back() == L'\n')) actual.pop_back();
       const std::wstring expected = line ? L"Browser synthetic selection Foxtrot" : L"Browser synthetic selection Echo";

@@ -16,6 +16,7 @@ struct CaptureDiagnostics {
   const char* last_failure_stage = "none";
   HRESULT last_failure = S_OK;
   unsigned attempts = 0;
+  unsigned final_attempts = 0;
 };
 struct Selection {
   std::wstring text;
@@ -290,13 +291,77 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
         const ULONGLONG wake = std::min<ULONGLONG>(deadline, GetTickCount64() + translation_retry::Delay(attempt + 1));
         while (GetTickCount64() < wake && !stopped() && GetForegroundWindow() == foreground) Sleep(5);
       }
-      // A source can switch focused controls without changing its foreground
-      // HWND. Discard text/proof rather than delivering a different control.
-      if (original_element && !stopped()) {
-        ComPtr<IUIAutomationElement> final_focus;
-        BOOL same = FALSE;
-        if (FAILED(automation->GetFocusedElement(&final_focus)) || !final_focus ||
-            FAILED(automation->CompareElements(original_element.Get(), final_focus.Get(), &same)) || !same) {
+      // A source can switch controls without changing its foreground HWND.
+      // Chromium may also briefly return its unfocused root Pane again while
+      // its accessibility tree initializes. Only requery metadata for that
+      // narrow case or the exact UIA timeout, within the ORIGINAL deadline.
+      // Keep original_element pinned: never read more text or bind another
+      // element here. A genuinely different focused control rejects at once.
+      if (original_element && !stopped() && (out.status == "ok" || out.copy_proof)) {
+        bool verified = false;
+        for (unsigned check = 0; check < 3 && !stopped(); ++check) {
+          if (diagnostics) diagnostics->final_attempts = check + 1;
+          if (GetForegroundWindow() != foreground) break;
+          if (bounded) {
+            const ULONGLONG now = GetTickCount64();
+            if (now >= deadline) break;
+            const DWORD remaining = static_cast<DWORD>(deadline - now);
+            if (FAILED(bounded->put_ConnectionTimeout(std::min<DWORD>(150, remaining))) ||
+                FAILED(bounded->put_TransactionTimeout(std::min<DWORD>(200, remaining)))) break;
+          }
+          ComPtr<IUIAutomationElement> final_focus;
+          const HRESULT final_result = observe("FinalFocus.GetFocusedElement",
+              automation->GetFocusedElement(&final_focus));
+          if (stopped() || GetForegroundWindow() != foreground) break;
+          bool transient_pane = false;
+          if (SUCCEEDED(final_result) && final_focus) {
+            int final_process = 0;
+            BOOL final_password = TRUE, final_has_focus = FALSE;
+            if (FAILED(observe("FinalFocus.ProcessId", final_focus->get_CurrentProcessId(&final_process))) ||
+                static_cast<DWORD>(final_process) != process || stopped() ||
+                FAILED(observe("FinalFocus.IsPassword", final_focus->get_CurrentIsPassword(&final_password))) ||
+                final_password || stopped() ||
+                FAILED(observe("FinalFocus.HasKeyboardFocus", final_focus->get_CurrentHasKeyboardFocus(&final_has_focus))) ||
+                stopped()) break;
+            if (final_has_focus) {
+              BOOL same = FALSE;
+              const HRESULT compared = observe("FinalFocus.CompareElements",
+                  automation->CompareElements(original_element.Get(), final_focus.Get(), &same));
+              verified = SUCCEEDED(compared) && same && !stopped() &&
+                  GetForegroundWindow() == foreground;
+              if (!verified && diagnostics && SUCCEEDED(compared)) {
+                diagnostics->last_failure_stage = "FinalFocus.DifferentElement";
+                diagnostics->last_failure = S_FALSE;
+              }
+              break;
+            }
+            CONTROLTYPEID final_type = 0;
+            wchar_t source_class[64] = {};
+            const bool pane = !stopped() &&
+                SUCCEEDED(observe("FinalFocus.ControlType", final_focus->get_CurrentControlType(&final_type))) &&
+                final_type == UIA_PaneControlTypeId;
+            const bool chromium = GetClassNameW(foreground, source_class, 64) &&
+                _wcsicmp(source_class, L"Chrome_WidgetWin_1") == 0;
+            // This checks only the transient Pane's metadata. It does not
+            // replace original_element or authorize reading the Pane itself.
+            transient_pane = pane && chromium && final_password == FALSE &&
+                final_has_focus == FALSE && GetForegroundWindow() == foreground;
+            if (transient_pane && diagnostics) {
+              diagnostics->last_failure_stage = "FinalFocus.TransientPane";
+              diagnostics->last_failure = S_FALSE;
+            }
+          }
+          const bool exact_timeout = static_cast<uint32_t>(final_result) ==
+              translation_retry::kInitialFocusTimeout;
+          if (!translation_retry::CanRetryFinalFocus(true, GetForegroundWindow() == foreground,
+                  exact_timeout, transient_pane, check + 1, GetTickCount64(), deadline,
+                  canceled && canceled->load())) break;
+          const ULONGLONG wake = std::min<ULONGLONG>(deadline,
+              GetTickCount64() + translation_retry::Delay(check + 1));
+          while (GetTickCount64() < wake && !stopped() &&
+                 GetForegroundWindow() == foreground) Sleep(5);
+        }
+        if (!verified) {
           out = Selection{};
           out.status = "focusChanged";
         }

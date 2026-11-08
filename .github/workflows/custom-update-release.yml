@@ -104,7 +104,12 @@ jobs:
         shell: pwsh
         env:
           BAOCODE_DISPOSABLE_UI_TEST: '1'
-        run: ./tool/ci/windows_translation_browser_smoke.ps1
+        run: |
+          1..3 | ForEach-Object {
+            Write-Host "Fresh Edge cold-start verification $_ / 3"
+            ./tool/ci/windows_translation_browser_smoke.ps1
+            if ($LASTEXITCODE -ne 0) { throw 'Fresh Edge selection verification failed' }
+          }
       - name: Check translation source formatting
         run: dart format --output=none --set-exit-if-changed lib/translation test/translation lib/settings/pages/language_page.dart lib/settings/pages/stash_hotkey_field.dart lib/settings/app_settings.dart
       - name: Test translation routing, cancellation and theme layouts
@@ -624,6 +629,18 @@ jobs:
         run: |
           set -euo pipefail
           python3 tool/ci/reassemble_maple_font.py --verify-only
+      - name: Require independent full translation validation of exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tool/ci/test_translation_release_gate.py
+          # Public read-only API; no expanded token permissions or credentials.
+          response="$RUNNER_TEMP/translation-validation.json"
+          curl --fail --silent --show-error --retry 2 \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/translation-validation.yml/runs?head_sha=$GITHUB_SHA&per_page=100" \
+            > "$response"
+          python3 tool/ci/verify_translation_release_gate.py "$GITHUB_SHA" "$response"
       - name: Sign and publish verified build; advertise last
         env:
           SIGNING_SEED: ${{ secrets.BAOCODE_CUSTOM_UPDATE_SIGNING_KEY }}

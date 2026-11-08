@@ -121,6 +121,16 @@ int wmain(int argc, wchar_t** argv) {
       IsInitialChromiumPane(false, true, true, true, true, false, true) ||
       IsInitialChromiumPane(false, true, true, true, true, true, false))
     return Fail("Initial Chromium Pane requery accepted unsafe or already bound metadata");
+  using translation_retry::CanRetryFinalFocus;
+  if (!CanRetryFinalFocus(true, true, true, false, 1, 500, 1500) ||
+      !CanRetryFinalFocus(true, true, false, true, 1, 500, 1500) ||
+      CanRetryFinalFocus(false, true, true, true, 1, 500, 1500) ||
+      CanRetryFinalFocus(true, false, true, true, 1, 500, 1500) ||
+      CanRetryFinalFocus(true, true, false, false, 1, 500, 1500) ||
+      CanRetryFinalFocus(true, true, true, false, 3, 500, 1500) ||
+      CanRetryFinalFocus(true, true, true, false, 1, 1400, 1500) ||
+      CanRetryFinalFocus(true, true, true, false, 1, 500, 1500, true))
+    return Fail("Final focus retry weakened pinned identity/foreground/deadline/cancel policy");
   wchar_t executable[MAX_PATH]; GetModuleFileNameW(nullptr, executable, MAX_PATH);
   std::wstring command = L"\"" + std::wstring(executable) + L"\" --fixture";
   STARTUPINFOW startup{}; startup.cb = static_cast<DWORD>(sizeof(startup));
