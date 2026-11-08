@@ -14,6 +14,8 @@ BaoCode custom 1.9.1+48 adds a lightweight translation panel to the existing Flu
 
 Only clicking Translate submits the text visible in the panel. Selecting text, opening the panel, changing language and setting a shortcut do not contact a model. No tools, project files or conversation history are attached, and BaoCode does not keep translation history. The selected provider's data policy still applies.
 
+The existing Usage page can still record token counts. If you explicitly enabled Usage debug tracing (off by default), model request and response bodies may be stored in its local diagnostic logs. The panel warns while that setting is enabled; turn it off in Usage settings if you do not want such logs.
+
 Windows capture reads only UI Automation's selected text ranges of the foreground focused control. It refuses password controls and invalid focus, bounds input to 8,000 UTF-16 units, and uses a background worker with a response deadline. It never monitors or injects keys, reads the clipboard, or replaces its contents. Only the explicit **Copy translation** button writes the clipboard.
 
 Some applications, elevated windows, custom-rendered controls and browser accessibility configurations do not expose selected text through UI Automation. In that case, copy the selection yourself and paste into the panel. This release does not implement OCR, automatic mouse-up popups, or macOS/Linux system-wide selection capture. In-app translation works on those platforms.

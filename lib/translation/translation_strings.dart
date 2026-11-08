@@ -15,6 +15,9 @@ extension TranslationStrings on AppLocalizations {
       ? '仅点击翻译时发送原文。不附带文件或对话，不保存翻译历史。'
       : 'Only Translate sends this text. No files or conversation are included; no translation history is saved.';
   String get translationModel => _zh ? '模型设置' : 'Model settings';
+  String get translationTraceWarning => _zh
+      ? '已开启用量调试追踪，原文和译文可能保存在本地追踪日志中。可在用量设置中关闭。'
+      : 'Usage debug tracing is on. Source and translation may be saved in local trace logs. Turn it off in Usage settings.';
   String get translationModelHint =>
       _zh ? '使用「$modelsQuickAsk」' : 'Uses the Quick Ask model';
   String get translationCopy => _zh ? '复制译文' : 'Copy translation';

@@ -632,7 +632,13 @@ jobs:
           gh release download custom-stable --pattern latest.json --dir "$RUNNER_TEMP/previous-update"
           previous=("$RUNNER_TEMP/previous-update/latest.json")
           dart run tool/custom_release_manifest.dart "$version" "${installers[0]}" build/installers/latest.json "${previous[@]}"
-          gh release create "$tag" "${installers[0]}" --target "$GITHUB_SHA" --draft --title "Custom BaoCode $version" --notes "Tested source: $GITHUB_SHA. Signed Windows x64 custom update."
+          notes="$RUNNER_TEMP/custom-release-notes.md"
+          if [ -f "release-notes/custom-$version.zh.md" ]; then
+            cat "release-notes/custom-$version.zh.md" > "$notes"
+            printf '\n\n' >> "$notes"
+          fi
+          printf 'Tested source: %s. Signed Windows x64 custom update.\n' "$GITHUB_SHA" >> "$notes"
+          gh release create "$tag" "${installers[0]}" --target "$GITHUB_SHA" --draft --title "Custom BaoCode $version" --notes-file "$notes"
           gh release edit "$tag" --draft=false --latest=false
           git fetch --no-tags origin "refs/tags/$tag"
           test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$GITHUB_SHA"

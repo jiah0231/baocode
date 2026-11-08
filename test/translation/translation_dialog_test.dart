@@ -10,12 +10,38 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/ide/ide_button.dart';
+import 'package:baocode/l10n/l10n.dart';
 import 'package:baocode/translation/translation_dialog.dart';
 import 'package:baocode/translation/translation_service.dart';
+import 'package:baocode/usage/usage_ledger.dart';
 
 import 'translation_service_test.dart' show configured;
 
 void main() {
+  testWidgets('warns live when optional usage debug tracing is enabled', (
+    tester,
+  ) async {
+    final previous = UsageLedger.current;
+    final ledger = UsageLedger(MemoryUsageStorage());
+    UsageLedger.current = ledger;
+    addTearDown(() {
+      UsageLedger.current = previous;
+      ledger.dispose();
+    });
+    await tester.pumpWidget(
+      const MaterialApp(home: TranslationDialog(selectedText: 'hello')),
+    );
+    final warning = find.textContaining('Usage debug tracing is on');
+    expect(warning, findsNothing);
+    await ledger.save(UsageLedger.traceKey, true);
+    await tester.pumpAndSettle();
+    expect(warning, findsOneWidget);
+    await ledger.save(UsageLedger.enabledKey, false);
+    await tester.pumpAndSettle();
+    expect(warning, findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'opening and changing language never sends; explicit translate does',
     (tester) async {
@@ -451,17 +477,16 @@ void main() {
           required exact,
           required cancel,
           required onText,
-        }) async => 'A lightweight translator, built into your workspace.',
+        }) async => '轻巧的翻译工具，融入你的工作空间。',
       );
       final boundaryKey = GlobalKey();
       if (const bool.fromEnvironment('TRANSLATION_PREVIEWS')) {
         await tester.runAsync(() async {
-          final font = [
-            r'C:\Windows\Fonts\arial.ttf',
-            '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-          ].map(File.new).where((f) => f.existsSync()).firstOrNull;
-          if (font != null) {
-            await (FontLoader('Roboto')..addFont(
+          final font = File(
+            'assets/fonts/maple/MapleMonoNormal-NF-CN-Regular.ttf',
+          );
+          if (font.existsSync()) {
+            await (FontLoader('TranslationPreview')..addFont(
                   Future.value(ByteData.sublistView(font.readAsBytesSync())),
                 ))
                 .load();
@@ -470,6 +495,10 @@ void main() {
       }
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(fontFamily: 'TranslationPreview'),
+          locale: const Locale('zh'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
           home: RepaintBoundary(
             key: boundaryKey,
             child: TranslationDialog(
@@ -481,9 +510,13 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(IdeButton, 'Translate'));
+      await tester.tap(find.widgetWithText(IdeButton, '翻译'));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
+      expect(
+        DefaultTextStyle.of(tester.element(find.text('原文'))).style.fontFamily,
+        'TranslationPreview',
+      );
       if (const bool.fromEnvironment('TRANSLATION_PREVIEWS')) {
         final boundary = tester.renderObject<RenderRepaintBoundary>(
           find.byKey(boundaryKey),

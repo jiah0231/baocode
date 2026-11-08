@@ -9,6 +9,7 @@ import '../ide/ide_input.dart';
 import '../ide/ide_menu.dart';
 import '../l10n/l10n.dart';
 import '../theme/workbench_theme.dart';
+import '../usage/usage_ledger.dart';
 import 'translation_service.dart';
 import 'translation_strings.dart';
 
@@ -211,6 +212,7 @@ class _TranslationDialogState extends State<TranslationDialog> {
     listenable: Listenable.merge([
       WorkbenchThemeService.instance,
       _service.providers,
+      UsageLedger.current,
     ]),
     builder: (context, _) {
       final l = context.l10n;
@@ -245,7 +247,7 @@ class _TranslationDialogState extends State<TranslationDialog> {
                   elevation: 12,
                   clipBehavior: Clip.antiAlias,
                   child: DefaultTextStyle(
-                    style: TextStyle(
+                    style: Theme.of(context).textTheme.bodyMedium!.copyWith(
                       fontSize: 13,
                       height: 1.5,
                       color: themeColors['foreground'],
@@ -468,6 +470,15 @@ class _TranslationDialogState extends State<TranslationDialog> {
                               color: themeColors['descriptionForeground'],
                             ),
                           ),
+                          if (UsageLedger.current.enabled &&
+                              UsageLedger.current.trace)
+                            Text(
+                              l.translationTraceWarning,
+                              style: TextStyle(
+                                color: themeColors['errorForeground'],
+                                fontSize: 11,
+                              ),
+                            ),
                         ],
                       ),
                     ),

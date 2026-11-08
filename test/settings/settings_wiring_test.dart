@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -35,6 +36,7 @@ import '../keybindings/fake_home.dart';
 void main() {
   late Directory data;
   late Directory home;
+  late _TestVsCodeInstalls installs;
   late SettingsFiles files;
   late KeybindingsSync sync;
   late AppSettings settings;
@@ -42,6 +44,7 @@ void main() {
   setUp(() async {
     data = await Directory.systemTemp.createTemp('baocode-settings-wiring');
     home = await createFakeHome();
+    installs = _TestVsCodeInstalls(home.path);
     KeybindingService.instance = KeybindingService()
       ..debugPlatform = KeybindingPlatform.mac;
   });
@@ -50,26 +53,11 @@ void main() {
     sync.dispose();
     files.dispose();
     KeybindingService.instance = KeybindingService();
-    // An import discovery started by the widget can still be releasing a
-    // directory handle on Windows. Retry only transient sharing violations.
-    Future<void> remove(Directory directory) async {
-      for (var attempt = 0; ; attempt++) {
-        try {
-          await directory.delete(recursive: true);
-          return;
-        } on FileSystemException catch (error) {
-          if (!Platform.isWindows ||
-              ![32, 145].contains(error.osError?.errorCode) ||
-              attempt >= 19) {
-            rethrow;
-          }
-          await Future<void>.delayed(const Duration(milliseconds: 50));
-        }
-      }
-    }
-
-    await remove(data);
-    await remove(home);
+    // Discovery can still be reading the fake home after the widgets unmount.
+    // Finish it before deleting files, especially Windows directory handles.
+    await installs.idle;
+    await data.delete(recursive: true);
+    await home.delete(recursive: true);
   });
 
   /// Makes the settings over the data folder, its files as they are now.
@@ -90,11 +78,7 @@ void main() {
       files: files,
       catalog: catalog,
       sync: sync,
-      installs: VsCodeInstalls(
-        home: home.path,
-        environment: {'HOME': home.path},
-        platform: KeybindingPlatform.mac,
-      ),
+      installs: installs,
     );
   }
 
@@ -414,4 +398,33 @@ void main() {
     await files.argv.load();
     expect(locale.setting, 'en');
   });
+}
+
+/// Uses real I/O, but keeps its continuations outside the widget test's
+/// fake-async zone. Otherwise a directory listing can remain suspended when
+/// the test finishes, and waiting in tearDown cannot release its handle.
+class _TestVsCodeInstalls extends VsCodeInstalls {
+  _TestVsCodeInstalls(String home)
+    : _ioZone = Zone.current,
+      super(
+        home: home,
+        environment: {'HOME': home},
+        platform: KeybindingPlatform.mac,
+      );
+
+  final Zone _ioZone;
+  final _pending = <Future<KeybindingsDetection>>{};
+
+  @override
+  Future<KeybindingsDetection> detect() => _ioZone.run(() {
+    final detection = super.detect();
+    _pending.add(detection);
+    return detection.whenComplete(() => _pending.remove(detection));
+  });
+
+  Future<void> get idle async {
+    while (_pending.isNotEmpty) {
+      await Future.wait(_pending.toList());
+    }
+  }
 }
