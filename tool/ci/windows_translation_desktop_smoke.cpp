@@ -67,6 +67,8 @@ struct Result {
          << ",\n  \"nativeCopyFallback\":" << Quote(fallback)
          << ",\n  \"elapsedMs\":" << elapsed << ",\n  \"units\":" << units
          << ",\n  \"failureStage\":" << Quote(diagnostics.last_failure_stage)
+         << ",\n  \"consoleHostIntegrity\":" << diagnostics.console_host_integrity
+         << ",\n  \"consoleClientIntegrity\":" << diagnostics.console_client_integrity
          << ",\n  \"hresult\":" << static_cast<unsigned long>(diagnostics.last_failure)
          << ",\n  \"attempts\":" << diagnostics.attempts
          << ",\n  \"finalAttempts\":" << diagnostics.final_attempts << "\n}\n";
@@ -1004,9 +1006,11 @@ int wmain(int argc, wchar_t** argv) {
   }
   try { result.Save(output+L"\\"+mode+L".json"); }
   catch (const std::exception& error) { std::fprintf(stderr, "Cannot save coverage result: %s\n", error.what()); return 1; }
-  std::printf("DESKTOP_CAPTURE|%s|%s|status=%s|selectionVerified=%d|clipboardUnchanged=%d|copyProof=%d|elapsedMs=%llu|%s\n",
+  std::printf("DESKTOP_CAPTURE|%s|%s|status=%s|selectionVerified=%d|clipboardUnchanged=%d|copyProof=%d|elapsedMs=%llu|failureStage=%s|consoleHostIntegrity=%lu|consoleClientIntegrity=%lu|%s\n",
       result.id.c_str(), result.outcome.c_str(), result.status.c_str(), result.selected ? 1 : 0,
-      result.clipboard ? 1 : 0, result.proof ? 1 : 0, result.elapsed, result.detail.c_str());
+      result.clipboard ? 1 : 0, result.proof ? 1 : 0, result.elapsed, result.diagnostics.last_failure_stage,
+      static_cast<unsigned long>(result.diagnostics.console_host_integrity),
+      static_cast<unsigned long>(result.diagnostics.console_client_integrity), result.detail.c_str());
   if (window && mode != L"console") PostMessageW(window, WM_CLOSE, 0, 0);
   return result.outcome == "failed" ? 1 : 0;
 }

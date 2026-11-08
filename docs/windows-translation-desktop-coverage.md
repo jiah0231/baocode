@@ -178,3 +178,22 @@ fail before any capture when Windows delegates to its configured terminal. The
 explicitly retains `conhost.exe <client>` as a per-launch Console Host choice.
 This suite uses that choice and does not edit terminal-delegation settings.
 A successful Console Host test remains separate from Windows Terminal coverage.
+
+## Independent selection-entry gate
+
+`windows_translation_desktop_entry_smoke.ps1` starts fresh Edge PDF and Console
+Host cases separately from the capture probes. It exercises the production
+metadata-only entry and clicks it physically; exact text must come from the
+original bound range, without clipboard copying or source focus loss. A later
+keyboard selection change must hide or invalidate the old entry instead of
+translating a replacement selection. Artifacts distinguish an actual rejected
+click from an entry that was already hidden. No model request is made.
+
+Console Host tests record the runner, client and host integrity levels. A
+confirmed elevated-target rejection is separate from ordinary application
+support. Only synthetic fixture children are launched at medium integrity for
+the positive case, in a private test directory. The runner token, system
+settings, existing file permissions and default terminal are not changed. A
+positive result requires both source and host integrity to be 8192, exact bound
+source text and the remaining entry assertions. The existence of this gate is
+not evidence of a successful run.

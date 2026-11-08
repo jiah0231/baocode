@@ -219,3 +219,24 @@ jobs:
           name: translation-terminal-coverage
           if-no-files-found: error
           path: build/translation-terminal-coverage/
+
+  desktop_entry:
+    if: github.repository == 'jiah0231/baocode'
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Verify real desktop translation entry clicks
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+        run: ./tool/ci/windows_translation_desktop_entry_smoke.ps1 -OutputDirectory build/translation-desktop-entry
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: translation-desktop-entry
+          if-no-files-found: error
+          path: build/translation-desktop-entry/
