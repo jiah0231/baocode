@@ -46,6 +46,7 @@ struct Result {
   bool selected = false, clipboard = false, proof = false;
   unsigned long long elapsed = 0;
   size_t units = 0;
+  unsigned gesture_attempts = 0;
   translation_selection::CaptureDiagnostics diagnostics;
   void Save(const std::wstring& path) const {
     std::ofstream file(path.c_str());
@@ -53,6 +54,7 @@ struct Result {
     file << "{\n  \"id\":" << Quote(id) << ",\n  \"outcome\":" << Quote(outcome)
          << ",\n  \"sourceImagePath\":" << Quote(source_image_path)
          << ",\n  \"captureStatus\":" << Quote(status) << ",\n  \"detail\":" << Quote(detail)
+         << ",\n  \"gestureAttempts\":" << gesture_attempts
          << ",\n  \"selectionVerified\":" << (selected ? "true" : "false")
          << ",\n  \"clipboardUnchanged\":" << (clipboard ? "true" : "false")
          << ",\n  \"copyProof\":" << (proof ? "true" : "false")
@@ -101,6 +103,17 @@ HWND WaitForSource(const std::wstring& token, const wchar_t* image) {
 void Foreground(HWND window) {
   ShowWindow(window, SW_RESTORE); SetForegroundWindow(window); Sleep(500);
   Check(GetForegroundWindow() == window, "Cannot obtain verified synthetic foreground window");
+  MONITORINFO monitor{}; monitor.cbSize = sizeof(monitor); RECT rect{};
+  Check(GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor) &&
+        GetWindowRect(window, &rect), "Synthetic source monitor bounds unavailable");
+  const RECT work = monitor.rcWork;
+  if (rect.left < work.left || rect.top < work.top || rect.right > work.right || rect.bottom > work.bottom) {
+    const LONG width = std::min(rect.right-rect.left, work.right-work.left-16);
+    const LONG height = std::min(rect.bottom-rect.top, work.bottom-work.top-16);
+    Check(SetWindowPos(window, nullptr, work.left+8, work.top+8, width, height,
+        SWP_NOZORDER | SWP_NOACTIVATE) != 0, "Cannot fit synthetic source inside the visible work area");
+    Sleep(300);
+  }
 }
 void Key(HWND window, WORD key, bool control = false, bool shift = false) {
   Check(GetForegroundWindow() == window, "Refusing input after synthetic source lost foreground");
@@ -220,6 +233,27 @@ bool VisiblePdfSelection(const Frame& before, const Frame& after, RECT area) {
   }
   return white >= 200 && highlighted >= white/8;
 }
+// Find an actual dark pixel in the leading half of the first Courier glyph.
+// PDF viewers can ignore a drag starting in the font's left side-bearing even
+// though the same coordinate is a valid caret position in an HTML paragraph.
+POINT PdfGlyphAnchor(const Frame& frame, RECT marker, double scale, int row_offset) {
+  const LONG left = marker.left+static_cast<LONG>(12*scale);
+  const LONG middle = marker.top+static_cast<LONG>(9*scale)+row_offset;
+  const LONG half_cell = std::max<LONG>(3, static_cast<LONG>(5.4*scale));
+  for (LONG distance = 0; distance <= 4; ++distance) {
+    for (LONG direction : {1L, -1L}) {
+      const LONG y = middle+distance*direction;
+      if (y <= marker.top || y >= marker.bottom || y < 0 || y >= frame.height) continue;
+      for (LONG x = left+1; x < left+half_cell && x < frame.width; ++x) {
+        if (x < 0) continue;
+        const auto i = (static_cast<size_t>(y)*frame.width+x)*4;
+        if (frame.pixels[i] < 100 && frame.pixels[i+1] < 100 && frame.pixels[i+2] < 100)
+          return POINT{frame.rect.left+x, frame.rect.top+y};
+      }
+    }
+  }
+  throw std::runtime_error("PDF first glyph could not be visually identified; refusing a guessed drag");
+}
 bool NotepadSelectionMetadata(HWND window, size_t units) {
   DWORD pid = 0; const DWORD thread = GetWindowThreadProcessId(window, &pid);
   GUITHREADINFO info{}; info.cbSize = sizeof(info);
@@ -293,25 +327,50 @@ void Classify(Result& result, const translation_selection::Selection& capture,
 }
 
 int ConsoleFixture(const std::wstring& token, const std::wstring& root) {
-  const HWND window = GetConsoleWindow();
-  if (!window || !IsWindowVisible(window)) return 3;
+  std::ofstream trace((root+L".startup.log").c_str());
+  HWND window = GetConsoleWindow();
+  trace << "fixturePid=" << GetCurrentProcessId() << " initialWindow=" << reinterpret_cast<uintptr_t>(window)
+        << " initialVisible=" << (window && IsWindowVisible(window) ? 1 : 0) << std::endl;
+  // The first HWND can precede its visible host. A pseudo-console HWND never
+  // becomes visible, which must be reported rather than treated as capture.
+  for (int i = 0; i < 200 && (!window || !IsWindowVisible(window)); ++i) {
+    Sleep(50); window = GetConsoleWindow();
+  }
+  DWORD attached[8]{};
+  const DWORD attached_count = GetConsoleProcessList(attached, 8);
+  trace << "window=" << reinterpret_cast<uintptr_t>(window)
+        << " visible=" << (window && IsWindowVisible(window) ? 1 : 0)
+        << " sourceImagePath=" << Quote(ImagePath(window))
+        << " attachedProcessCount=" << attached_count << std::endl;
+  if (!window || !IsWindowVisible(window)) { trace << "exit=3 invisibleConsoleWindow" << std::endl; return 3; }
+  // Never write fixture output into an inherited CI shell's console.
+  if (attached_count != 1 || attached[0] != GetCurrentProcessId()) {
+    trace << "exit=6 consoleNotExclusiveToFixture" << std::endl; return 6;
+  }
+  if (!HasImage(window, L"conhost.exe")) { trace << "exit=7 unexpectedHost" << std::endl; return 7; }
   SetConsoleTitleW(token.c_str());
   HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE), input = GetStdHandle(STD_INPUT_HANDLE);
   CONSOLE_FONT_INFOEX font{}; font.cbSize = sizeof(font); font.dwFontSize.Y = 20;
   font.FontFamily = FF_DONTCARE; font.FontWeight = FW_NORMAL; wcscpy_s(font.FaceName, L"Consolas");
-  SetCurrentConsoleFontEx(output, FALSE, &font);
-  SMALL_RECT visible{0, 0, 79, 19}; SetConsoleWindowInfo(output, TRUE, &visible);
-  SetConsoleScreenBufferSize(output, COORD{80, 20});
+  const BOOL set_font = SetCurrentConsoleFontEx(output, FALSE, &font);
+  SMALL_RECT visible{0, 0, 79, 19}; const BOOL set_window = SetConsoleWindowInfo(output, TRUE, &visible);
+  const BOOL set_buffer = SetConsoleScreenBufferSize(output, COORD{80, 20});
+  trace << "setFont=" << set_font << " setWindow=" << set_window << " setBuffer=" << set_buffer << std::endl;
   DWORD mode = 0;
-  if (!GetConsoleMode(input, &mode) || !SetConsoleMode(input, (mode | ENABLE_EXTENDED_FLAGS | ENABLE_QUICK_EDIT_MODE) & ~ENABLE_MOUSE_INPUT)) return 4;
+  if (!GetConsoleMode(input, &mode) || !SetConsoleMode(input, (mode | ENABLE_EXTENDED_FLAGS | ENABLE_QUICK_EDIT_MODE) & ~ENABLE_MOUSE_INPUT)) {
+    trace << "exit=4 consoleInputMode error=" << GetLastError() << std::endl; return 4;
+  }
   CONSOLE_CURSOR_INFO cursor{25, FALSE}; SetConsoleCursorInfo(output, &cursor);
   DWORD written = 0; FillConsoleOutputCharacterW(output, L' ', 1600, COORD{0, 0}, &written);
   SetConsoleCursorPosition(output, COORD{4, 2}); WriteConsoleW(output, kConsoleText, static_cast<DWORD>(wcslen(kConsoleText)), &written, nullptr);
   const wchar_t decoy[] = L"Unselected console output decoy";
   SetConsoleCursorPosition(output, COORD{4, 4}); WriteConsoleW(output, decoy, static_cast<DWORD>(wcslen(decoy)), &written, nullptr);
   CONSOLE_FONT_INFO current{};
-  if (!GetCurrentConsoleFont(output, FALSE, &current)) return 5;
+  if (!GetCurrentConsoleFont(output, FALSE, &current)) {
+    trace << "exit=5 consoleFont error=" << GetLastError() << std::endl; return 5;
+  }
   const COORD size = GetConsoleFontSize(output, current.nFont);
+  trace << "ready cell=" << size.X << ',' << size.Y << std::endl;
   {
     std::ofstream ready((root+L".ready").c_str());
     ready << reinterpret_cast<uintptr_t>(window) << ' ' << size.X << ' ' << size.Y << '\n';
@@ -334,7 +393,8 @@ struct Child {
     if (value.hProcess) {
       if (!root.empty()) { std::ofstream stop((root+L".stop").c_str()); stop << "stop\n"; }
       if (WaitForSingleObject(value.hProcess, 2000) == WAIT_TIMEOUT) {
-        // This is the handle returned when creating our synthetic fixture only.
+        // This handle belongs only to the explicit conhost process launched
+        // for our synthetic fixture. Its child also observes the stop file.
         TerminateProcess(value.hProcess, 1); WaitForSingleObject(value.hProcess, 1000);
       }
       CloseHandle(value.hProcess); CloseHandle(value.hThread);
@@ -343,14 +403,32 @@ struct Child {
 };
 HWND ConsoleSource(const std::wstring& token, const std::wstring& root, Child& child, int& cell_x, int& cell_y) {
   wchar_t executable[32768]{}; Check(GetModuleFileNameW(nullptr, executable, 32768) != 0, "Cannot locate console fixture executable");
-  std::wstring command = L"\""+std::wstring(executable)+L"\" --console-fixture \""+token+L"\" \""+root+L"\"";
+  wchar_t system[32768]{};
+  const UINT length = GetSystemDirectoryW(system, 32768);
+  Check(length > 0 && length < 32768, "Cannot locate the official system Console Host");
+  const std::wstring host = std::wstring(system, length)+L"\\conhost.exe";
+  // Microsoft documents direct conhost.exe <client> as a per-launch host choice
+  // even when Windows Terminal is the default. Do not change delegation settings.
+  std::wstring command = L"\""+host+L"\" \""+std::wstring(executable)+L"\" --console-fixture \""+token+L"\" \""+root+L"\"";
   STARTUPINFOW startup{}; startup.cb = sizeof(startup); child.root = root;
-  Check(CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr, nullptr, &startup, &child.value) != 0, "Cannot start isolated native console host");
+  startup.dwFlags = STARTF_USESHOWWINDOW; startup.wShowWindow = SW_SHOWNORMAL;
+  const BOOL created = CreateProcessW(host.c_str(), command.data(), nullptr, nullptr, FALSE, 0,
+      nullptr, nullptr, &startup, &child.value);
+  const DWORD create_error = created ? ERROR_SUCCESS : GetLastError();
+  std::printf("DESKTOP_CONSOLE_LAUNCH|explicitSystemConhost=1|created=%d|error=%lu|hostPid=%lu\n",
+      created ? 1 : 0, create_error, child.value.dwProcessId);
+  Check(created != 0, "Cannot launch the official system conhost.exe with the synthetic client");
   uintptr_t handle = 0;
-  for (int i = 0; i < 100 && !handle; ++i) {
-    std::ifstream ready((root+L".ready").c_str()); ready >> handle >> cell_x >> cell_y; Sleep(100);
+  for (int i = 0; i < 150 && !handle; ++i) {
+    std::ifstream ready((root+L".ready").c_str());
+    uintptr_t candidate = 0; int x = 0, y = 0;
+    if (ready >> candidate >> x >> y) { handle = candidate; cell_x = x; cell_y = y; }
     if (WaitForSingleObject(child.value.hProcess, 0) == WAIT_OBJECT_0 && !handle) break;
+    if (!handle) Sleep(100);
   }
+  DWORD exit_code = STILL_ACTIVE; GetExitCodeProcess(child.value.hProcess, &exit_code);
+  std::printf("DESKTOP_CONSOLE_READY|window=%llu|cell=%d,%d|hostExit=%lu\n",
+      static_cast<unsigned long long>(handle), cell_x, cell_y, exit_code);
   HWND window = reinterpret_cast<HWND>(handle);
   Check(window && IsWindowVisible(window) && cell_x > 0 && cell_y > 0, "Classic console host unavailable or fixture initialization failed; Windows Terminal is not substituted");
   Check(HasImage(window, L"conhost.exe"), "Console fixture window is not the real Windows conhost.exe");
@@ -399,31 +477,53 @@ int wmain(int argc, wchar_t** argv) {
       Frame before; std::optional<RECT> marker;
       for (int i = 0; i < 80 && !marker; ++i) { before = Frame::Read(window); marker = before.PdfMarker(); if (!marker) Sleep(150); }
       Check(marker.has_value(), "Local PDF page did not visibly render its unique fixture marker");
-      // PDF marker is x=60, y=696, width=6, height=18 points. Text starts x=72
-      // on baseline y=700. Derive page scale from pixels, not browser toolbar size.
-      const double scale = static_cast<double>(marker->bottom-marker->top)/18.0;
-      const POINT from{before.rect.left+marker->left+static_cast<LONG>(12*scale),
-                       before.rect.top+marker->top+static_cast<LONG>(9*scale)};
-      const POINT to{from.x+static_cast<LONG>(360*scale), from.y};
-      Check(to.x < before.rect.right-10, "PDF viewport too small for synthetic drag");
-      const POINT focus{from.x+static_cast<LONG>(30*scale), from.y};
-      Mouse(window, focus, 0); Mouse(window, focus, MOUSEEVENTF_LEFTDOWN); Mouse(window, focus, MOUSEEVENTF_LEFTUP);
-      Sleep(GetDoubleClickTime()+100); before = Frame::Read(window);
-      Drag(window, from, to);
-      Mouse(window, POINT{before.rect.left+20, before.rect.bottom-20}, 0); Sleep(300);
-      const auto after = Frame::Read(window);
-      const RECT text_area{from.x-before.rect.left, marker->top,
-          from.x-before.rect.left+static_cast<LONG>(static_cast<double>(wcslen(kPdfText))*10.8*scale), marker->bottom};
-      result.selected = VisiblePdfSelection(before, after, text_area);
-      after.Save(output+L"\\edgePdf-selected.bmp");
+      // At most three real gestures may establish the test precondition. No
+      // UIA call is made during this phase. Once Capture starts, there is no
+      // recapture or gesture retry that could conceal a product failure.
+      for (unsigned attempt = 0; attempt < 3 && !result.selected; ++attempt) {
+        result.gesture_attempts = attempt+1;
+        before = Frame::Read(window); marker = before.PdfMarker();
+        Check(marker.has_value(), "PDF marker disappeared before the selection gesture");
+        const double scale = static_cast<double>(marker->bottom-marker->top)/18.0;
+        POINT from = PdfGlyphAnchor(before, *marker, scale, attempt == 1 ? -2 : 0);
+        const LONG text_left = marker->left+static_cast<LONG>(12*scale);
+        const LONG text_width = static_cast<LONG>(static_cast<double>(wcslen(kPdfText))*10.8*scale);
+        POINT to{before.rect.left+text_left+text_width+static_cast<LONG>(24*scale), from.y};
+        Check(to.x < before.rect.right-10, "PDF viewport too small for synthetic drag");
+        // Clear any prior gesture selection and give the PDF real pointer focus.
+        // The wait prevents the following mouse-down from becoming a double-click.
+        Sleep(GetDoubleClickTime()+80);
+        const POINT focus{from.x+static_cast<LONG>(30*scale), from.y};
+        Mouse(window, focus, 0); Mouse(window, focus, MOUSEEVENTF_LEFTDOWN); Mouse(window, focus, MOUSEEVENTF_LEFTUP);
+        Sleep(GetDoubleClickTime()+100); before = Frame::Read(window);
+        if (attempt == 2) {
+          // Reverse drag starts inside the trailing half of the last glyph.
+          // Its endpoint stays in the first glyph's leading half.
+          to = from;
+          from = POINT{before.rect.left+text_left+text_width-std::max<LONG>(2, static_cast<LONG>(2*scale)), to.y};
+        }
+        before.Save(output+L"\\edgePdf-before-gesture"+std::to_wstring(attempt+1)+L".bmp");
+        Drag(window, from, to);
+        Mouse(window, POINT{before.rect.left+20, before.rect.bottom-20}, 0); Sleep(300);
+        const auto after = Frame::Read(window);
+        const RECT text_area{text_left, marker->top, text_left+text_width, marker->bottom};
+        result.selected = VisiblePdfSelection(before, after, text_area);
+        std::printf("DESKTOP_PDF_GESTURE|attempt=%u|from=%ld,%ld|to=%ld,%ld|scale=%.3f|selectionVerified=%d\n",
+            attempt+1, from.x, from.y, to.x, to.y, scale, result.selected ? 1 : 0);
+        after.Save(output+L"\\edgePdf-gesture"+std::to_wstring(attempt+1)+L".bmp");
+        after.Save(output+L"\\edgePdf-selected.bmp");
+      }
+      Check(result.selected, "PDF gesture did not create a verifiable visible selection; production capture was not attempted");
       const auto capture = Capture(window, result);
       Classify(result, capture, kPdfText, true, clipboard);
     } else {
       POINT origin{}; Check(ClientToScreen(window, &origin) != 0, "Console text grid unavailable");
       const POINT from{origin.x+4*cell_x+cell_x/2, origin.y+2*cell_y+cell_y/2};
       const POINT to{from.x+(static_cast<LONG>(wcslen(kConsoleText))-1)*cell_x, from.y};
+      result.gesture_attempts = 1;
       Drag(window, from, to);
       result.selected = ConsoleSelection(root);
+      Check(result.selected, "Console gesture did not select the exact synthetic rectangle; production capture was not attempted");
       const auto capture = Capture(window, result);
       Classify(result, capture, kConsoleText, true, clipboard);
     }

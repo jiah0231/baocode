@@ -168,6 +168,11 @@ function Run-DesktopCase([string]$Id, [string]$Application, [string]$Path, [stri
     # These are handles for only the processes this case created. The probe also
     # closes the source HWND after checking its unique title and executable.
     if ($app) { Stop-OwnedProcess $app }
+    if ($Id -eq 'console') {
+      # Preserve host initialization/selection evidence, including failed setup.
+      Get-ChildItem -LiteralPath $root -Filter 'console.*' -File -ErrorAction SilentlyContinue |
+        Copy-Item -Destination $output -Force
+    }
   }
 }
 

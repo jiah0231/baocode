@@ -33,12 +33,18 @@ code, forcing accessibility flags, scanning document text, or sending Ctrl+C.
 - **Edge built-in PDF reader:** open a genuine local PDF with selectable text in
   a fresh Edge profile. A magenta fixture mark locates the rendered line without
   relying on toolbar coordinates. Real pointer input selects the line. A visible
-  selection-background change verifies the gesture. Capture is attempted without
-  prewarming UIA. An unrendered PDF or an unverified gesture is a failure, never a
+  selection-background change verifies the gesture. The start point is inside
+  the first glyph, not its side-bearing. Up to three real gestures may establish
+  that visual precondition before any UIA call; after capture starts, neither
+  selection nor capture is retried. Capture is attempted without prewarming UIA.
+  An unrendered PDF or an unverified gesture is a failure, never a
   safe-unsupported or passed application. Background networking is disabled and
   HTTP(S) is directed to an unused loopback proxy. No remote origin is requested.
-- **Windows Console Host:** create a separate console process containing only
-  static synthetic output, enable Quick Edit, and select one exact row by mouse.
+- **Windows Console Host:** explicitly launch the official system `conhost.exe`
+  with a separate client containing only static synthetic output, enable Quick
+  Edit, and select one exact row by mouse. This per-launch choice does not change
+  the default terminal or security settings. Wait for a real visible host, verify
+  that only the fixture is attached, and retain startup/exit diagnostics.
   The fixture's `GetConsoleSelectionInfo` verifies the expected selection rectangle.
   The visible window must belong to real `conhost.exe`. No command shell runs and
   no Ctrl+C is injected. This is not a Windows Terminal test.
@@ -111,3 +117,14 @@ An exact-capture gate fails if the application is absent, unsupported, untested 
 fails. Do not enable this example gate based on the fixture implementation alone.
 The runner is Windows-specific. macOS/Linux system-wide selection, OCR, elevated
 windows and arbitrary custom controls remain outside this coverage.
+
+## Console-host selection rationale
+
+Microsoft documents that a `GetConsoleWindow` handle belonging to a
+[pseudoconsole is not a locally displayed window](https://learn.microsoft.com/windows/console/getconsolewindow).
+A visible-window assertion immediately after `CREATE_NEW_CONSOLE` can therefore
+fail before any capture when Windows delegates to its configured terminal. The
+[default-terminal design](https://github.com/microsoft/terminal/blob/main/doc/specs/%23492%20-%20Default%20Terminal/spec.md)
+explicitly retains `conhost.exe <client>` as a per-launch Console Host choice.
+This suite uses that choice and does not edit terminal-delegation settings.
+A successful Console Host test remains separate from Windows Terminal coverage.
