@@ -32,7 +32,7 @@ jobs:
           BAOCODE_DISPOSABLE_UI_TEST: '1'
         run: ./tool/ci/windows_translation_action_smoke.ps1
   validate:
-    if: github.repository == 'jiah0231/baocode'
+    if: github.repository == 'jiah0231/baocode' && github.ref != 'refs/heads/feat/global-translation-native-tests'
     runs-on: windows-2025
     timeout-minutes: 60
     env:

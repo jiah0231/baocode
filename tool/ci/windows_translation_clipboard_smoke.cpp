@@ -34,6 +34,14 @@ LRESULT CALLBACK EditProc(HWND window, UINT message, WPARAM wparam, LPARAM lpara
   // Simulate a control with no selected-text UIA provider, but standard edit
   // semantics and a copy command. The actual physical path is SendInput.
   if (message == WM_GETOBJECT) return 0;
+  // TranslateMessage queues Ctrl+C as WM_CHAR U+0003 before our WM_KEYDOWN
+  // handler runs. We implement copy entirely above the original Edit proc;
+  // forwarding this character would invoke a second, default copy, including
+  // in the deliberately unresponsive and concurrent-writer fixture modes.
+  if (message == WM_CHAR && wparam == 0x03) {
+    std::fprintf(stderr, "FIXTURE_CONTROL_CHAR suppressed_copy case=%d\n", mode);
+    return 0;
+  }
   if (message == WM_KEYDOWN && wparam == 'C' && (GetKeyState(VK_CONTROL) & 0x8000)) {
     ++copies;
     if (mode == 9) {
