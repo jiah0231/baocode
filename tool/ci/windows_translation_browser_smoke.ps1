@@ -27,6 +27,7 @@ $html = Join-Path $root 'selection.html'
 $source = Join-Path $PSScriptRoot 'windows_translation_browser_smoke.cpp'
 $test = $null
 $browser = $null
+$testSucceeded = $false
 Push-Location $root
 try {
   & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX $source /Fe:browser_smoke.exe /link user32.lib gdi32.lib dwmapi.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
@@ -41,7 +42,9 @@ try {
   $test = Start-Process -FilePath (Join-Path $root 'browser_smoke.exe') -ArgumentList @($token, "`"$output`"") -PassThru -NoNewWindow
   if (!$test.WaitForExit(60000)) { throw 'Default Edge selection smoke timed out' }
   if ($test.ExitCode -ne 0) { throw "Default Edge selection smoke failed: $($test.ExitCode). Do not claim browser support from RichEdit coverage." }
+  $testSucceeded = $true
 } finally {
+  $primaryExitCode = $global:LASTEXITCODE
   # Preserve synthetic failure diagnostics even when the strict assertion fails.
   try {
     Add-Type -AssemblyName System.Drawing
@@ -55,15 +58,51 @@ try {
   } catch {
     Write-Warning "Synthetic browser screenshot export failed: $_"
   }
-  if ($test) {
-    $test.Refresh()
-    if (!$test.HasExited) { & taskkill /PID $test.Id /T /F | Out-Null }
-    $test.Dispose()
+  try {
+    if ($test) {
+      $test.Refresh()
+      if (!$test.HasExited) {
+        try { Stop-Process -InputObject $test -Force -ErrorAction Stop }
+        catch { $test.Refresh(); if (!$test.HasExited) { throw } }
+      }
+    }
+    # Revalidate each PID immediately before killing it. Closing the browser
+    # can already have ended renderer children from the original CIM snapshot.
+    # Do not use taskkill /T on that stale list or affect unrelated Edge profiles.
+    $candidates = @(Get-CimInstance Win32_Process -Filter "name = 'msedge.exe'" | Where-Object {
+      $_.CommandLine -and $_.CommandLine.Contains($profile)
+    })
+    foreach ($candidate in $candidates) {
+      $owned = $null
+      try {
+        $owned = Get-Process -Id $candidate.ProcessId -ErrorAction SilentlyContinue
+        if (!$owned) { continue }
+        # Cache a handle before rechecking identity, so subsequent termination
+        # uses this process instance rather than an eventually reused PID.
+        $null = $owned.Handle
+        $current = Get-CimInstance Win32_Process -Filter "ProcessId = $($candidate.ProcessId) AND name = 'msedge.exe'"
+        if (!$current -or $current.CreationDate -ne $candidate.CreationDate -or
+            !$current.CommandLine -or !$current.CommandLine.Contains($profile)) { continue }
+        if (!$owned.HasExited) { Stop-Process -InputObject $owned -Force -ErrorAction Stop }
+      } catch {
+        # Already gone is success. A still-running matching instance means a
+        # real cleanup error, not an excuse to broaden the process kill scope.
+        $remaining = Get-CimInstance Win32_Process -Filter "ProcessId = $($candidate.ProcessId) AND name = 'msedge.exe'"
+        if ($remaining -and $remaining.CreationDate -eq $candidate.CreationDate -and
+            $remaining.CommandLine -and $remaining.CommandLine.Contains($profile)) { throw }
+      } finally {
+        if ($owned) { $owned.Dispose() }
+      }
+    }
+  } catch {
+    if ($testSucceeded) { throw }
+    Write-Warning "Browser cleanup also failed; preserving the primary test failure: $_"
+  } finally {
+    if ($test) { $test.Dispose() }
+    if ($browser) { $browser.Dispose() }
+    Pop-Location
+    # Cleanup must not overwrite the compiler/test status. Test failures above
+    # remain terminating exceptions; this never converts a failed test to pass.
+    $global:LASTEXITCODE = $primaryExitCode
   }
-  # Only terminate processes bearing this unique disposable profile path.
-  Get-CimInstance Win32_Process -Filter "name = 'msedge.exe'" | Where-Object {
-    $_.CommandLine -and $_.CommandLine.Contains($profile)
-  } | ForEach-Object { & taskkill /PID $_.ProcessId /T /F | Out-Null }
-  if ($browser) { $browser.Dispose() }
-  Pop-Location
 }
