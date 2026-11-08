@@ -413,13 +413,16 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// Whether the keyboard is in this window (each window's workbench sees
   /// every key).
   bool get _hasKeyboard {
-    if (!_multi) return true;
+    // A single workspace can still have independent tool views. Never let
+    // its process-wide handler dispatch the translation panel's shortcuts.
     final focus = FocusManager.instance.primaryFocus?.context;
     if (focus != null && focus.mounted) {
       final view = focus.findAncestorWidgetOfExactType<View>();
-      if (view != null) return view.view.viewId == _viewId;
+      if (view != null && view.view.viewId != _viewId) return false;
+      if (view != null && !TranslationHost.instance.panelShown) return true;
     }
-    return WindowControls.activeViewId == _viewId;
+    if (TranslationHost.instance.panelShown) return false;
+    return !_multi || WindowControls.activeViewId == _viewId;
   }
 
   /// The window is kept above other apps' windows.
@@ -1993,12 +1996,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// where the focus is in none (the sidebar). The IDE resolves its own
   /// keys.
   bool _handleKey(KeyEvent event) {
+    if (!mounted || !_hasKeyboard) {
+      _leaveChord();
+      return false;
+    }
     if (event is KeyDownEvent) _noteTyping();
-    if (event is KeyUpEvent ||
-        _showsIde ||
-        KeyChord.fromEvent(event) == null ||
-        !mounted ||
-        !_hasKeyboard) {
+    if (event is KeyUpEvent || _showsIde || KeyChord.fromEvent(event) == null) {
       return false;
     }
     // The quick pick over the window has its own.

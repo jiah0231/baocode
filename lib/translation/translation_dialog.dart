@@ -283,7 +283,19 @@ class _TranslationDialogState extends State<TranslationDialog> {
           widget.captureWarning == 'clipboardRestoreFailed';
       final viewport = MediaQuery.sizeOf(context);
       return CallbackShortcuts(
-        bindings: {const SingleActivator(LogicalKeyboardKey.escape): _close},
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.escape): _close,
+          if (widget.embedded) ...{
+            const SingleActivator(LogicalKeyboardKey.f4, alt: true): _close,
+            const SingleActivator(LogicalKeyboardKey.keyW, control: true):
+                _close,
+            const SingleActivator(
+              LogicalKeyboardKey.keyW,
+              control: true,
+              shift: true,
+            ): _close,
+          },
+        },
         child: SafeArea(
           child: Center(
             child: Padding(

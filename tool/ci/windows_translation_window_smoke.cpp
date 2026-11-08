@@ -11,6 +11,7 @@
 
 namespace {
 constexpr UINT kPrepare = WM_APP + 23;
+constexpr int kCloseModeCount = 7;
 HWND edit = nullptr;
 DWORD appPid = 0;
 HWND mainWindow = nullptr;
@@ -40,9 +41,10 @@ LRESULT CALLBACK Fixture(HWND w, UINT m, WPARAM a, LPARAM b) {
 BOOL CALLBACK FindApp(HWND w, LPARAM) {
   DWORD pid; GetWindowThreadProcessId(w, &pid);
   if (pid != appPid) return TRUE;
-  wchar_t title[256]{}; GetWindowTextW(w, title, 256);
+  wchar_t title[256]{}, cls[256]{}; GetWindowTextW(w, title, 256); GetClassNameW(w, cls, 256);
   if (std::wstring(title) == L"BaoCode Translate") popup = w;
-  else if (!mainWindow && IsWindowVisible(w) && !(GetWindowLongPtrW(w, GWL_EXSTYLE) & WS_EX_TOOLWINDOW)) mainWindow = w;
+  else if (!mainWindow && std::wstring(cls) == L"FLUTTER_RUNNER_WIN32_WINDOW" &&
+      IsWindowVisible(w) && !(GetWindowLongPtrW(w, GWL_EXSTYLE) & WS_EX_TOOLWINDOW)) mainWindow = w;
   return TRUE;
 }
 std::string MetadataUtf8(const wchar_t* value) {
@@ -61,10 +63,10 @@ void TraceMain(int state, int close, const char* stage, BOOL expectedVisible, BO
   if (foreground) GetWindowThreadProcessId(foreground, &foregroundPid);
   WINDOWPLACEMENT placement{}; placement.length = sizeof(placement);
   const BOOL placementRead = GetWindowPlacement(mainWindow, &placement);
-  const char* modes[] = {"Escape", "WM_CLOSE", "AltF4", "blur", "hotkey_toggle"};
+  const char* modes[] = {"Escape", "WM_CLOSE", "AltF4", "blur", "hotkey_toggle", "CtrlW", "CtrlShiftW"};
   std::printf("WINDOW_STATE|state=%s|close=%s|stage=%s|main=%p|title=%s|class=%s|exists=%d|expectedVisibleRaw=%d|visibleRaw=%d|expectedIconicRaw=%d|iconicRaw=%d|expectedVisibleBool=%d|visibleBool=%d|expectedIconicBool=%d|iconicBool=%d|foreground=%p|foregroundPID=%lu|popup=%p|placementRead=%d|showCmd=%u|flags=%u\n",
     state == 0 ? "tray_hidden" : state == 1 ? "minimized" : "startup",
-    close >= 0 && close < 5 ? modes[close] : "none", stage,
+    close >= 0 && close < kCloseModeCount ? modes[close] : "none", stage,
     static_cast<void*>(mainWindow), MetadataUtf8(title).c_str(), MetadataUtf8(cls).c_str(),
     IsWindow(mainWindow), expectedVisible, visible, expectedIconic, iconic,
     expectedVisible != 0 ? 1 : 0, visible != 0 ? 1 : 0,
@@ -218,7 +220,7 @@ int wmain(int argc, wchar_t** argv) {
         Check(Wait([] { return IsIconic(mainWindow) != 0; }), "Main minimization failed");
       }
       const BOOL visible = IsWindowVisible(mainWindow), iconic = IsIconic(mainWindow);
-      for (int close = 0; close < 5; ++close) {
+      for (int close = 0; close < kCloseModeCount; ++close) {
         AllowSetForegroundWindow(fixtureProcess.dwProcessId);
         SendMessageW(fixture, kPrepare, close % 2, 0);
         Check(Wait([&] { return GetForegroundWindow() == fixture; }), "Fixture could not take foreground");
@@ -245,6 +247,8 @@ int wmain(int argc, wchar_t** argv) {
         if (close == 1) PostMessageW(popup, WM_CLOSE, 0, 0); // Native caption X message.
         if (close == 2) Keys({VK_MENU, VK_F4});
         if (close == 4) Keys({VK_CONTROL, VK_MENU, 'Y'});
+        if (close == 5) Keys({VK_CONTROL, 'W'});
+        if (close == 6) Keys({VK_CONTROL, VK_SHIFT, 'W'});
         if (close == 3) { AllowSetForegroundWindow(fixtureProcess.dwProcessId); SendMessageW(fixture, kPrepare, 0, 0); }
         TraceMain(state, close, "after_close_input", visible, iconic);
         Check(Wait([] { return !IsWindowVisible(popup); }), "Popup failed to dismiss");
@@ -311,7 +315,7 @@ int wmain(int argc, wchar_t** argv) {
     PostMessageW(mainWindow, WM_APP + 0x42, 0, 0);
     Check(Wait([] { return !IsWindow(mainWindow); }), "Native quit did not close main");
     Check(Wait([] { if (!RegisterHotKey(nullptr, 0x6123, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'Y')) return false; UnregisterHotKey(nullptr, 0x6123); return true; }), "Quit leaked global hotkey");
-    std::puts("PASS actual release app: selection UIA, hidden/minimized independence, toolwindow, positioning, Escape/X/Alt+F4/blur/hotkey toggle, fresh reopen, clipboard sequence, mouse drag/entry click/fresh reopen/focus, native cleanup and hotkey release");
+    std::puts("PASS actual release app: selection UIA, hidden/minimized independence, toolwindow, positioning, Escape/X/Alt+F4/blur/hotkey toggle/Ctrl+W/Ctrl+Shift+W, fresh reopen, clipboard sequence, mouse drag/entry click/fresh reopen/focus, native cleanup and hotkey release");
   } catch (const std::exception& e) { std::fprintf(stderr, "FAIL: %s\n", e.what()); result = 1; }
   if (fixture) PostMessageW(fixture, WM_CLOSE, 0, 0);
   if (fixtureProcess.hProcess) { if (WaitForSingleObject(fixtureProcess.hProcess, 3000) == WAIT_TIMEOUT) TerminateProcess(fixtureProcess.hProcess, 1); CloseHandle(fixtureProcess.hProcess); CloseHandle(fixtureProcess.hThread); }
