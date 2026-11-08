@@ -13,7 +13,7 @@ template <typename Tree>
 class Target {
  public:
   using Element = typename Tree::Element;
-  void Reset() { focus_ = {}; target_ = {}; empty_document_ = false; chrome_ = false; initial_document_ = false; }
+  void Reset() { focus_ = Element{}; target_ = Element{}; empty_document_ = false; chrome_ = false; initial_document_ = false; }
   Element Get() const { return target_; }
   template <typename Ready>
   bool Resolve(Tree& tree, Element focus,

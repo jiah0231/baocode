@@ -118,50 +118,50 @@ class ConsoleBinding {
   bool Verify(HWND source, DWORD client, DWORD provider,
               IUIAutomation* automation, IUIAutomationElement* focused,
               const Stopped& stopped, ULONGLONG deadline) {
-    const auto active = [&] {
+    const auto request_active = [&] {
       return !stopped() && GetTickCount64() < deadline &&
           GetForegroundWindow() == source;
     };
     if (!source || !client || !provider || provider == client || !automation ||
-        !focused || !active()) return false;
+        !focused || !request_active()) return false;
     wchar_t window_class[64]{};
     if (!GetClassNameW(source, window_class, 64) ||
         wcscmp(window_class, L"ConsoleWindowClass") != 0 ||
         GetAncestor(source, GA_ROOT) != source || !IsWindowVisible(source)) return false;
     DWORD actual_client = 0;
     const DWORD nominal_thread = GetWindowThreadProcessId(source, &actual_client);
-    if (actual_client != client || !nominal_thread || !active()) return false;
+    if (actual_client != client || !nominal_thread || !request_active()) return false;
     if (!host_) {
-      if (!Bind(source, client, provider, active)) return false;
+      if (!Bind(source, client, provider, request_active)) return false;
       source_ = source;
       client_ = client;
       nominal_thread_ = nominal_thread;
       provider_ = provider;
     }
     if (source != source_ || client != client_ || provider != provider_ ||
-        nominal_thread != nominal_thread_ || !active() || !LiveBinding()) return false;
+        nominal_thread != nominal_thread_ || !request_active() || !LiveBinding()) return false;
 
     using Microsoft::WRL::ComPtr;
     ComPtr<IUIAutomation2> bounded;
-    if (!active() || FAILED(automation->QueryInterface(IID_PPV_ARGS(&bounded))) ||
-        !bounded || !active()) return false;
+    if (!request_active() || FAILED(automation->QueryInterface(IID_PPV_ARGS(&bounded))) ||
+        !bounded || !request_active()) return false;
     // Check cancellation and recompute remaining time before EACH UIA call,
     // including the timeout setters. No call starts after cancellation/deadline.
     const auto ready = [&] {
-      if (!active()) return false;
+      if (!request_active()) return false;
       ULONGLONG now = GetTickCount64();
       if (now >= deadline) return false;
       const DWORD connection = static_cast<DWORD>((std::min<ULONGLONG>)(deadline - now, 150));
-      if (FAILED(bounded->put_ConnectionTimeout(connection)) || !active()) return false;
+      if (FAILED(bounded->put_ConnectionTimeout(connection)) || !request_active()) return false;
       now = GetTickCount64();
       if (now >= deadline) return false;
       const DWORD transaction = static_cast<DWORD>((std::min<ULONGLONG>)(deadline - now, 200));
-      return SUCCEEDED(bounded->put_TransactionTimeout(transaction)) && active();
+      return SUCCEEDED(bounded->put_TransactionTimeout(transaction)) && request_active();
     };
     console_binding_detail::UiaTree tree(automation);
     return console_binding_detail::VerifyAncestry(
         tree, source, provider, ComPtr<IUIAutomationElement>(focused), ready,
-        [&] { return LiveBinding() && active(); });
+        [&] { return LiveBinding() && request_active(); });
   }
 
  private:
