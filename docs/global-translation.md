@@ -33,3 +33,11 @@ The compact source/result workflow, global shortcut and explicit selection actio
 ## Verification
 
 `tool/ci/windows_translation_smoke.ps1` compiles a Windows SDK fixture in a separate process. It exercises the real selection capture code with selected text, a caret, a password field, an unsupported control, oversize text and changed foreground, and verifies the clipboard sequence is unchanged. `tool/ci/windows_translation_clipboard_smoke.ps1` tests actual keyboard injection and restoration against a separate-process fixture, including concurrent clipboard writers, slow/late copying, password controls and focus changes. `tool/ci/windows_translation_action_smoke.ps1` checks the nonactivating mouse-selection entry without reading source text, including non-text drags. `tool/ci/windows_translation_browser_smoke.ps1` checks cold and repeated selection in default Edge without prewarming accessibility, enabling special browser flags, injecting page scripts or copying through the clipboard. Dart tests cover exact model input, routing, safe errors, cancellation, repeated opening, theme layouts, tool-view keyboard isolation and hotkey lifecycle. `tool/ci/windows_translation_window_smoke.ps1` additionally exercises the compiled application on a disposable Windows runner, using only synthetic text and an isolated data directory. It checks the real global shortcut with the workbench hidden/minimized, independent tool-window visibility, focus/close/reopen behavior and clipboard protection, and captures theme screenshots. The isolated translation workflow makes no live model requests or releases. The signed custom release workflow repeats feature checks before publishing.
+
+
+Real installed desktop application observations are recorded separately by
+`tool/ci/windows_translation_desktop_smoke.ps1`. See
+[the desktop coverage contract](windows-translation-desktop-coverage.md) and the
+exact commit's CI artifacts for Notepad, local PDF, Console Host and installation
+inventory results. A generic native control does not prove Office support, and a
+successful browser page test does not establish PDF or terminal support.

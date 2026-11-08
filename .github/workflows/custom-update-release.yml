@@ -110,6 +110,17 @@ jobs:
             ./tool/ci/windows_translation_browser_smoke.ps1
             if ($LASTEXITCODE -ne 0) { throw 'Fresh Edge selection verification failed' }
           }
+      - name: Verify real desktop application coverage observations
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+        run: ./tool/ci/windows_translation_desktop_smoke.ps1 -OutputDirectory build/translation-desktop-coverage
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: translation-desktop-release-coverage
+          if-no-files-found: warn
+          path: build/translation-desktop-coverage/
       - name: Check translation source formatting
         run: dart format --output=none --set-exit-if-changed lib/translation test/translation lib/settings/pages/language_page.dart lib/settings/pages/stash_hotkey_field.dart lib/settings/app_settings.dart
       - name: Test translation routing, cancellation and theme layouts
