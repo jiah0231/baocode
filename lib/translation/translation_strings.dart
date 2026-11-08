@@ -12,9 +12,18 @@ extension TranslationStrings on AppLocalizations {
       ? '点击「翻译」后，译文将显示在这里。'
       : 'Your translation appears here after you click Translate.';
   String get translationPrivacy => _zh
-      ? '仅点击翻译时发送原文。不附带文件或对话，不保存翻译历史。'
-      : 'Only Translate sends this text. No files or conversation are included; no translation history is saved.';
+      ? '点击选词后的「译」或本页翻译会发送原文。松开选区不会发送，不附带文件或对话，不保存翻译历史。'
+      : 'Clicking the selection’s Translate button or Translate here sends the source. Selecting text alone never sends. No files, conversation or translation history.';
+  String get translationEntrySubmitted => _zh
+      ? '已按本次「译」点击请求开始翻译。'
+      : 'Translation started for this explicit selection-button click.';
+  String translationReviewRequired(String destination) => _zh
+      ? '此原文可能含敏感信息，已暂停自动发送。本地检查并非完整分类；请核对内容和服务方「$destination」，仅在确认后点击翻译。'
+      : 'Automatic sending is paused: this source may contain sensitive information. Local checks are not a complete classifier. Review the text and destination ($destination), then click Translate only if you approve.';
   String get translationModel => _zh ? '模型设置' : 'Model settings';
+  String get translationAutoTracePaused => _zh
+      ? '自动翻译已暂停；请先关闭用量调试追踪。'
+      : 'Automatic translation is paused. Turn off usage debug tracing first.';
   String get translationTraceWarning => _zh
       ? '已开启用量调试追踪，原文和译文可能保存在本地追踪日志中。可在用量设置中关闭。'
       : 'Usage debug tracing is on. Source and translation may be saved in local trace logs. Turn it off in Usage settings.';

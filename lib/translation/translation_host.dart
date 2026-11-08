@@ -6,6 +6,8 @@ import 'package:flutter/widgets.dart';
 import '../platform/app_platform.dart';
 import '../settings/user_settings.dart';
 
+enum TranslationOrigin { manual, hotkey, selectionEntryClick }
+
 /// One explicitly requested selection snapshot, including a guarded temporary
 /// clipboard capture where direct accessibility selection is unavailable.
 @immutable
@@ -15,11 +17,23 @@ class TranslationCapture {
     this.status = 'noSelection',
     this.inApp = false,
     this.requestId,
+    this.origin = TranslationOrigin.manual,
+    this.requiresConfirmation = false,
   });
   final String text;
   final String status;
   final bool inApp;
   final int? requestId;
+  final TranslationOrigin origin;
+  final bool requiresConfirmation;
+
+  bool get requestsImmediateTranslation =>
+      origin == TranslationOrigin.selectionEntryClick &&
+      requestId != null &&
+      requestId! >= 0 &&
+      status == 'ok' &&
+      text.trim().isNotEmpty &&
+      text.length <= 8000;
 
   factory TranslationCapture.fromJson(Object? value) {
     if (value is! Map) return const TranslationCapture(status: 'unsupported');
@@ -36,6 +50,14 @@ class TranslationCapture {
       text: status == 'ok' && text is String ? text : '',
       status: status is String ? status : 'unsupported',
       inApp: value['self'] == true,
+      origin: switch (value['origin']) {
+        'selectionEntryClick' => TranslationOrigin.selectionEntryClick,
+        'hotkey' => TranslationOrigin.hotkey,
+        _ => TranslationOrigin.manual,
+      },
+      requiresConfirmation:
+          value['requiresConfirmation'] != null &&
+          value['requiresConfirmation'] != false,
       requestId: value['requestId'] is int ? value['requestId'] as int : null,
     );
   }
@@ -83,6 +105,7 @@ class TranslationHost extends ChangeNotifier {
   VoidCallback? defaultModelSettings;
   int panelGeneration = 0;
   Future<int?>? _creating;
+  int _lastNativeRequest = -1;
 
   /// False means this platform cannot create a panel; only then use a modal.
   Future<bool> openPanel(
@@ -90,6 +113,12 @@ class TranslationHost extends ChangeNotifier {
     VoidCallback? onModelSettings,
   }) async {
     if (!supported || !panelEnabled) return false;
+    if (capture.requestId case final id? when id >= 0) {
+      // One native gesture owns one monotonically increasing identity. Late
+      // results or duplicate delivery must not recreate a view or resend text.
+      if (id <= _lastNativeRequest) return true;
+      _lastNativeRequest = id;
+    }
     final generation = ++panelGeneration;
     panelCapture = null;
     panelShown = false;

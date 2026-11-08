@@ -26,10 +26,10 @@ bool VerifyAncestry(Tree& tree, HWND source, DWORD provider,
       !tree.Type(root, &type) || type != UIA_WindowControlTypeId) return false;
   const auto safe = [&](const typename Tree::Element& node) {
     int pid = 0;
-    BOOL password = TRUE, offscreen = TRUE;
+    BOOL node_password = TRUE, offscreen = TRUE;
     return ready() && tree.Process(node, &pid) && pid > 0 &&
         static_cast<DWORD>(pid) == provider && ready() &&
-        tree.Password(node, &password) && password == FALSE && ready() &&
+        tree.Password(node, &node_password) && node_password == FALSE && ready() &&
         tree.Offscreen(node, &offscreen) && offscreen == FALSE;
   };
   // Validate the root even when the supplied focused element never reaches it.
@@ -103,6 +103,10 @@ inline bool Live(HANDLE handle) {
 // trust a different UIA ProcessId alone: require exact OS thread-window
 // membership of a system console host and a safe UIA chain to this HWND's root.
 // Handles stay alive across retries to prevent process/thread-ID reuse.
+struct ConsoleBindingDiagnostics {
+  const char* stage = "none";
+  DWORD host_integrity = 0, client_integrity = 0;
+};
 class ConsoleBinding {
  public:
   ~ConsoleBinding() {
@@ -117,30 +121,38 @@ class ConsoleBinding {
   template <typename Stopped>
   bool Verify(HWND source, DWORD client, DWORD provider,
               IUIAutomation* automation, IUIAutomationElement* focused,
-              const Stopped& stopped, ULONGLONG deadline) {
+              const Stopped& stopped, ULONGLONG deadline,
+              ConsoleBindingDiagnostics* diagnostics = nullptr) {
+    if (diagnostics) *diagnostics = ConsoleBindingDiagnostics{};
+    const auto stage = [&](const char* value) { if (diagnostics) diagnostics->stage = value; };
+    stage("Console.Precondition");
     const auto request_active = [&] {
       return !stopped() && GetTickCount64() < deadline &&
           GetForegroundWindow() == source;
     };
     if (!source || !client || !provider || provider == client || !automation ||
         !focused || !request_active()) return false;
+    stage("Console.WindowClass");
     wchar_t window_class[64]{};
     if (!GetClassNameW(source, window_class, 64) ||
         wcscmp(window_class, L"ConsoleWindowClass") != 0 ||
         GetAncestor(source, GA_ROOT) != source || !IsWindowVisible(source)) return false;
+    stage("Console.ClientIdentity");
     DWORD actual_client = 0;
     const DWORD nominal_thread = GetWindowThreadProcessId(source, &actual_client);
     if (actual_client != client || !nominal_thread || !request_active()) return false;
     if (!host_) {
-      if (!Bind(source, client, provider, request_active)) return false;
+      if (!Bind(source, client, provider, request_active, diagnostics)) return false;
       source_ = source;
       client_ = client;
       nominal_thread_ = nominal_thread;
       provider_ = provider;
     }
+    stage("Console.BindingLifetime");
     if (source != source_ || client != client_ || provider != provider_ ||
         nominal_thread != nominal_thread_ || !request_active() || !LiveBinding()) return false;
 
+    stage("Console.AutomationInterface");
     using Microsoft::WRL::ComPtr;
     ComPtr<IUIAutomation2> bounded;
     if (!request_active() || FAILED(automation->QueryInterface(IID_PPV_ARGS(&bounded))) ||
@@ -159,9 +171,12 @@ class ConsoleBinding {
       return SUCCEEDED(bounded->put_TransactionTimeout(transaction)) && request_active();
     };
     console_binding_detail::UiaTree tree(automation);
-    return console_binding_detail::VerifyAncestry(
+    stage("Console.AncestryOrDeadline");
+    const bool verified = console_binding_detail::VerifyAncestry(
         tree, source, provider, ComPtr<IUIAutomationElement>(focused), ready,
         [&] { return LiveBinding() && request_active(); });
+    if (verified) stage("none");
+    return verified;
   }
 
  private:
@@ -189,7 +204,7 @@ class ConsoleBinding {
         IsWindowVisible(source_) && GetAncestor(source_, GA_ROOT) == source_ &&
         OwnsWindow(GetThreadId(thread_), source_);
   }
-  static bool Ordinary(HANDLE process) {
+  static bool Ordinary(HANDLE process, DWORD* integrity) {
     HANDLE raw_token = nullptr;
     if (!OpenProcessToken(process, TOKEN_QUERY, &raw_token)) return false;
     console_binding_detail::Handle token(raw_token);
@@ -202,45 +217,63 @@ class ConsoleBinding {
     const auto* label = reinterpret_cast<const TOKEN_MANDATORY_LABEL*>(bytes.data());
     if (!IsValidSid(label->Label.Sid)) return false;
     const BYTE count = *GetSidSubAuthorityCount(label->Label.Sid);
-    return count && *GetSidSubAuthority(label->Label.Sid, count - 1) ==
-        SECURITY_MANDATORY_MEDIUM_RID;
+    const DWORD level = count ? *GetSidSubAuthority(label->Label.Sid, count - 1) : 0;
+    if (integrity) *integrity = level;
+    return count && level == SECURITY_MANDATORY_MEDIUM_RID;
   }
   template <typename Active>
-  bool Bind(HWND source, DWORD client, DWORD provider, const Active& active) {
+  bool Bind(HWND source, DWORD client, DWORD provider, const Active& binding_active,
+            ConsoleBindingDiagnostics* diagnostics) {
+    const auto stage = [&](const char* value) { if (diagnostics) diagnostics->stage = value; };
+    stage("Console.Session");
     using console_binding_detail::Handle;
     DWORD host_session = 0, client_session = 0, own_session = 0;
-    if (!active() || !ProcessIdToSessionId(provider, &host_session) ||
+    if (!binding_active() || !ProcessIdToSessionId(provider, &host_session) ||
         !ProcessIdToSessionId(client, &client_session) ||
         !ProcessIdToSessionId(GetCurrentProcessId(), &own_session) ||
         host_session != own_session || client_session != own_session) return false;
+    stage("Console.ProcessAccessOrLifetime");
     Handle host(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, provider));
     Handle client_process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, client));
-    if (!active() || !console_binding_detail::Live(host.get()) ||
+    if (!binding_active() || !console_binding_detail::Live(host.get()) ||
         !console_binding_detail::Live(client_process.get()) ||
-        !Ordinary(host.get()) || !Ordinary(client_process.get()) || !active()) return false;
+        !binding_active()) return false;
+    DWORD host_integrity = 0, client_integrity = 0;
+    const bool host_ordinary = Ordinary(host.get(), &host_integrity);
+    const bool client_ordinary = Ordinary(client_process.get(), &client_integrity);
+    if (diagnostics) {
+      diagnostics->host_integrity = host_integrity;
+      diagnostics->client_integrity = client_integrity;
+    }
+    stage("Console.HostIntegrity");
+    if (!host_ordinary || !binding_active()) return false;
+    stage("Console.ClientIntegrity");
+    if (!client_ordinary || !binding_active()) return false;
+    stage("Console.SystemHostImage");
     wchar_t system[MAX_PATH]{}, image[32768]{};
     DWORD size = 32768;
     const UINT length = GetSystemDirectoryW(system, MAX_PATH);
     if (!length || length >= MAX_PATH ||
         !QueryFullProcessImageNameW(host.get(), 0, image, &size) ||
         _wcsicmp(image, (std::wstring(system) + L"\\conhost.exe").c_str()) != 0 ||
-        !active()) return false;
+        !binding_active()) return false;
+    stage("Console.ThreadWindowMembership");
     Handle snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0));
-    if (snapshot.get() == INVALID_HANDLE_VALUE || !active()) return false;
+    if (snapshot.get() == INVALID_HANDLE_VALUE || !binding_active()) return false;
     THREADENTRY32 entry{};
     entry.dwSize = sizeof(entry);
     unsigned visited = 0, candidates = 0;
     for (BOOL more = Thread32First(snapshot.get(), &entry);
-         more && active() && visited++ < 65536;
+         more && binding_active() && visited++ < 65536;
          more = Thread32Next(snapshot.get(), &entry)) {
       if (entry.th32OwnerProcessID != provider) continue;
       if (++candidates > 128) break;
       Handle thread(OpenThread(THREAD_QUERY_LIMITED_INFORMATION | SYNCHRONIZE,
                                FALSE, entry.th32ThreadID));
-      if (!active()) return false;
+      if (!binding_active()) return false;
       if (console_binding_detail::Live(thread.get()) &&
           GetProcessIdOfThread(thread.get()) == provider &&
-          OwnsWindow(GetThreadId(thread.get()), source) && active() &&
+          OwnsWindow(GetThreadId(thread.get()), source) && binding_active() &&
           console_binding_detail::Live(host.get()) &&
           console_binding_detail::Live(client_process.get())) {
         host_ = host.release();

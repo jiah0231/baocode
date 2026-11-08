@@ -1110,6 +1110,7 @@ class _BaoCodeAppState extends State<BaoCodeApp>
             key: ValueKey(generation),
             embedded: true,
             active: host.panelShown,
+            capture: capture,
             selectedText: capture.text,
             captureStatus: capture.status,
             captureWarning: host.lastCaptureWarning,

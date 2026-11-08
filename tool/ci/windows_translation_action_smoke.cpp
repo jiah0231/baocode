@@ -4,14 +4,25 @@
 #include <cstdio>
 #include <memory>
 #include <string>
+#include <mutex>
+#include <atomic>
 namespace {
 HWND edit = nullptr;
 HWND password = nullptr;
 HWND ordinary_button = nullptr;
+HWND alternate_edit = nullptr;
+std::mutex capture_mutex;
+translation_selection::Selection bound_result;
+std::atomic<int> completions{0};
+std::atomic<bool> cancel_capture{false};
+int mutate_before_queue = -1;
+int queued_clicks = 0;
+bool mutation_verified = true;
 std::unique_ptr<TranslationSelectionAction> action;
 int clicks = 0;
 HWND captured = nullptr;
 constexpr UINT kPrepare = WM_APP + 22;
+constexpr UINT kSwitchEdit = WM_APP + 23;
 LRESULT CALLBACK Fixture(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
   if (message == WM_CREATE) {
     edit = CreateWindowW(L"RICHEDIT50W", L"Select these sample words for translation",
@@ -21,6 +32,13 @@ LRESULT CALLBACK Fixture(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) 
     ordinary_button = CreateWindowW(L"BUTTON", L"Ordinary button, not selectable text",
       WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 20, 155, 300, 35,
       hwnd, nullptr, nullptr, nullptr);
+    alternate_edit = CreateWindowW(L"EDIT", L"Different source must never be returned",
+      WS_CHILD | WS_VISIBLE, 20, 195, 480, 25, hwnd, nullptr, nullptr, nullptr);
+    return 0;
+  }
+  if (message == kSwitchEdit) {
+    SetFocus(alternate_edit);
+    SendMessage(alternate_edit, EM_SETSEL, 0, -1);
     return 0;
   }
   if (message == kPrepare) {
@@ -86,7 +104,50 @@ int wmain(int argc, wchar_t** argv) {
   if (!fixture) return Fail("Fixture missing");
   WNDCLASSW cls{}; cls.lpfnWndProc = Dispatch; cls.hInstance = GetModuleHandle(nullptr); cls.lpszClassName = L"BaoCodeActionDispatch"; RegisterClassW(&cls);
   HWND dispatcher = CreateWindowW(cls.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, cls.hInstance, nullptr);
-  action = std::make_unique<TranslationSelectionAction>(dispatcher, [](HWND source) { ++clicks; captured = source; });
+  action = std::make_unique<TranslationSelectionAction>(dispatcher, [](HWND source) {
+    ++clicks; captured = source;
+    cancel_capture.store(false);
+    // Deterministic capture race: physical click has been accepted, but the
+    // source changes before the queued bound read. The source is a separate
+    // process, so it handles real keyboard input while this callback waits.
+    mutation_verified = mutate_before_queue < 0 || mutate_before_queue == 2;
+    if (mutate_before_queue == 0) {
+      HWND source_edit = FindWindowExW(source, nullptr, L"RICHEDIT50W", nullptr);
+      DWORD before_start = 0, before_end = 0;
+      SendMessage(source_edit, EM_GETSEL, reinterpret_cast<WPARAM>(&before_start), reinterpret_cast<LPARAM>(&before_end));
+      INPUT keys[4]{};
+      for (auto& key : keys) key.type = INPUT_KEYBOARD;
+      keys[0].ki.wVk = VK_SHIFT;
+      keys[1].ki.wVk = VK_END;
+      keys[2].ki.wVk = VK_END; keys[2].ki.dwFlags = KEYEVENTF_KEYUP;
+      keys[3].ki.wVk = VK_SHIFT; keys[3].ki.dwFlags = KEYEVENTF_KEYUP;
+      const bool input_sent = SendInput(4, keys, sizeof(INPUT)) == 4;
+      Sleep(60);
+      DWORD after_start = 0, after_end = 0;
+      SendMessage(source_edit, EM_GETSEL, reinterpret_cast<WPARAM>(&after_start), reinterpret_cast<LPARAM>(&after_end));
+      mutation_verified = input_sent && (before_start != after_start || before_end != after_end);
+    } else if (mutate_before_queue == 1) {
+      SendMessage(source, kSwitchEdit, 0, 0);
+      const HWND first_edit = FindWindowExW(source, nullptr, L"EDIT", nullptr);
+      const HWND second_edit = FindWindowExW(source, first_edit, L"EDIT", nullptr);
+      GUITHREADINFO gui{}; gui.cbSize = sizeof(gui);
+      mutation_verified = second_edit && GetGUIThreadInfo(GetWindowThreadProcessId(source, nullptr), &gui) &&
+          gui.hwndFocus == second_edit;
+    }
+    const bool queued = action->CaptureClickedSelection(source, GetTickCount64() + 1500,
+        [] { return cancel_capture.load(); },
+        [](translation_selection::Selection selected) {
+          { std::lock_guard<std::mutex> lock(capture_mutex); bound_result = std::move(selected); }
+          ++completions;
+        }, [] { cancel_capture.store(true); });
+    if (queued) ++queued_clicks;
+    if (queued && mutate_before_queue == 2) action->Hide();
+    if (!queued) {
+      { std::lock_guard<std::mutex> lock(capture_mutex);
+        bound_result = translation_selection::Selection{}; bound_result.status = "notQueued"; }
+      ++completions;
+    }
+  });
   action->Configure(true, false);
   SendMessage(fixture, kPrepare, 0, 0); Pump(200);
   HWND control = FindWindowExW(fixture, nullptr, L"RICHEDIT50W", nullptr);
@@ -107,14 +168,21 @@ int wmain(int argc, wchar_t** argv) {
     click_attempted = true;
     RECT button{}; GetWindowRect(entry, &button);
     SetCursorPos((button.left + button.right) / 2, (button.top + button.bottom) / 2);
-    Mouse(MOUSEEVENTF_LEFTDOWN); Mouse(MOUSEEVENTF_LEFTUP); Pump(100);
+    Mouse(MOUSEEVENTF_LEFTDOWN); Mouse(MOUSEEVENTF_LEFTUP);
+    for (int i = 0; i < 160 && completions.load() == 0; ++i) Pump(10);
     DWORD start = 0, end = 0; SendMessage(control, EM_GETSEL, reinterpret_cast<WPARAM>(&start), reinterpret_cast<LPARAM>(&end));
     if (clicks != 1 || captured != fixture || GetForegroundWindow() != fixture || start == end)
       result = Fail("Click lost selection/focus or failed capture callback");
   }
   Diagnose("after_entry_click", fixture);
+  { std::lock_guard<std::mutex> lock(capture_mutex);
+    if (completions.load() != 1 || bound_result.status != "ok" || bound_result.text.empty())
+      result = Fail("Unchanged entry click did not complete bound source capture");
+  }
   if (!click_attempted || clicks != 1 || captured != fixture)
     result = Fail("Positive entry click did not complete; negative-case click baseline is invalid");
+  action->Hide();
+  if (!cancel_capture.load()) result = Fail("Finished click lost invalidation link before delivery");
   // A drag gesture is not evidence of selected text. Keep the earlier
   // RichEdit selection intact and verify a focused ordinary button cannot
   // cause a stale selection from another control to expose an entry.
@@ -150,6 +218,42 @@ int wmain(int argc, wchar_t** argv) {
   SetCursorPos(secret_rect.left + 100, secret_rect.top + 8); Pump(100); Mouse(MOUSEEVENTF_LEFTUP); Pump(900);
   Diagnose("password_negative", fixture);
   if (Visible() || clicks != 1) result = Fail("Password selection exposed an entry or capture");
+  // Re-arm a real entry. Its accepted physical click changes the selection or
+  // focused edit in the SAME source HWND immediately before queueing the read.
+  // This ensures the verifier is exercised rather than a prior timer hiding it.
+  for (int mutation = 0; mutation < 3; ++mutation) {
+    SendMessage(fixture, kPrepare, 0, 0); Pump(150);
+    SetCursorPos(rect.left + 3, rect.top + 8); Mouse(MOUSEEVENTF_LEFTDOWN);
+    for (int i = 1; i <= 8; ++i) { SetCursorPos(rect.left + 3 + i * 15, rect.top + 8); Pump(35); }
+    Mouse(MOUSEEVENTF_LEFTUP);
+    for (int i = 0; i < 150 && !Visible(); ++i) Pump(10);
+    HWND old_entry = FindWindowW(L"BaoCodeTranslationSelectionAction", nullptr);
+    RECT old_button{};
+    if (!old_entry || !IsWindowVisible(old_entry) || !GetWindowRect(old_entry, &old_button)) {
+      result = Fail("Mutation regression could not establish its old visible entry");
+      continue;
+    }
+    const int before_clicks = clicks;
+    const int before_queued = queued_clicks;
+    const int before_completions = completions.load();
+    mutate_before_queue = mutation;
+    SetCursorPos((old_button.left + old_button.right) / 2, (old_button.top + old_button.bottom) / 2);
+    INPUT mouse[2]{};
+    mouse[0].type = mouse[1].type = INPUT_MOUSE;
+    mouse[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+    mouse[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
+    if (SendInput(2, mouse, sizeof(INPUT)) != 2) result = Fail("Old-entry click input failed");
+    for (int i = 0; i < 160 && completions.load() == before_completions; ++i) Pump(10);
+    mutate_before_queue = -1;
+    Diagnose(mutation == 0 ? "changed_range_before_read" : (mutation == 1 ? "changed_control_before_read" : "cancel_after_queue"), fixture);
+    { std::lock_guard<std::mutex> lock(capture_mutex);
+      if (clicks != before_clicks + 1 || queued_clicks != before_queued + 1 ||
+          completions.load() != before_completions + 1 || !mutation_verified || bound_result.status == "notQueued")
+        result = Fail("Mutation regression did not execute a verified change and queued bound capture");
+      else if (bound_result.status == "ok" || !bound_result.text.empty())
+        result = Fail("Old entry captured replacement range or focused control");
+    }
+  }
   action->Configure(false, false); Pump(200);
   if (Visible()) result = Fail("Disable did not hide entry");
   action.reset();

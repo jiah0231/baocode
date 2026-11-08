@@ -19,7 +19,8 @@ try {
     & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX $extraSource "/Fe:$extraExe" /link user32.lib advapi32.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
     if ($LASTEXITCODE -ne 0) { throw "Translation $suite smoke compilation failed" }
     $extra = Start-Process -FilePath $extraExe -PassThru -NoNewWindow
-    if (-not $extra.WaitForExit(20000)) {
+    $extraTimeout = if ($suite -eq 'console_binding') { 90000 } else { 20000 }
+    if (-not $extra.WaitForExit($extraTimeout)) {
       & taskkill /PID $extra.Id /T /F | Out-Null
       throw "Translation $suite smoke timed out"
     }

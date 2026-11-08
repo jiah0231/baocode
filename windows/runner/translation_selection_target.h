@@ -68,10 +68,10 @@ class Target {
   template <typename Ready>
   static bool Safe(Tree& tree, Element node, DWORD pid, const Ready& ready) {
     int actual = 0;
-    BOOL password = TRUE, offscreen = TRUE;
+    BOOL node_password = TRUE, offscreen = TRUE;
     return node && ready() && tree.Process(node, &actual) &&
         static_cast<DWORD>(actual) == pid && ready() &&
-        tree.Password(node, &password) && !password && ready() &&
+        tree.Password(node, &node_password) && !node_password && ready() &&
         tree.Offscreen(node, &offscreen) && !offscreen && ready();
   }
   template <typename Ready>

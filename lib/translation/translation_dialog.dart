@@ -12,6 +12,7 @@ import '../theme/workbench_theme.dart';
 import '../usage/usage_ledger.dart';
 import '../workspace/window_controls.dart';
 import 'translation_host.dart';
+import 'translation_confirmation.dart';
 import 'translation_service.dart';
 import 'translation_strings.dart';
 
@@ -59,12 +60,14 @@ Future<void> showTranslationDialog(
   }
 }
 
-/// Compact, dependency-free translation panel. Nothing is submitted on open,
-/// selection capture, typing or language changes. Closing destroys its state.
+/// A hotkey/manual opening is a preview. A validated explicit selection-entry
+/// click can submit once, after the native panel is visible. Passive selection,
+/// typing and language changes never submit. Closing destroys its state.
 class TranslationDialog extends StatefulWidget {
   const TranslationDialog({
     super.key,
     this.selectedText = '',
+    this.capture,
     this.captureStatus,
     this.captureWarning,
     this.service,
@@ -75,6 +78,7 @@ class TranslationDialog extends StatefulWidget {
     this.onRendered,
   });
   final String selectedText;
+  final TranslationCapture? capture;
   final bool embedded;
 
   /// A native panel may receive focus only after its host confirms it is shown.
@@ -94,9 +98,22 @@ class TranslationDialog extends StatefulWidget {
 
 class _TranslationDialogState extends State<TranslationDialog> {
   late final _service = widget.service ?? TranslationService();
+  // The host keys each new request by generation. Rebuilding/updating an old
+  // view cannot upgrade its original preview into a new click authorization.
+  late final _capture = widget.capture;
+  String? get _captureStatus => _capture?.status ?? widget.captureStatus;
   late final _input = TextEditingController(
-    text: widget.captureStatus == 'tooLong' ? '' : widget.selectedText,
+    text: _capture != null
+        ? (_capture.status == 'ok' ? _capture.text : '')
+        : widget.captureStatus == 'tooLong'
+        ? ''
+        : widget.selectedText,
   );
+  bool _autoAttempted = false;
+  bool _entrySubmitted = false;
+  bool get _reviewNeeded =>
+      _capture?.requiresConfirmation == true ||
+      translationNeedsReview(_input.text);
   final _sourceFocus = FocusNode(debugLabel: 'Translation source');
   String _source = 'auto';
   String _target = 'zh';
@@ -116,6 +133,7 @@ class _TranslationDialogState extends State<TranslationDialog> {
       if (!mounted) return;
       widget.onRendered?.call();
       _focusActivePanel();
+      _maybeTranslateEntry();
     });
   }
 
@@ -130,8 +148,33 @@ class _TranslationDialogState extends State<TranslationDialog> {
     super.didUpdateWidget(oldWidget);
     if (widget.active && !oldWidget.active) {
       // Wait for the host's ExcludeFocus to permit the panel's subtree again.
-      WidgetsBinding.instance.addPostFrameCallback((_) => _focusActivePanel());
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _focusActivePanel();
+        _maybeTranslateEntry();
+      });
     }
+  }
+
+  void _maybeTranslateEntry() {
+    if (!mounted || !widget.embedded || !widget.active || _autoAttempted) {
+      return;
+    }
+    _autoAttempted = true;
+    if (_capture?.requestsImmediateTranslation != true ||
+        _edited ||
+        _input.text != _capture!.text ||
+        _reviewNeeded ||
+        (UsageLedger.current.enabled && UsageLedger.current.trace)) {
+      return;
+    }
+    try {
+      // Never auto-send later merely because model setup changes.
+      _service.destination;
+    } on TranslationException {
+      return;
+    }
+    _entrySubmitted = true;
+    unawaited(_translate());
   }
 
   @override
@@ -149,9 +192,11 @@ class _TranslationDialogState extends State<TranslationDialog> {
   }
 
   void _change(VoidCallback change) {
+    _autoAttempted = true;
     _stop();
     setState(() {
       change();
+      _entrySubmitted = false;
       _busy = false;
       _answer = '';
       _error = null;
@@ -161,11 +206,13 @@ class _TranslationDialogState extends State<TranslationDialog> {
   }
 
   void _close() {
+    _autoAttempted = true;
     _stop();
     widget.onClose?.call();
   }
 
   Future<void> _translate() async {
+    _autoAttempted = true;
     _stop();
     final generation = _generation;
     final cancel = Completer<void>();
@@ -276,10 +323,10 @@ class _TranslationDialogState extends State<TranslationDialog> {
       }
       final tooLong =
           _input.text.length > translationSourceLimit ||
-          (!_edited && widget.captureStatus == 'tooLong');
+          (!_edited && _captureStatus == 'tooLong');
       final error = tooLong ? TranslationFailure.sourceTooLong : _error;
       final restoreFailed =
-          widget.captureStatus == 'clipboardRestoreFailed' ||
+          _captureStatus == 'clipboardRestoreFailed' ||
           widget.captureWarning == 'clipboardRestoreFailed';
       final viewport = MediaQuery.sizeOf(context);
       return CallbackShortcuts(
@@ -393,8 +440,8 @@ class _TranslationDialogState extends State<TranslationDialog> {
                           SizedBox(height: widget.embedded ? 10 : 14),
                           if (restoreFailed ||
                               (!_edited &&
-                                  widget.captureStatus != null &&
-                                  widget.captureStatus != 'ok' &&
+                                  _captureStatus != null &&
+                                  _captureStatus != 'ok' &&
                                   !tooLong)) ...[
                             Text(
                               restoreFailed
@@ -501,6 +548,26 @@ class _TranslationDialogState extends State<TranslationDialog> {
                                     );
                             },
                           ),
+                          if (_capture?.requestsImmediateTranslation == true &&
+                              _reviewNeeded) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              l.translationReviewRequired(
+                                model ?? l.translationModel,
+                              ),
+                              style: TextStyle(
+                                color: themeColors['errorForeground'],
+                              ),
+                            ),
+                          ],
+                          if (_entrySubmitted)
+                            Text(
+                              l.translationEntrySubmitted,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: themeColors['descriptionForeground'],
+                              ),
+                            ),
                           if (error != null) ...[
                             const SizedBox(height: 10),
                             Text(
@@ -566,7 +633,10 @@ class _TranslationDialogState extends State<TranslationDialog> {
                           if (UsageLedger.current.enabled &&
                               UsageLedger.current.trace)
                             Text(
-                              l.translationTraceWarning,
+                              _capture?.requestsImmediateTranslation == true &&
+                                      !_entrySubmitted
+                                  ? '${l.translationAutoTracePaused} ${l.translationTraceWarning}'
+                                  : l.translationTraceWarning,
                               style: TextStyle(
                                 color: themeColors['errorForeground'],
                                 fontSize: 11,

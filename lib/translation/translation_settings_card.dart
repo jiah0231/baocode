@@ -107,7 +107,9 @@ class _TranslationSettingsCardState extends State<TranslationSettingsCard> {
                 label: zh
                     ? '选词后显示翻译按钮'
                     : 'Show a translation button after selection',
-                description: zh ? '选中文字后在附近显示小按钮。检测时不读取正文；点击按钮后才获取原文并打开翻译窗。' : 'Show a small button near selected text. Detection does not read text; clicking the button captures the source and opens the translator.',
+                description: zh
+                    ? '选中文字后在附近显示小按钮。检测时不读取正文；点击「译」后才获取原文、打开翻译窗并请求翻译；敏感或不确定内容先预览确认。'
+                    : 'Show a small button near selected text. Detection does not read text; clicking Translate captures the source, opens the panel and requests translation. Sensitive or uncertain content stays in preview for confirmation.',
                 value:
                     widget.settings?[TranslationHost.selectionActionKey] !=
                     false,
@@ -119,8 +121,8 @@ class _TranslationSettingsCardState extends State<TranslationSettingsCard> {
               SettingsSwitchRow(
                 label: zh ? '自动复制选中文字' : 'Automatically copy selected text',
                 description: zh
-                    ? '仅点击选词按钮或按翻译快捷键后，在支持的非敏感控件中尝试复制无法直接读取的选中文字。会临时使用剪贴板，剪贴板管理器或云同步可能看到这些文字。仅点击「翻译」后发送到模型；关闭后可手动粘贴。'
-                    : 'After clicking the selection button or pressing the translation shortcut, try copying the selection from supported non-sensitive controls when direct reading fails. This temporarily uses the clipboard; clipboard managers or cloud sync may see the text. Only Translate sends it to the model. Turn this off to paste manually.',
+                    ? '仅点击选词按钮或按翻译快捷键后，在支持的非敏感控件中尝试复制无法直接读取的选中文字。会临时使用剪贴板，剪贴板管理器或云同步可能看到这些文字。明确点击选词后的「译」或面板翻译后才发送到模型；关闭本选项后可手动粘贴。'
+                    : 'After clicking the selection button or pressing the translation shortcut, try copying the selection from supported non-sensitive controls when direct reading fails. This temporarily uses the clipboard; clipboard managers or cloud sync may see the text. Only an explicit Translate click on the selection button or in the panel sends it to the model. Turn this off to paste manually.',
                 value:
                     widget.settings?[TranslationHost.clipboardFallbackKey] !=
                     false,

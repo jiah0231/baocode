@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <functional>
 #include <memory>
+#include "translation_selection.h"
 
 // A metadata-only mouse selection affordance. Text capture is exclusively the
 // caller's explicit-click callback. All public methods run on the UI thread.
@@ -12,6 +13,13 @@ class TranslationSelectionAction {
   ~TranslationSelectionAction();
   bool Configure(bool enabled, bool dark);
   void Hide();
+  // Valid only synchronously inside on_click. Completion runs on the existing
+  // MTA worker and must not access UI/channel objects. No fresh/unbound capture.
+  bool CaptureClickedSelection(HWND source, ULONGLONG deadline,
+      std::function<bool()> canceled,
+      std::function<void(translation_selection::Selection)> finish,
+      std::function<void()> invalidate, unsigned* accepted_generation = nullptr);
+  void ReleaseClickedSelection(unsigned accepted_generation);
   bool HandleMessage(UINT message, WPARAM wparam, LPARAM lparam, LRESULT* result);
   TranslationSelectionAction(const TranslationSelectionAction&) = delete;
   TranslationSelectionAction& operator=(const TranslationSelectionAction&) = delete;
@@ -31,6 +39,7 @@ class TranslationSelectionAction {
   bool enabled_ = false, dark_ = false, down_ = false, candidate_ = false;
   RECT shown_bounds_{};
   bool shown_ = false;
+  bool accepting_click_ = false, click_queued_ = false;
   POINT down_point_{};
   DWORD last_up_ = 0;
   POINT last_up_point_{};
@@ -39,6 +48,7 @@ class TranslationSelectionAction {
   unsigned discovery_attempts_ = 0;
   ULONGLONG discovery_started_ = 0;
   std::function<void(HWND)> on_click_;
+  std::function<void()> invalidate_click_;
   std::shared_ptr<Worker> worker_;
 };
 #endif

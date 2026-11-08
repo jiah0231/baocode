@@ -116,7 +116,7 @@ jobs:
         shell: pwsh
         env:
           BAOCODE_DISPOSABLE_UI_TEST: '1'
-        run: ./tool/ci/windows_translation_desktop_smoke.ps1 -OutputDirectory build/translation-desktop-coverage -RequireExactCapture @('notepad')
+        run: ./tool/ci/windows_translation_desktop_smoke.ps1 -OutputDirectory build/translation-desktop-coverage -RequireExactCapture @('notepad', 'edgePdf')
       - uses: actions/upload-artifact@v6
         if: always()
         with:

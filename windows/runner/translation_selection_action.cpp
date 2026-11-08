@@ -29,7 +29,9 @@ std::optional<RECT> SelectionBounds(HWND source,
     ComPtr<IUIAutomationTextRange>& previous_range, bool& retryable,
     bool& require_text_control, translation_selection::SelectionTarget& selection_target,
     translation_selection::ConsoleBinding& console_binding,
-    const std::function<bool()>& stopped, ULONGLONG deadline) {
+    const std::function<bool()>& stopped, ULONGLONG deadline,
+    ComPtr<IUIAutomation2>* transaction_control = nullptr,
+    ComPtr<IUIAutomationTextRange>* validated_range = nullptr) {
   retryable = false;
   DWORD pid = 0;
   GetWindowThreadProcessId(source, &pid);
@@ -59,11 +61,13 @@ std::optional<RECT> SelectionBounds(HWND source,
   }
   if (GetForegroundWindow() != source) return std::nullopt;
   const auto ready = [&] {
-    const ULONGLONG current = GetTickCount64();
+    ULONGLONG current = GetTickCount64();
     if (stopped() || current >= deadline || GetForegroundWindow() != source) return false;
-    const DWORD budget = static_cast<DWORD>(std::min<ULONGLONG>(200, deadline - current));
-    return SUCCEEDED(bounded->put_ConnectionTimeout(std::min<DWORD>(150, budget))) &&
-        !stopped() && SUCCEEDED(bounded->put_TransactionTimeout(budget)) && !stopped();
+    if (FAILED(bounded->put_ConnectionTimeout(static_cast<DWORD>(
+            std::min<ULONGLONG>(150, deadline - current)))) || stopped()) return false;
+    current = GetTickCount64();
+    return current < deadline && SUCCEEDED(bounded->put_TransactionTimeout(static_cast<DWORD>(
+        std::min<ULONGLONG>(200, deadline - current)))) && !stopped();
   };
   int focused_pid = 0;
   BOOL password = TRUE, has_focus = FALSE;
@@ -77,7 +81,7 @@ std::optional<RECT> SelectionBounds(HWND source,
   if (!has_focus) {
     CONTROLTYPEID initial_type = 0;
     wchar_t source_class[64] = {};
-    const bool known_type = SUCCEEDED(focused->get_CurrentControlType(&initial_type));
+    const bool known_type = ready() && SUCCEEDED(focused->get_CurrentControlType(&initial_type));
     const bool chromium = GetClassNameW(source, source_class, 64) &&
         _wcsicmp(source_class, L"Chrome_WidgetWin_1") == 0;
     retryable = translation_retry::IsInitialChromiumPane(
@@ -88,15 +92,17 @@ std::optional<RECT> SelectionBounds(HWND source,
     return std::nullopt;
   }
   if (!selection_target.Resolve(automation.Get(), focused.Get(), source,
-          static_cast<DWORD>(focused_pid), ready)) return std::nullopt;
+          static_cast<DWORD>(focused_pid), ready, !previous_range)) return std::nullopt;
   if (!previous_range) previous_element = focused;
   ComPtr<IUIAutomationElement> target = selection_target.Get();
   CONTROLTYPEID control_type = 0;
-  const bool text_control = SUCCEEDED(target->get_CurrentControlType(&control_type)) &&
+  const bool text_control = ready() && SUCCEEDED(target->get_CurrentControlType(&control_type)) &&
       (control_type == UIA_EditControlTypeId || control_type == UIA_DocumentControlTypeId);
-  if (require_text_control && !text_control) return std::nullopt;
+  if (!ready() || (require_text_control && !text_control)) return std::nullopt;
   ComPtr<IUIAutomationTextPattern> pattern;
+  if (!ready()) return std::nullopt;
   const HRESULT pattern_result = target->GetCurrentPatternAs(UIA_TextPatternId, IID_PPV_ARGS(&pattern));
+  if (!ready()) return std::nullopt;
   if (FAILED(pattern_result) || !pattern) {
     retryable = text_control &&
         (pattern_result == UIA_E_NOTSUPPORTED || pattern_result == E_NOINTERFACE ||
@@ -104,7 +110,9 @@ std::optional<RECT> SelectionBounds(HWND source,
     return std::nullopt;
   }
   ComPtr<IUIAutomationTextRangeArray> ranges;
+  if (!ready()) return std::nullopt;
   const HRESULT selected = pattern->GetSelection(&ranges);
+  if (!ready()) return std::nullopt;
   if (FAILED(selected) || !ranges) {
     retryable = text_control &&
         (selected == UIA_E_NOTSUPPORTED || selected == E_NOINTERFACE || selected == E_FAIL ||
@@ -118,8 +126,8 @@ std::optional<RECT> SelectionBounds(HWND source,
     retryable = !previous_range && selection_target.NoteEmpty(ready);
     return std::nullopt;
   }
-  if (count != 1 ||
-      FAILED(ranges->GetElement(0, &range)) || !range ||
+  if (count != 1 || !ready() ||
+      FAILED(ranges->GetElement(0, &range)) || !range || !ready() ||
       FAILED(range->CompareEndpoints(TextPatternRangeEndpoint_Start, range.Get(),
                                     TextPatternRangeEndpoint_End, &difference)) ||
       difference == 0) return std::nullopt;
@@ -128,16 +136,18 @@ std::optional<RECT> SelectionBounds(HWND source,
   if (previous_element && previous_range) {
     BOOL same = FALSE;
     int start = 0, end = 0;
-    if (FAILED(automation->CompareElements(previous_element.Get(), focused.Get(), &same)) || !same ||
+    if (!ready() || FAILED(automation->CompareElements(previous_element.Get(), focused.Get(), &same)) || !same || !ready() ||
         FAILED(range->CompareEndpoints(TextPatternRangeEndpoint_Start, previous_range.Get(),
-                                       TextPatternRangeEndpoint_Start, &start)) || start != 0 ||
+                                       TextPatternRangeEndpoint_Start, &start)) || start != 0 || !ready() ||
         FAILED(range->CompareEndpoints(TextPatternRangeEndpoint_End, previous_range.Get(),
                                        TextPatternRangeEndpoint_End, &end)) || end != 0)
       return std::nullopt;
   }
   previous_element = focused;
-  if (FAILED(range->Clone(previous_range.ReleaseAndGetAddressOf()))) return std::nullopt;
+  if (!previous_range && (!ready() || FAILED(range->Clone(previous_range.ReleaseAndGetAddressOf())) || !ready()))
+    return std::nullopt;
   SAFEARRAY* rectangles = nullptr;
+  if (!ready()) return std::nullopt;
   const HRESULT hr = range->GetBoundingRectangles(&rectangles);
   std::optional<RECT> result;
   VARTYPE type = VT_EMPTY;
@@ -165,8 +175,8 @@ std::optional<RECT> SelectionBounds(HWND source,
   if (!result && (hr == E_FAIL || hr == UIA_E_NOTSUPPORTED)) retryable = text_control;
   ComPtr<IUIAutomationElement> final_focus;
   BOOL still_same = FALSE;
-  if (GetForegroundWindow() != source ||
-      FAILED(automation->GetFocusedElement(&final_focus)) || !final_focus ||
+  if (!ready() || GetForegroundWindow() != source ||
+      FAILED(automation->GetFocusedElement(&final_focus)) || !final_focus || !ready() ||
       FAILED(automation->CompareElements(focused.Get(), final_focus.Get(), &still_same)) || !still_same ||
       !selection_target.Resolve(automation.Get(), final_focus.Get(), source,
           static_cast<DWORD>(focused_pid), ready, false) ||
@@ -176,11 +186,76 @@ std::optional<RECT> SelectionBounds(HWND source,
     result.reset();
     retryable = false;
   }
+  if (!ready()) result.reset();
+  if (result && transaction_control) *transaction_control = bounded;
+  if (result && validated_range) *validated_range = range;
+  return result;
+}
+translation_selection::Selection CaptureBoundSelection(HWND source,
+    const ComPtr<IUIAutomationElement>& expected_element,
+    const ComPtr<IUIAutomationTextRange>& expected_range,
+    translation_selection::SelectionTarget& target,
+    translation_selection::ConsoleBinding& console,
+    const std::function<bool()>& stopped, ULONGLONG deadline) {
+  translation_selection::Selection result;
+  result.status = "focusChanged";
+  if (!expected_element || !expected_range || stopped()) return result;
+  // Keep the accepted metadata clone immutable. A normal probe may validate
+  // it, but cannot replace it with another selection on this generation.
+  auto element = expected_element;
+  auto range = expected_range;
+  bool retryable = false, require_text = false;
+  ComPtr<IUIAutomation2> bounded;
+  ComPtr<IUIAutomationTextRange> current_range;
+  const auto bounds = SelectionBounds(source, element, range, retryable, require_text,
+      target, console, stopped, deadline, &bounded, &current_range);
+  if (!bounds || stopped() || !bounded || !current_range) return result;
+  const auto ready = [&] {
+    ULONGLONG now = GetTickCount64();
+    if (stopped() || now >= deadline || GetForegroundWindow() != source) return false;
+    if (FAILED(bounded->put_ConnectionTimeout(static_cast<DWORD>(
+            std::min<ULONGLONG>(150, deadline - now)))) || stopped()) return false;
+    now = GetTickCount64();
+    return now < deadline && SUCCEEDED(bounded->put_TransactionTimeout(static_cast<DWORD>(
+        std::min<ULONGLONG>(200, deadline - now)))) && !stopped();
+  };
+  if (!ready()) return result;
+  BSTR text = nullptr;
+  // This current range was compared against the retained expected clone
+  // before return; use its own UIA client/timeout owner for the text request.
+  const HRESULT read = current_range->GetText(8001, &text);
+  if (SUCCEEDED(read) && text && !stopped()) {
+    const UINT count = SysStringLen(text);
+    if (count > 8000) result.status = "tooLong";
+    else if (count) {
+      result.text.assign(text, count);
+      result.status = "ok";
+      result.bounds = bounds;
+      translation_selection::RejectEmbeddedNull(result);
+    } else result.status = "noSelection";
+  }
+  SysFreeString(text);
+  if (result.status != "ok") { result.text.clear(); result.bounds.reset(); return result; }
+  // Re-read ONLY selection metadata after GetText. Any mutation/cancel/focus
+  // change discards the local text before it can reach a completion callback.
+  if (!ready() || !SelectionBounds(source, element, range, retryable, require_text,
+          target, console, stopped, deadline) || stopped()) {
+    result = translation_selection::Selection{};
+    result.status = "focusChanged";
+  }
   return result;
 }
 }
 
 struct TranslationSelectionAction::Worker {
+  struct ClickJob {
+    HWND source = nullptr;
+    unsigned generation = 0;
+    ULONGLONG deadline = 0;
+    std::function<bool()> canceled;
+    std::function<void(translation_selection::Selection)> finish;
+  };
+  std::optional<ClickJob> click;
   std::mutex mutex;
   std::condition_variable wake;
   bool stop = false, busy = false, pending = false, ready = false;
@@ -202,20 +277,57 @@ TranslationSelectionAction::TranslationSelectionAction(HWND dispatcher,
     ComPtr<IUIAutomationElement> previous_element;
     ComPtr<IUIAutomationTextRange> previous_range;
     unsigned previous_generation = 0;
+    DWORD previous_source_pid = 0, previous_source_thread = 0;
+    HANDLE previous_source_process = nullptr;
     translation_selection::SelectionTarget selection_target;
     auto console_binding = std::make_unique<translation_selection::ConsoleBinding>();
     ULONGLONG discovery_deadline = 0;
     bool require_text_control = false;
     std::unique_lock<std::mutex> lock(worker->mutex);
     while (true) {
-      worker->wake.wait(lock, [&] { return worker->stop || worker->pending; });
+      worker->wake.wait(lock, [&] { return worker->stop || worker->pending || worker->click.has_value(); });
       if (worker->stop) break;
+      if (worker->click) {
+        auto job = std::move(*worker->click);
+        worker->click.reset();
+        lock.unlock();
+        const auto stopped = [&] {
+          DWORD current_pid = 0;
+          const DWORD current_thread = GetWindowThreadProcessId(job.source, &current_pid);
+          if (GetTickCount64() >= job.deadline || job.canceled() ||
+              GetForegroundWindow() != job.source || current_pid != previous_source_pid ||
+              current_thread != previous_source_thread || !previous_source_process ||
+              WaitForSingleObject(previous_source_process, 0) != WAIT_TIMEOUT) return true;
+          std::lock_guard<std::mutex> guard(worker->mutex);
+          return worker->stop || worker->active_generation != job.generation;
+        };
+        translation_selection::Selection selected;
+        selected.status = "focusChanged";
+        if (SUCCEEDED(initialized) && !stopped() && previous_generation == job.generation &&
+            previous_element && previous_range && selection_target.Get()) {
+          selected = CaptureBoundSelection(job.source, previous_element, previous_range,
+              selection_target, *console_binding, stopped, job.deadline);
+        }
+        if (stopped()) {
+          selected = translation_selection::Selection{};
+          selected.status = "focusChanged";
+        }
+        // Completion owns only request data, never this action/channel/UI.
+        job.finish(std::move(selected));
+        lock.lock();
+        continue;
+      }
       const HWND source = worker->source;
       const unsigned generation = worker->generation;
       worker->pending = false;
       lock.unlock();
       if (generation != previous_generation) {
         previous_element.Reset(); previous_range.Reset();
+        if (previous_source_process) CloseHandle(previous_source_process);
+        previous_source_pid = 0;
+        previous_source_thread = GetWindowThreadProcessId(source, &previous_source_pid);
+        previous_source_process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE,
+                                             FALSE, previous_source_pid);
         require_text_control = false;
         selection_target.Reset();
         console_binding = std::make_unique<translation_selection::ConsoleBinding>();
@@ -240,6 +352,7 @@ TranslationSelectionAction::TranslationSelectionAction(HWND dispatcher,
     }
     lock.unlock();
     previous_element.Reset(); previous_range.Reset();
+    if (previous_source_process) CloseHandle(previous_source_process);
     selection_target.Reset();
     console_binding.reset();
     if (SUCCEEDED(initialized)) CoUninitialize();
@@ -303,7 +416,36 @@ LRESULT CALLBACK TranslationSelectionAction::MouseHook(int code, WPARAM wparam, 
   return CallNextHookEx(nullptr, code, wparam, lparam);
 }
 
+bool TranslationSelectionAction::CaptureClickedSelection(HWND source, ULONGLONG deadline,
+    std::function<bool()> canceled,
+    std::function<void(translation_selection::Selection)> finish,
+    std::function<void()> invalidate, unsigned* accepted_generation) {
+  if (!accepting_click_ || click_queued_ || !enabled_ || !worker_available_ ||
+      !source || source != source_ || GetForegroundWindow() != source ||
+      GetTickCount64() >= deadline || !canceled || !finish || !invalidate || canceled()) return false;
+  std::lock_guard<std::mutex> lock(worker_->mutex);
+  if (worker_->stop || worker_->click || worker_->active_generation != generation_) return false;
+  worker_->click = Worker::ClickJob{source, generation_, deadline, std::move(canceled), std::move(finish)};
+  invalidate_click_ = std::move(invalidate);
+  click_queued_ = true;
+  if (accepted_generation) *accepted_generation = generation_;
+  worker_->wake.notify_one();
+  return true;
+}
+
+void TranslationSelectionAction::ReleaseClickedSelection(unsigned accepted_generation) {
+  // Only the UI-thread consumer of this exact generation can detach its token.
+  // A late completion must not clear a newer click's cancellation link.
+  if (accepted_generation && accepted_generation == generation_ && click_queued_) {
+    invalidate_click_ = {};
+    click_queued_ = false;
+  }
+}
+
 void TranslationSelectionAction::Hide() {
+  // Keep the request cancellation link until invalidation, including the gap
+  // after worker completion but before the channel's next Poll/delivery.
+  if (invalidate_click_) { invalidate_click_(); invalidate_click_ = {}; }
   ++generation_;
   { std::lock_guard<std::mutex> lock(worker_->mutex); worker_->active_generation = generation_; }
   candidate_ = false;
@@ -430,10 +572,22 @@ LRESULT CALLBACK TranslationSelectionAction::WindowProc(HWND hwnd, UINT message,
   if (message == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
   if (message == WM_LBUTTONUP) {
     const HWND source = self->source_;
-    const bool valid = self->candidate_ && source && source == GetForegroundWindow() &&
-                       GetTickCount64() < self->expires_;
-    self->Hide();
-    if (valid && self->on_click_) self->on_click_(source);
+    const bool valid = self->candidate_ && self->shown_ && source &&
+                       source == GetForegroundWindow() && GetTickCount64() < self->expires_;
+    if (valid && self->on_click_) {
+      // Consume the visible affordance, but preserve THIS generation until its
+      // synchronous callback has queued a bound job and allocated requestId.
+      self->candidate_ = false;
+      self->shown_ = false;
+      ShowWindow(hwnd, SW_HIDE);
+      self->accepting_click_ = true;
+      self->click_queued_ = false;
+      self->on_click_(source);
+      self->accepting_click_ = false;
+      if (!self->click_queued_) self->Hide();
+    } else {
+      self->Hide();
+    }
     return 0;
   }
   if (message == WM_PAINT) {

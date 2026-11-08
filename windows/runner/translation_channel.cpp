@@ -102,6 +102,7 @@ struct TranslationChannel::Pending {
   int64_t request_id = 0;
   HWND foreground = nullptr;
   std::string origin = "manual";
+  unsigned entry_generation = 0;
   translation_selection::Selection selection;
 };
 TranslationChannel::TranslationChannel(flutter::BinaryMessenger* messenger, HWND window)
@@ -110,7 +111,7 @@ TranslationChannel::TranslationChannel(flutter::BinaryMessenger* messenger, HWND
           messenger, "baocode/translation", &flutter::StandardMethodCodec::GetInstance())) {
   selection_action_ = std::make_unique<TranslationSelectionAction>(window_,
       [this](HWND source) {
-        if (source && GetForegroundWindow() == source) Capture(nullptr, "selectionEntryClick");
+        if (source && GetForegroundWindow() == source) CaptureEntry(source);
       });
   channel_->SetMethodCallHandler([this](const auto& call, auto result) {
     if (call.method_name() == "configure") {
@@ -291,6 +292,51 @@ bool TranslationChannel::HandleHotkey(WPARAM id) {
   else Capture(nullptr, "hotkey");
   return true;
 }
+void TranslationChannel::CaptureEntry(HWND source) {
+  // Allocate/cancel requests synchronously at the physical click, not when a
+  // queued MTA job eventually completes. Late clicks can never become fresh.
+  BeginRequest(source);
+  if (result_) {
+    result_->Success(Encode({L"", "focusChanged", false, std::nullopt},
+                            pending_ ? pending_->request_id : request_id_));
+    result_.reset();
+  }
+  if (pending_) {
+    delivered_ = true;
+    channel_->InvokeMethod("pressed", std::make_unique<flutter::EncodableValue>(
+        Encode({L"", "busy", false, std::nullopt}, request_id_)));
+    return;
+  }
+  pending_ = std::make_shared<Pending>();
+  pending_->request_id = request_id_;
+  pending_->foreground = source;
+  pending_->origin = "selectionEntryClick";
+  delivered_ = false;
+  started_ = GetTickCount64();
+  if (!SetTimer(window_, kTimer, 25, nullptr)) {
+    pending_.reset();
+    channel_->InvokeMethod("pressed", std::make_unique<flutter::EncodableValue>(
+        Encode({L"", "unsupported", false, std::nullopt}, request_id_)));
+    return;
+  }
+  const auto pending = pending_;
+  const bool queued = selection_action_->CaptureClickedSelection(source, started_ + 1500,
+      [pending] { return pending->canceled.load(); },
+      [pending](translation_selection::Selection selected) {
+        std::lock_guard<std::mutex> lock(pending->mutex);
+        if (pending->canceled.load()) {
+          selected = translation_selection::Selection{};
+          selected.status = "focusChanged";
+        }
+        pending->selection = std::move(selected);
+        pending->done = true;
+      }, [pending] { pending->canceled.store(true); }, &pending->entry_generation);
+  if (!queued) {
+    std::lock_guard<std::mutex> lock(pending->mutex);
+    pending->selection.status = "focusChanged";
+    pending->done = true;
+  }
+}
 void TranslationChannel::Capture(
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result, const char* origin) {
   selection_action_->Hide();
@@ -396,6 +442,7 @@ void TranslationChannel::Poll() {
       selection.status = "focusChanged";
     }
     if (!changed) anchor_ = selection.bounds;
+    selection_action_->ReleaseClickedSelection(pending_->entry_generation);
     if (result_) {
       result_->Success(Encode(selection, pending_->request_id, pending_->origin.c_str()));
       result_.reset();

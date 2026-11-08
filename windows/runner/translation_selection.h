@@ -19,6 +19,7 @@ struct CaptureDiagnostics {
   HRESULT last_failure = S_OK;
   unsigned attempts = 0;
   unsigned final_attempts = 0;
+  DWORD console_host_integrity = 0, console_client_integrity = 0;
 };
 struct Selection {
   std::wstring text;
@@ -117,6 +118,21 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
       bool require_text_control = false;
       ConsoleBinding console_binding;
       SelectionTarget selection_target;
+      const auto source_process_matches = [&](DWORD provider, IUIAutomationElement* element) {
+        if (provider == process) return true;
+        ConsoleBindingDiagnostics host_diagnostics;
+        const bool verified = console_binding.Verify(foreground, process, provider,
+            automation.Get(), element, stopped, deadline, &host_diagnostics);
+        if (diagnostics) {
+          diagnostics->console_host_integrity = host_diagnostics.host_integrity;
+          diagnostics->console_client_integrity = host_diagnostics.client_integrity;
+          if (!verified) {
+            diagnostics->last_failure_stage = host_diagnostics.stage;
+            diagnostics->last_failure = E_ACCESSDENIED;
+          }
+        }
+        return verified;
+      };
       const auto ready = [&] {
         const ULONGLONG now = GetTickCount64();
         if (stopped() || now >= deadline || GetForegroundWindow() != foreground) return false;
@@ -170,9 +186,7 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
           BOOL has_focus = FALSE;
           // Fail closed if the provider cannot affirm this is not a password.
           if (!stopped() && SUCCEEDED(observe("ProcessId", focused->get_CurrentProcessId(&focused_process))) &&
-              (static_cast<DWORD>(focused_process) == process ||
-               console_binding.Verify(foreground, process, static_cast<DWORD>(focused_process),
-                   automation.Get(), focused.Get(), stopped, deadline)) &&
+              source_process_matches(static_cast<DWORD>(focused_process), focused.Get()) &&
               !stopped() && SUCCEEDED(observe("HasKeyboardFocus", focused->get_CurrentHasKeyboardFocus(&has_focus))) &&
               !stopped() && SUCCEEDED(observe("IsPassword", focused->get_CurrentIsPassword(&password)))) {
             if (password) {
@@ -333,9 +347,7 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
             int final_process = 0;
             BOOL final_password = TRUE, final_has_focus = FALSE;
             if (FAILED(observe("FinalFocus.ProcessId", final_focus->get_CurrentProcessId(&final_process))) ||
-                (static_cast<DWORD>(final_process) != process &&
-                 !console_binding.Verify(foreground, process, static_cast<DWORD>(final_process),
-                     automation.Get(), final_focus.Get(), stopped, deadline)) || stopped() ||
+                !source_process_matches(static_cast<DWORD>(final_process), final_focus.Get()) || stopped() ||
                 FAILED(observe("FinalFocus.IsPassword", final_focus->get_CurrentIsPassword(&final_password))) ||
                 final_password || stopped() ||
                 FAILED(observe("FinalFocus.HasKeyboardFocus", final_focus->get_CurrentHasKeyboardFocus(&final_has_focus))) ||
