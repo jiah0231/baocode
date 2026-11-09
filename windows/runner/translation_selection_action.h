@@ -33,6 +33,9 @@ class TranslationSelectionAction {
   void Tick();
   void Request();
   void Show(const RECT& bounds);
+  void PaintButton();
+  bool hovered_ = false, pressed_ = false;
+  int visual_size_ = 0;
   HWND dispatcher_ = nullptr;
   HWND button_ = nullptr;
   HWND source_ = nullptr;

@@ -77,7 +77,7 @@ void main() {
     });
 
     test('Compact cursor popup upgrades the published +49 build', () {
-      expect(currentAppVersion, v('1.9.1+50'));
+      expect(currentAppVersion, v('1.9.1+51'));
       expect(currentAppVersion > v('1.9.1+49'), isTrue);
     });
 

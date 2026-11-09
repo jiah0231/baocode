@@ -10,6 +10,7 @@
 #include <system_error>
 #include <cstdint>
 #include "translation_panel_geometry.h"
+#include "translation_action_visual.h"
 #include "translation_capture_retry.h"
 #include "translation_action_budget.h"
 #include "translation_console_binding.h"
@@ -42,6 +43,12 @@ TranslationSelectionAction* active = nullptr;
 HWND hook_dispatcher = nullptr;
 HWND hook_button = nullptr;
 using Microsoft::WRL::ComPtr;
+bool ButtonHit(HWND hwnd, POINT screen) {
+  RECT rect{};
+  if (!GetWindowRect(hwnd, &rect) || !PtInRect(&rect, screen) || rect.right <= rect.left) return false;
+  const double scale = static_cast<double>(translation_action_visual::kExtent) / (rect.right - rect.left);
+  return translation_action_visual::Hit((screen.x - rect.left) * scale, (screen.y - rect.top) * scale);
+}
 
 // Deliberately accepts only one noncollapsed selection. No GetText,
 // ValuePattern, document range, clipboard, or keyboard monitoring is used.
@@ -416,7 +423,7 @@ TranslationSelectionAction::~TranslationSelectionAction() {
 
 bool TranslationSelectionAction::Configure(bool enabled, bool dark) {
   dark_ = dark;
-  if (button_) InvalidateRect(button_, nullptr, TRUE);
+  if (button_) PaintButton();
   if (enabled_ == enabled) return enabled_;
   enabled_ = enabled;
   if (!enabled) {
@@ -447,10 +454,9 @@ LRESULT CALLBACK TranslationSelectionAction::MouseHook(int code, WPARAM wparam, 
        wparam == WM_RBUTTONDOWN || wparam == WM_MBUTTONDOWN ||
        wparam == WM_XBUTTONDOWN || wparam == WM_MOUSEWHEEL || wparam == WM_MOUSEHWHEEL)) {
     const auto* mouse = reinterpret_cast<const MSLLHOOKSTRUCT*>(lparam);
-    RECT rect{};
     if (!((wparam == WM_LBUTTONDOWN || wparam == WM_LBUTTONUP) &&
           hook_button && IsWindowVisible(hook_button) &&
-          GetWindowRect(hook_button, &rect) && PtInRect(&rect, mouse->pt))) {
+          ButtonHit(hook_button, mouse->pt))) {
       // Coordinates remain signed on monitors left/above the primary display.
       static_assert(sizeof(LPARAM) >= sizeof(uint64_t), "Selection action requires Win64");
       const uint64_t packed = static_cast<uint32_t>(mouse->pt.x) |
@@ -498,6 +504,7 @@ void TranslationSelectionAction::Hide() {
   discovery_attempts_ = 0;
   discovery_started_ = 0;
   shown_ = false;
+  hovered_ = pressed_ = false;
   source_ = nullptr;
   if (button_) ShowWindow(button_, SW_HIDE);
 }
@@ -602,20 +609,54 @@ void TranslationSelectionAction::Show(const RECT& bounds) {
     cls.lpszClassName = kClass;
     cls.hCursor = LoadCursor(nullptr, IDC_HAND);
     RegisterClassW(&cls);
-    button_ = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+    button_ = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED,
         kClass, L"翻译选中文字", WS_POPUP, 0, 0, 32, 32, nullptr, nullptr, cls.hInstance, this);
     hook_button = button_;
   }
   if (!button_) return;
   MONITORINFO monitor{sizeof(monitor)};
   if (!GetMonitorInfo(MonitorFromRect(&bounds, MONITOR_DEFAULTTONEAREST), &monitor)) return;
-  const int size = MulDiv(32, static_cast<int>(GetDpiForWindow(source_)), 96);
+  const UINT dpi = GetDpiForWindow(source_);
+  const double scale = (dpi ? dpi : 96) / 96.0;
   const RECT& work = monitor.rcWork;
-  const int x = std::clamp(static_cast<int>(bounds.right + 6), static_cast<int>(work.left),
-                         std::max(static_cast<int>(work.left), static_cast<int>(work.right) - size));
-  const int y = std::clamp(static_cast<int>(bounds.bottom + 5), static_cast<int>(work.top),
-                         std::max(static_cast<int>(work.top), static_cast<int>(work.bottom) - size));
-  SetWindowPos(button_, HWND_TOPMOST, x, y, size, size, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+  const auto rect = translation_action_visual::Place(
+      {bounds.left, bounds.top, bounds.right, bounds.bottom},
+      {work.left, work.top, work.right, work.bottom}, scale);
+  const int size = rect.right - rect.left;
+  const bool redraw = visual_size_ != size || !IsWindowVisible(button_);
+  visual_size_ = size;
+  SetWindowPos(button_, HWND_TOPMOST, rect.left, rect.top, size, size,
+               SWP_NOACTIVATE | SWP_SHOWWINDOW);
+  if (redraw) PaintButton();
+}
+
+void TranslationSelectionAction::PaintButton() {
+  if (!button_ || visual_size_ <= 0) return;
+  using namespace translation_action_visual;
+  const auto pixels = Render(visual_size_, dark_, pressed_ ? State::pressed :
+      hovered_ ? State::hover : State::normal);
+  BITMAPINFO info{};
+  info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  info.bmiHeader.biWidth = visual_size_;
+  info.bmiHeader.biHeight = -visual_size_;
+  info.bmiHeader.biPlanes = 1;
+  info.bmiHeader.biBitCount = 32;
+  info.bmiHeader.biCompression = BI_RGB;
+  const HDC screen = GetDC(nullptr), dc = CreateCompatibleDC(screen);
+  void* bits = nullptr;
+  const HBITMAP bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+  if (dc && bitmap && bits) {
+    std::copy(pixels.begin(), pixels.end(), static_cast<uint32_t*>(bits));
+    const HGDIOBJ old = SelectObject(dc, bitmap);
+    POINT origin{};
+    SIZE size{visual_size_, visual_size_};
+    BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+    UpdateLayeredWindow(button_, screen, nullptr, &size, dc, &origin, 0, &blend, ULW_ALPHA);
+    SelectObject(dc, old);
+  }
+  if (bitmap) DeleteObject(bitmap);
+  if (dc) DeleteDC(dc);
+  if (screen) ReleaseDC(nullptr, screen);
 }
 
 LRESULT CALLBACK TranslationSelectionAction::WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -626,7 +667,31 @@ LRESULT CALLBACK TranslationSelectionAction::WindowProc(HWND hwnd, UINT message,
   }
   if (!self) return DefWindowProc(hwnd, message, wparam, lparam);
   if (message == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
+  if (message == WM_NCHITTEST) {
+    const POINT point{static_cast<short>(LOWORD(lparam)), static_cast<short>(HIWORD(lparam))};
+    return ButtonHit(hwnd, point) ? HTCLIENT : HTTRANSPARENT;
+  }
+  if (message == WM_MOUSEMOVE) {
+    if (!self->hovered_) {
+      self->hovered_ = true;
+      TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, hwnd, 0};
+      TrackMouseEvent(&track);
+      self->PaintButton();
+    }
+    return 0;
+  }
+  if (message == WM_MOUSELEAVE || message == WM_CANCELMODE) {
+    self->hovered_ = self->pressed_ = false;
+    self->PaintButton();
+    return 0;
+  }
+  if (message == WM_LBUTTONDOWN) {
+    self->pressed_ = true;
+    self->PaintButton();
+    return 0;
+  }
   if (message == WM_LBUTTONUP) {
+    self->pressed_ = false;
     const HWND source = self->source_;
     const bool valid = self->candidate_ && self->shown_ && source &&
                        source == GetForegroundWindow() && GetTickCount64() < self->expires_;
@@ -652,14 +717,9 @@ LRESULT CALLBACK TranslationSelectionAction::WindowProc(HWND hwnd, UINT message,
   }
   if (message == WM_PAINT) {
     PAINTSTRUCT paint{};
-    const HDC dc = BeginPaint(hwnd, &paint);
-    RECT rect{}; GetClientRect(hwnd, &rect);
-    const HBRUSH brush = CreateSolidBrush(self->dark_ ? RGB(48, 49, 55) : RGB(250, 250, 252));
-    FillRect(dc, &rect, brush); DeleteObject(brush);
-    SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, self->dark_ ? RGB(242, 242, 248) : RGB(40, 40, 48));
-    DrawTextW(dc, L"译", 1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    BeginPaint(hwnd, &paint);
     EndPaint(hwnd, &paint);
+    self->PaintButton();
     return 0;
   }
   return DefWindowProc(hwnd, message, wparam, lparam);

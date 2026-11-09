@@ -261,8 +261,11 @@ void Screenshot(HWND w, const std::wstring& path, HWND syntheticSource = nullptr
     const POINT corners[] = {{r.left, r.top}, {r.right-1, r.top},
         {r.left, r.bottom-1}, {r.right-1, r.bottom-1}};
     for (const POINT point : corners) {
-      Check(GetAncestor(WindowFromPoint(point), GA_ROOT) == w,
-          "Refusing screenshot of obscured selection entry");
+      // Rounded layered-window corners are intentionally transparent. The
+      // only allowed background is this exact synthetic fixture, never another app.
+      const HWND visible = GetAncestor(WindowFromPoint(point), GA_ROOT);
+      Check(visible == w || visible == syntheticSource,
+          "Refusing screenshot of selection entry over an unverified background");
     }
   }
   const int width = r.right-r.left, height = r.bottom-r.top;
@@ -287,23 +290,23 @@ void Screenshot(HWND w, const std::wstring& path, HWND syntheticSource = nullptr
     // Observe real on-screen pixels only. Do not SendMessage(WM_PAINT), redraw
     // the control, choose a font for it, or manufacture glyphs in the bitmap.
     const auto* rgb = static_cast<const DWORD*>(pixels);
-    const DWORD background = darkEntry ? 0x00303137u : 0x00fafafcu;
-    const int backgroundLuma = darkEntry ? 51 : 251;
+    const DWORD backgrounds[] = {darkEntry ? 0x00282b32u : 0x00fdfdffu,
+        darkEntry ? 0x00393c43u : 0x00f0f0f2u,
+        darkEntry ? 0x0045484fu : 0x00e2e2e4u};
+    const DWORD glyph = darkEntry ? 0x00e1e7ffu : 0x00374368u;
     int ink = 0, backgroundPixels = 0;
     bool unchanged = previous.size() == static_cast<size_t>(width * height);
     for (int y = 0; y < height; ++y) {
       for (int x = 0; x < width; ++x) {
         const size_t index = static_cast<size_t>(y * width + x);
         const DWORD pixel = rgb[index] & 0x00ffffffu;
-        if (pixel == background) ++backgroundPixels;
+        if (pixel == backgrounds[0] || pixel == backgrounds[1] || pixel == backgrounds[2]) ++backgroundPixels;
         if (unchanged && previous[index] != pixel) unchanged = false;
-        if (x >= 2 && x < width-2 && y >= 2 && y < height-2) {
-          const int luma = static_cast<int>(((pixel >> 16) & 255u) + ((pixel >> 8) & 255u) + (pixel & 255u)) / 3;
-          if (darkEntry ? luma >= backgroundLuma + 80 : luma <= backgroundLuma - 80) ++ink;
-        }
+        if (x >= width / 4 && x < 3 * width / 4 &&
+            y >= height / 4 && y < 3 * height / 4 && pixel == glyph) ++ink;
       }
     }
-    const bool visibleInk = !syntheticSource || (ink >= 8 && backgroundPixels >= width * height / 2);
+    const bool visibleInk = !syntheticSource || (ink >= 8 && backgroundPixels >= width * height / 3);
     stableFrames = visibleInk ? (unchanged ? stableFrames + 1 : 1) : 0;
     if (syntheticSource) {
       std::printf("ENTRY_PAINT|theme=%s|attempt=%u|elapsedMs=%llu|inkPixels=%d|backgroundPixels=%d|stableFrames=%u\n",
