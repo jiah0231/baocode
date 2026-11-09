@@ -16,7 +16,7 @@ int main() {
   assert(reverse.x == 105);
   assert(CompactPlacement(reverse, line, work, 1).left == 115);
   const auto keyboard = FollowPoint({1800, 800}, line, 48);
-  assert(keyboard.x == 900 && keyboard.y == 120);
+  assert(keyboard.x == 899 && keyboard.y == 119);
   // Neighboring displays need not share DPI: proximity belongs to the
   // pointer display (200%), then placement uses the resolved display (200%).
   const Rect neighboring_selection{-300, 100, 0, 120};
@@ -25,7 +25,9 @@ int main() {
   r = CompactPlacement(mixed, neighboring_selection, {0,0,1920,1040}, 2);
   assert(r.left == 90 && r.right-r.left == 720);
   const auto remote_keyboard = FollowPoint({500,110}, neighboring_selection, 96);
-  assert(remote_keyboard.x == 0 && remote_keyboard.y == 120);
+  assert(remote_keyboard.x == -1 && remote_keyboard.y == 119);
+  r = CompactPlacement(remote_keyboard, neighboring_selection, {-1920,0,0,1040}, 1.25);
+  assert(r.right < 0 && r.right-r.left == 450);
   const auto multiline = FollowPoint({120, 120}, Rect{100, 180, 300, 200}, 48, Rect{100,100,900,200});
   assert(multiline.x == 120 && multiline.y == 120);
   r = CompactPlacement({1870, 1000}, Rect{1600,980,1880,1010}, work, 1);

@@ -24,7 +24,9 @@ inline Point FollowPoint(Point pointer, std::optional<Rect> selection, int near_
   if (!selection || (pointer.x >= proximity->left - near_distance &&
       pointer.x <= proximity->right + near_distance && pointer.y >= proximity->top - near_distance &&
       pointer.y <= proximity->bottom + near_distance)) return pointer;
-  return {selection->right, selection->bottom};
+  // RECT right/bottom are exclusive. Keep a keyboard endpoint inside its
+  // actual display when the selected line ends exactly at a monitor boundary.
+  return {selection->right - 1, selection->bottom - 1};
 }
 inline Rect Inset(Rect work, int margin) {
   const int x = std::min(margin, std::max(0, (work.right - work.left - 1) / 2));
