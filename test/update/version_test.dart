@@ -76,9 +76,9 @@ void main() {
       expect(v('1.2.0') == v('1.2.0+0'), isTrue);
     });
 
-    test('Compact cursor popup upgrades the published +49 build', () {
-      expect(currentAppVersion, v('1.9.1+51'));
-      expect(currentAppVersion > v('1.9.1+49'), isTrue);
+    test('Multiwindow upgrades the published +51 build', () {
+      expect(currentAppVersion, v('1.9.1+52'));
+      expect(currentAppVersion > v('1.9.1+51'), isTrue);
     });
 
     test("is pubspec.yaml's version", () {

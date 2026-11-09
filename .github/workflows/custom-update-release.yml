@@ -540,6 +540,14 @@ jobs:
           $fixture = Join-Path $PWD 'build/codex-launcher-fixture/Release'
           python tool/test_codex_owned_launcher.py --helper 'build/windows/x64/runner/Release/BaocodeCodexLauncher.exe' --reject-job-helper (Join-Path $fixture 'BaocodeCodexLauncherRejectJob.exe') --reject-membership-helper (Join-Path $fixture 'BaocodeCodexLauncherRejectMembership.exe')
           if ($LASTEXITCODE -ne 0) { throw 'Packaged owned launcher process isolation tests failed' }
+      - name: Verify taskbar task and real multiwindow lifecycle
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          ./tool/ci/windows_taskbar_smoke.ps1 -Executable build/windows/x64/runner/Release/baocode.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Taskbar task verification failed' }
+          ./tool/ci/windows_multiwindow_smoke.ps1 -Executable build/windows/x64/runner/Release/baocode.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Real multiwindow verification failed' }
       - name: Verify independent floating translation window
         timeout-minutes: 6
         shell: pwsh

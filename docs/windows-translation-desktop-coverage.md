@@ -199,3 +199,52 @@ settings, existing file permissions and default terminal are not changed. A
 positive result requires both source and host integrity to be 8192, exact bound
 source text and the remaining entry assertions. The existence of this gate is
 not evidence of a successful run.
+
+## Local installed-application diagnosis (2026-11-09)
+
+The production implementation has no browser-only allowlist for the directly
+focused TextPattern control. Browser-specific code handles a narrow Chromium
+PDF Group-to-Document relationship and cold accessibility-tree retries. Do not
+expand that exception to arbitrary desktop ancestors without app-specific proof.
+
+A separate optional `windows_translation_word_isolated.ps1` diagnostic now runs
+Word only on a new, hidden `CreateDesktop` desktop. It refuses an existing Word
+process, launches a fresh `/n /a /q` instance with a newly created synthetic RTF,
+and uses only that exact process's `_WwG` native object model to select the known
+first 28 characters. It never switches desktops, injects global input, reads the
+clipboard, installs software, logs into an account, or uses an existing document.
+A kill-on-close job owns the probe and its child processes, including timeout
+cleanup. The input desktop name must remain unchanged. The existing disposable
+Actions guards are unchanged; setting `GITHUB_ACTIONS` locally is not an isolation
+mechanism.
+
+Run from an MSVC developer shell, with Word closed, only when this optional test
+is wanted:
+
+```powershell
+./tool/ci/windows_translation_word_isolated.ps1 -AllowLocalIsolatedWord
+```
+
+Observed on Word **16.0.20527.20150** with the production headers from `4b982b32`:
+
+- Exact owned Word document creation and native `Selection.SetRange(0,28)` succeeded.
+- The exact synthetic `_WwG` UIA element reported Document (50030), non-password,
+  onscreen, keyboard focus, one noncollapsed TextPattern selection, and usable
+  selection rectangles. These are **provider-only metadata results**. No fallback
+  to document text, ValuePattern, clipboard or arbitrary ancestor was necessary.
+- Production `Capture` returned `focusChanged` before the first provider attempt
+  because a hidden desktop is not the input foreground source. Probe exit code 6
+  deliberately remains a failure to prove end-to-end capture, not a successful
+  support claim and not evidence that Word is unsupported.
+- The input desktop remained unchanged. Real mouse selection, entry appearance,
+  exact bound-click capture and final translated output in Word remain untested.
+  Use a disposable interactive Windows machine for those gates; do not weaken
+  foreground checks to make a hidden-desktop diagnostic pass.
+
+WPS Writer, QQ and Weixin remain **notTested** for capture and entry behavior.
+Do not touch existing instances or attempt singleton launches merely to improve
+a coverage report. Process-token inventory can identify a privilege mismatch,
+but it cannot prove which window failed or that an application is supported.
+Protected/elevated sources must remain rejected rather than solved by elevating
+BaoCode. Keep machine-specific inventories in private run evidence, not this
+public coverage document.

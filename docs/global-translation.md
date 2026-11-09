@@ -1,10 +1,10 @@
 # Selection translation
 
-BaoCode custom 1.9.1+49 opens a dedicated lightweight Windows translation window using the existing Flutter engine. It does not install a second app, browser, webview, model or background service.
+BaoCode custom 1.9.1+51 opens a dedicated lightweight Windows translation window using the existing Flutter engine. It does not install a second app, browser, webview, model or background service.
 
 ## Use
 
-- Windows: drag-select or double-click text in another application. When the control exposes a selection, a small **译** entry appears nearby. Clicking it opens the independent window and translates that same selection once; no second click is normally needed. The panel shows the configured provider and model. If local review checks or debug tracing prevent an automatic send, it stays at a preview with an explanation. Selecting text alone never sends it.
+- Windows: drag-select or double-click text in another application. When the control exposes a selection, a small rounded **translation icon** appears nearby. Clicking it opens the independent window and translates that same selection once; no second click is normally needed. The panel shows the configured provider and model. If local review checks or debug tracing prevent an automatic send, it stays at a preview with an explanation. Selecting text alone never sends it.
 - You can instead press **Ctrl+Alt+Y** while BaoCode is running. A floating translation window opens near the selected text (or the pointer when bounds are unavailable), without opening, restoring or focusing the BaoCode workbench. This shortcut previews the source; click **Translate** to send it.
 - The workbench can be minimized or hidden in the system tray. Keep **Notifications → System tray** enabled if you want closing the last workbench window to keep BaoCode running. Explicit Quit or a disabled tray ending the last window stops global shortcuts. This feature does not change your startup/tray preferences or install a background service.
 - Close the floating window with **Escape**, **Alt+F4**, **Ctrl+W**, **Ctrl+Shift+W**, its close button, or the same shortcut while it is focused. Clicking another app hides it without stealing focus back. Closing cancels the current translation and clears the source/result; reopening starts a fresh session.
@@ -13,9 +13,19 @@ BaoCode custom 1.9.1+49 opens a dedicated lightweight Windows translation window
 - Translation follows **Models → Quick Ask**, displays the resolved provider and model, and uses the existing text-only model transport. Configure that model before translating. Standard provider charges can apply.
 - Source detection plus Chinese, English, Japanese, Korean, French, German and Spanish are available. Edit/paste text, swap explicitly selected languages, retry, cancel or copy the result.
 
+The icon follows the light/dark theme, has hover and pressed feedback, and stays
+beside the selected line where space permits. The UI is system-wide, but its
+availability depends on the individual application's selection provider. An icon
+that does not appear, a rejected stale icon click, and a shortcut that cannot
+capture text are different outcomes. Try the configured shortcut if the icon is
+absent; its optional guarded native Edit/RichEdit copy fallback is not used by
+the passive icon. If no safe source is available, paste manually. The panel now
+distinguishes unsupported capture, changed focus/selection, timeout and password
+rejection rather than presenting every case as an empty selection.
+
 ## Privacy and limits
 
-Clicking the **译** selection entry authorizes one translation of its bound selection. Clicking **Translate** submits the text visible in the panel. Selection detection, shortcut previews, language changes and shortcut settings do not contact a model. Local conservative rules stop some likely sensitive text from being sent automatically and show a confirmation preview with the provider; these rules are not a complete sensitive-data classifier and do not call a model. No tools, project files or conversation history are attached, and BaoCode does not keep translation history. The selected provider's data policy still applies.
+Clicking the selection translation icon authorizes one translation of its bound selection. Clicking **Translate** submits the text visible in the panel. Selection detection, shortcut previews, language changes and shortcut settings do not contact a model. Local conservative rules stop some likely sensitive text from being sent automatically and show a confirmation preview with the provider; these rules are not a complete sensitive-data classifier and do not call a model. No tools, project files or conversation history are attached, and BaoCode does not keep translation history. The selected provider's data policy still applies.
 
 The existing Usage page can still record token counts. If you explicitly enabled Usage debug tracing (off by default), model request and response bodies may be stored in its local diagnostic logs. Automatic entry translation stays at a preview while tracing is enabled; manual translation retains the warning. Turn tracing off in Usage settings if you do not want such logs. BaoCode does not silently change this preference.
 
