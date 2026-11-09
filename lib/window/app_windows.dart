@@ -431,9 +431,21 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
     LaunchRequest request = LaunchRequest.none,
   }) async {
     if (!_started) return;
+    if (request == LaunchRequest.newWindow && !_separate) {
+      // No editors have mounted yet: an explicit cold launch does not
+      // restore the old main-window project before opening the requested one.
+      _separate = true;
+      workspace.takeSingleWindowIde();
+      workspace.ideWindows = _routeIde;
+      _updateSetting?.call(
+        WindowSettings.ideWindowsKey,
+        IdeWindows.separate.name,
+      );
+    }
     if (request == LaunchRequest.agent ||
+        request == LaunchRequest.newWindow ||
         (_separate && request == LaunchRequest.ide)) {
-      _wasInIde = request == LaunchRequest.ide;
+      _wasInIde = request != LaunchRequest.agent;
       _launch = (windows: const [_KeptWindow(chat: true)], chatShown: false);
       chat._shown = false;
       _syncWorkspace();
@@ -613,14 +625,40 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
     return chat;
   }
 
-  /// New Window: an empty one. With the IDE in the main window, its empty
-  /// window there (the folder it had stays among the recent).
-  Future<AppWindow?> newWindow() {
-    if (!multi) {
+  /// An explicit New Window enables separate windows. Moving an existing
+  /// main-window IDE uses the same unsaved-file protection as the setting.
+  Future<AppWindow?> newWindow() async {
+    if (!_started) {
       workspace.closeIdeFolder();
       return _showInMain(null);
     }
+    if (!await _enableSeparateWindows()) return null;
     return showFolder(null, newWindow: true);
+  }
+
+  Future<bool> _enableSeparateWindows() async {
+    // Share a transition already awaiting confirmation, including one
+    // started from Settings. A canceled prompt must not immediately repeat.
+    if (_switching case final switching?) {
+      await switching;
+      return multi;
+    }
+    if (multi) return true;
+    final switching = _switching = () async {
+      await _toSeparate();
+      if (multi) {
+        _updateSetting?.call(
+          WindowSettings.ideWindowsKey,
+          IdeWindows.separate.name,
+        );
+      }
+    }();
+    try {
+      await switching;
+      return multi;
+    } finally {
+      _switching = null;
+    }
   }
 
   /// How long a new window waits for the files it opens before it shows
@@ -760,6 +798,7 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
 
   /// What the `code` command asks (see [CodeArgs]).
   Future<void> handleCode(CodeArgs args) async {
+    if (args.newWindow && _started && !await _enableSeparateWindows()) return;
     if (args.opensNothing) {
       // The app started for it (an older script's request) shows its own
       // window, not none.
@@ -1281,26 +1320,24 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
   /// The setting asked for last that was declined (unsaved files kept the
   /// IDE where it was): not asked again until it changes.
   bool? _declined;
-  bool _switching = false;
+  Future<void>? _switching;
 
   /// settings.json changed: what shows at the next launch, and the IDE
   /// moved to windows of its own or into the main window, as
   /// `window.ideWindows` now says.
   void settingsChanged() {
     syncMainShownAtLaunch();
-    if (!_started || _switching) return;
+    if (!_started || _switching != null) return;
     final separate = _settings().ideWindows == IdeWindows.separate;
     if (separate == _separate) {
       _declined = null;
       return;
     }
     if (separate == _declined) return;
-    _switching = true;
-    unawaited(
-      (separate ? _toSeparate() : _toMainWindow()).whenComplete(
-        () => _switching = false,
-      ),
+    _switching = (separate ? _toSeparate() : _toMainWindow()).whenComplete(
+      () => _switching = null,
     );
+    unawaited(_switching);
   }
 
   /// The main window's IDE moves to a window of its own (if it showed), its

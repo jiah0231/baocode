@@ -146,6 +146,24 @@ void main() {
       LaunchRequest.ide,
     );
     expect(LaunchRequest.of(const [r'C:\w']), LaunchRequest.ide);
+    expect(
+      LaunchRequest.of(const [
+        CodeArgs.windowsRequestFlag,
+        '.',
+        '--new-window',
+      ]),
+      LaunchRequest.newWindow,
+    );
+    expect(
+      LaunchRequest.of(const [
+        CodeArgs.windowsRequestFlag,
+        '.',
+        '--',
+        '--new-window',
+      ]),
+      LaunchRequest.ide,
+    );
+
     // A site's import asks in the main window, as at any launch.
     expect(
       LaunchRequest.of(const [

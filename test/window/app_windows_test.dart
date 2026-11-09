@@ -1339,15 +1339,115 @@ void main() {
       expect(harness.chatDelegate.agents, [thread]);
     });
 
-    testWidgets('New Window (⇧⌘N): the IDE\'s empty window, in the main one', (
+    testWidgets(
+      'New Window enables native windows and keeps the current project',
+      (tester) async {
+        final harness = _Harness(tester)..settings = inMain;
+        await harness.start();
+        harness.workspace.openIdeFolder('/w/a');
+        harness.workspace.layout = WorkspaceLayout.ide;
+        await harness.windows.newWindow();
+        expect(harness.windows.multi, isTrue);
+        expect(harness.workspace.ideFolder, isNull);
+        expect(harness.folders, ['/w/a', null]);
+        expect(harness.chatDelegate.folders, isEmpty);
+        expect(harness.host.created, hasLength(2));
+        expect(harness.written, [
+          (WindowSettings.ideWindowsKey, IdeWindows.separate.name),
+        ]);
+        await harness.windows.newWindow();
+        expect(harness.folders, ['/w/a', null, null]);
+      },
+    );
+
+    testWidgets('taskbar CLI enables native windows under default settings', (
+      tester,
+    ) async {
+      final harness = _Harness(tester)..settings = inMain;
+      await harness.start();
+      await harness.windows.openRequested([
+        CodeArgs.requestMarker,
+        '.',
+        '--new-window',
+      ]);
+      expect(harness.windows.multi, isTrue);
+      expect(harness.folders, [null]);
+      expect(harness.host.created, hasLength(1));
+    });
+
+    testWidgets('explicit cold New Window opens no restored project', (
       tester,
     ) async {
       final harness = _Harness(tester)..settings = inMain;
       await harness.start();
       harness.workspace.openIdeFolder('/w/a');
+      harness.workspace.layout = WorkspaceLayout.ide;
+      await harness.windows.prepareLaunch(request: LaunchRequest.newWindow);
+      await harness.windows.restore();
+      await harness.windows.handleCode(
+        CodeArgs.parse(['--new-window'], cwd: '.'),
+      );
+      expect(harness.windows.multi, isTrue);
+      expect(harness.windows.chat.shown, isFalse);
+      expect(harness.folders, [null]);
+      expect(harness.host.created, hasLength(1));
+    });
+
+    testWidgets(
+      'canceling unsaved changes keeps main IDE and creates no window',
+      (tester) async {
+        final harness = _Harness(tester)..settings = inMain;
+        await harness.start();
+        harness.workspace.openIdeFolder('/w/a');
+        harness.workspace.layout = WorkspaceLayout.ide;
+        await harness.showDialogs(tester);
+        harness.chatDelegate.unsaved = [_doc('/w/a/x.dart')];
+        final opening = harness.windows.newWindow();
+        await tester.pump();
+        await tester.tap(find.text('Cancel'));
+        await tester.pump();
+        expect(await opening, isNull);
+        expect(harness.windows.multi, isFalse);
+        expect(harness.workspace.ideFolder, '/w/a');
+        expect(harness.host.created, isEmpty);
+        expect(
+          harness.written,
+          isNot(
+            contains((WindowSettings.ideWindowsKey, IdeWindows.separate.name)),
+          ),
+        );
+      },
+    );
+
+    testWidgets('New Window shares a pending Settings confirmation', (
+      tester,
+    ) async {
+      final harness = _Harness(tester)..settings = inMain;
+      await harness.start();
+      harness.workspace.openIdeFolder('/w/a');
+      await harness.showDialogs(tester);
+      harness.chatDelegate.unsaved = [_doc('/w/a/x.dart')];
+      harness.settings = const WindowSettings(ideWindows: IdeWindows.separate);
+      harness.windows.settingsChanged();
+      await tester.pump();
+      final opening = harness.windows.newWindow();
+      await tester.pump();
+      expect(find.text('Cancel'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pump();
+      expect(await opening, isNull);
+      expect(harness.windows.multi, isFalse);
+      expect(harness.host.created, isEmpty);
+    });
+
+    testWidgets('unsupported hosts keep the main-window fallback', (
+      tester,
+    ) async {
+      final harness = _Harness(tester, available: false)..settings = inMain;
+      await harness.start();
+      harness.workspace.openIdeFolder('/w/a');
       await harness.windows.newWindow();
       expect(harness.workspace.ideFolder, isNull);
-      expect(harness.workspace.recentFolders.first, '/w/a');
       expect(harness.chatDelegate.folders, [null]);
       expect(harness.host.created, isEmpty);
     });

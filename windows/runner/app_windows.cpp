@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "attention.h"
+#include "taskbar_tasks.h"
 #include "utils.h"
 
 // The engine's own header for these (flutter_windows_internal.h) is not
@@ -638,6 +639,7 @@ void AppWindows::HandleMethodCall(
         }
       }
     }
+    taskbar_tasks::Update(NewWindowLabel());
     result->Success();
     return;
   }

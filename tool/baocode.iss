@@ -127,9 +127,9 @@ Type: files; Name: "{app}\baocode-browser-host.exe.*.old"
 Type: files; Name: "{app}\baocode-browser-host.exe.*.old"
 
 [Icons]
-Name: "{group}\BaoCode"; Filename: "{app}\baocode.exe"
+Name: "{group}\BaoCode"; Filename: "{app}\baocode.exe"; AppUserModelID: "BaoCode.Desktop"
 Name: "{group}\{cm:UninstallProgram,BaoCode}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\BaoCode"; Filename: "{app}\baocode.exe"; Tasks: desktopicon
+Name: "{autodesktop}\BaoCode"; Filename: "{app}\baocode.exe"; AppUserModelID: "BaoCode.Desktop"; Tasks: desktopicon
 
 [Registry]
 ; Only when asked for. Which hive follows the install mode: a per-machine

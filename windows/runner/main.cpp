@@ -12,6 +12,7 @@
 #include "flutter_window.h"
 #include "hang_watchdog.h"
 #include "open_requests.h"
+#include "taskbar_tasks.h"
 #include "utils.h"
 
 namespace {
@@ -112,6 +113,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // plugins, and for the folder picker and clipboard imaging; through OLE,
   // which the files dragged onto the window need as well (RegisterDragDrop).
   ::OleInitialize(nullptr);
+  taskbar_tasks::Initialize();
 
   flutter::DartProject project(L"data");
   // Drawn by Skia, as on macOS (FLTEnableImpeller), not Impeller, Flutter's

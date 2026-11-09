@@ -317,12 +317,20 @@ enum LaunchRequest {
 
   /// Paths to open in the IDE (Open with Fast Ide, the `code` command,
   /// Explorer's Open with): their windows.
-  ide;
+  ide,
+
+  /// An explicit new native window, including the Windows taskbar task.
+  newWindow;
 
   static LaunchRequest of(List<String> arguments) {
     final first = arguments.firstOrNull;
     if (first == CodeArgs.windowsAgentFlag) return agent;
-    if (first == CodeArgs.windowsRequestFlag) return ide;
+    if (first == CodeArgs.windowsRequestFlag) {
+      return arguments.length >= 2 &&
+              CodeArgs.parse(arguments.sublist(2), cwd: arguments[1]).newWindow
+          ? newWindow
+          : ide;
+    }
     // A file link opens in the IDE alone; any other link asks in the main
     // window, as the app shows at any launch.
     if (first == CodeArgs.windowsLinkFlag) {

@@ -26,6 +26,7 @@ add_executable(${BINARY_NAME} WIN32
   "translation_selection_action.cpp"
   "stash_channel.cpp"
   "stash_ocr.cpp"
+  "taskbar_tasks.cpp"
   "utils.cpp"
   "view_window.cpp"
   "win32_window.cpp"
@@ -63,7 +64,7 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib" "ole32.lib"
   "shell32.lib" "uuid.lib" "windowscodecs.lib" "winmm.lib" "dbghelp.lib"
-  "runtimeobject.lib" "wer.lib" "uiautomationcore.lib" "oleaut32.lib" "advapi32.lib")
+  "runtimeobject.lib" "propsys.lib" "wer.lib" "uiautomationcore.lib" "oleaut32.lib" "advapi32.lib")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # The WebView2 SDK, for the channel build's login window (login_window.cpp):
