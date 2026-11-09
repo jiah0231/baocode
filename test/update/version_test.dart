@@ -76,9 +76,9 @@ void main() {
       expect(v('1.2.0') == v('1.2.0+0'), isTrue);
     });
 
-    test('Floating selection translation upgrades the published +48 build', () {
-      expect(currentAppVersion, v('1.9.1+49'));
-      expect(currentAppVersion > v('1.9.1+48'), isTrue);
+    test('Compact cursor popup upgrades the published +49 build', () {
+      expect(currentAppVersion, v('1.9.1+50'));
+      expect(currentAppVersion > v('1.9.1+49'), isTrue);
     });
 
     test("is pubspec.yaml's version", () {

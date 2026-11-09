@@ -34,6 +34,7 @@ class TranslationChannel {
   DWORD foreground_process_ = 0;
   POINT pointer_ = {};
   std::optional<RECT> anchor_;
+  std::optional<RECT> selected_area_;
   int64_t request_id_ = 0;
   ULONGLONG request_started_ = 0;
   int64_t panel_request_id_ = 0;

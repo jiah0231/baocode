@@ -168,8 +168,8 @@ std::optional<int64_t> TranslationChannel::CreatePanel(int64_t engine_id) {
   auto panel = std::make_unique<TranslationPanelWindow>(engine, messenger_,
       [this](bool restore) { if (panel_shown_) HidePanel(restore); });
   if (!panel->Create(L"BaoCode Translate", Win32Window::Point(10, 10),
-                      Win32Window::Size(480, 560))) return std::nullopt;
-  panel->SetMinimumSize(Win32Window::Size(280, 240));
+                      Win32Window::Size(translation_panel::kCompactWidth, translation_panel::kCompactHeight))) return std::nullopt;
+  panel->SetMinimumSize(Win32Window::Size(280, 220));
   const HWND handle = panel->GetHandle();
   SetWindowLongPtrW(handle, GWL_STYLE,
       GetWindowLongPtrW(handle, GWL_STYLE) & ~(WS_MINIMIZEBOX | WS_MAXIMIZEBOX));
@@ -190,6 +190,7 @@ void TranslationChannel::BeginRequest(HWND foreground) {
   if (foreground) GetWindowThreadProcessId(foreground, &foreground_process_);
   GetCursorPos(&pointer_);
   anchor_.reset();
+  selected_area_.reset();
 }
 bool TranslationChannel::ShowPanel(std::optional<int64_t> request_id) {
   if (!panel_) return false;
@@ -213,28 +214,47 @@ bool TranslationChannel::ShowPanel(std::optional<int64_t> request_id) {
   DWORD process = 0;
   GetWindowThreadProcessId(foreground_, &process);
   if (process != foreground_process_) return false;
-  const RECT anchor = anchor_.value_or(RECT{pointer_.x, pointer_.y, pointer_.x, pointer_.y});
-  const HMONITOR monitor = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
+  const auto rect = [](const RECT& r) {
+    return translation_panel::Rect{r.left, r.top, r.right, r.bottom};
+  };
+  const auto selected = anchor_ ? std::optional(rect(*anchor_)) : std::nullopt;
+  const auto area = selected_area_ ? std::optional(rect(*selected_area_)) : selected;
+  // Resolve in physical coordinates first, then obtain that monitor's DPI.
+  // Re-evaluate the proximity threshold in its DPI, not the main window's.
+  auto point = translation_panel::FollowPoint({pointer_.x, pointer_.y}, selected, 48, area);
+  HMONITOR monitor = MonitorFromPoint(POINT{point.x, point.y}, MONITOR_DEFAULTTONEAREST);
+  double scale = FlutterDesktopGetDpiForMonitor(monitor) / 96.0;
+  point = translation_panel::FollowPoint({pointer_.x, pointer_.y}, selected,
+      static_cast<int>(48 * scale), area);
+  monitor = MonitorFromPoint(POINT{point.x, point.y}, MONITOR_DEFAULTTONEAREST);
+  scale = FlutterDesktopGetDpiForMonitor(monitor) / 96.0;
   MONITORINFO info = {};
   info.cbSize = sizeof(info);
   if (!GetMonitorInfoW(monitor, &info)) return false;
-  const double scale = FlutterDesktopGetDpiForMonitor(monitor) / 96.0;
   const auto& work = info.rcWork;
-  const auto placed = translation_panel::Place(
-      {anchor.left, anchor.top, anchor.right, anchor.bottom},
-      {work.left, work.top, work.right, work.bottom},
-      static_cast<int>(480 * scale), static_cast<int>(560 * scale),
-      static_cast<int>(10 * scale));
+  const auto placed = translation_panel::CompactPlacement(point,
+      area,
+      rect(work), scale);
   // A small display must remain usable even if its physical work area is
   // smaller than the normal minimum logical panel size.
   panel_->SetMinimumSize(Win32Window::Size(1, 1));
-  SetWindowPos(panel, HWND_TOP, placed.left, placed.top,
-      placed.right - placed.left, placed.bottom - placed.top, SWP_NOACTIVATE);
+  if (!SetWindowPos(panel, HWND_TOP, placed.left, placed.top,
+      placed.right - placed.left, placed.bottom - placed.top, SWP_NOACTIVATE)) return false;
+  // Crossing onto a different-DPI monitor synchronously delivers WM_DPICHANGED.
+  // The shared base honors Windows' suggested rectangle for ordinary windows;
+  // reapply our cursor placement after that transition, at the now-correct DPI.
+  RECT actual{};
+  if (!GetWindowRect(panel, &actual)) return false;
+  if (actual.left != placed.left || actual.top != placed.top ||
+      actual.right != placed.right || actual.bottom != placed.bottom) {
+    if (!SetWindowPos(panel, HWND_TOP, placed.left, placed.top,
+        placed.right - placed.left, placed.bottom - placed.top, SWP_NOACTIVATE)) return false;
+  }
   panel_->SetMinimumSize(Win32Window::Size(
       static_cast<unsigned int>(std::clamp(
           static_cast<int>((work.right - work.left) / scale) - 24, 1, 280)),
       static_cast<unsigned int>(std::clamp(
-          static_cast<int>((work.bottom - work.top) / scale) - 24, 1, 240))));
+          static_cast<int>((work.bottom - work.top) / scale) - 24, 1, 220))));
   if (GetForegroundWindow() != front) return false;
   panel_request_id_ = request_id_;
   panel_shown_ = true;
@@ -441,7 +461,10 @@ void TranslationChannel::Poll() {
       selection.bounds.reset();
       selection.status = "focusChanged";
     }
-    if (!changed) anchor_ = selection.bounds;
+    if (!changed) {
+      anchor_ = selection.status == "ok" ? selection.bounds : std::nullopt;
+      selected_area_ = selection.status == "ok" ? selection.area : std::nullopt;
+    }
     selection_action_->ReleaseClickedSelection(pending_->entry_generation);
     if (result_) {
       result_->Success(Encode(selection, pending_->request_id, pending_->origin.c_str()));

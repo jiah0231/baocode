@@ -779,11 +779,88 @@ void main() {
       await tester.pumpAndSettle();
     },
   );
+  testWidgets(
+    'compact result keeps reader position while streaming and actions stay visible',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 300);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final providers = configured();
+      addTearDown(providers.dispose);
+      await providers.setQuickAskModel('@test/translate');
+      final pending = Completer<String>();
+      late void Function(String) emit;
+      final service = TranslationService(
+        providers: providers,
+        request:
+            (
+              s,
+              p, {
+              required model,
+              required exact,
+              required cancel,
+              required onText,
+            }) {
+              emit = onText;
+              return pending.future;
+            },
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: TranslationDialog(
+            embedded: true,
+            service: service,
+            selectedText: List.filled(
+              50,
+              'A long source selection.',
+            ).join('\n'),
+            onModelSettings: () {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final source = find.byKey(const ValueKey('translation-source'));
+      expect(tester.getSize(source).height, lessThan(60));
+      await tester.tap(find.widgetWithText(IdeButton, 'Translate'));
+      await tester.pump();
+      final text = List.generate(80, (i) => 'Translated line $i.').join('\n');
+      emit(text);
+      await tester.pump();
+      final scroll = tester
+          .widget<SingleChildScrollView>(
+            find.byKey(const ValueKey('translation-result-scroll')),
+          )
+          .controller!;
+      scroll.jumpTo(180);
+      await tester.pump();
+      final offset = scroll.offset;
+      emit('$text\nAnother streamed line.');
+      await tester.pump();
+      expect(scroll.offset, offset);
+      for (final label in ['Cancel', 'Copy translation', 'Model settings']) {
+        expect(
+          find.widgetWithText(IdeButton, label).hitTestable(),
+          findsOneWidget,
+        );
+      }
+      await tester.tap(find.widgetWithText(IdeButton, 'Cancel'));
+      pending.complete(text);
+      await tester.pumpAndSettle();
+      expect(find.text(text), findsNothing);
+      expect(
+        find.widgetWithText(IdeButton, 'Translate').hitTestable(),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   for (final theme in ['Bao Dark', 'Bao Light']) {
     testWidgets('renders $theme embedded preview with default footer visible', (
       tester,
     ) async {
-      tester.view.physicalSize = const Size(480, 560);
+      tester.view.physicalSize = const Size(360, 300);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
@@ -846,7 +923,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       // No ensureVisible or scrolling: these are immediately available at
-      // the native window's default 480×560 size, before and after translating.
+      // the native window's default 360×300 size, before and after translating.
       for (final label in ['翻译', '复制译文', '模型设置']) {
         expect(
           find.widgetWithText(IdeButton, label).hitTestable(),

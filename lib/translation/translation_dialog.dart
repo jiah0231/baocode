@@ -114,6 +114,7 @@ class _TranslationDialogState extends State<TranslationDialog> {
   bool get _reviewNeeded =>
       _capture?.requiresConfirmation == true ||
       translationNeedsReview(_input.text);
+  final _resultScroll = ScrollController();
   final _sourceFocus = FocusNode(debugLabel: 'Translation source');
   String _source = 'auto';
   String _target = 'zh';
@@ -180,6 +181,7 @@ class _TranslationDialogState extends State<TranslationDialog> {
   @override
   void dispose() {
     _stop();
+    _resultScroll.dispose();
     _input.dispose();
     _sourceFocus.dispose();
     super.dispose();
@@ -306,6 +308,258 @@ class _TranslationDialogState extends State<TranslationDialog> {
     },
   );
 
+  /// The native popup has a fixed chrome and independent bounded text regions.
+  /// Streaming only rebuilds the result; it never changes the reader's offset.
+  Widget _compactContent({
+    required String? model,
+    required bool tooLong,
+    required TranslationFailure? error,
+    required bool restoreFailed,
+  }) {
+    final l = context.l10n;
+    final largeText = MediaQuery.textScalerOf(context).scale(13) > 20;
+    final notices = <String>[
+      if (model == null) l.translationError(TranslationFailure.noModel),
+      if (restoreFailed)
+        l.translationClipboardRestoreFailed
+      else if (!_edited &&
+          _captureStatus != null &&
+          _captureStatus != 'ok' &&
+          !tooLong)
+        l.translationNoSelection,
+      if (_capture?.requestsImmediateTranslation == true && _reviewNeeded)
+        l.translationReviewRequired(model ?? l.translationModel),
+      if (error != null) l.translationError(error),
+      if (_copyFailed) l.translationCopyFailed,
+      if (UsageLedger.current.enabled && UsageLedger.current.trace)
+        _capture?.requestsImmediateTranslation == true && !_entrySubmitted
+            ? '${l.translationAutoTracePaused} ${l.translationTraceWarning}'
+            : l.translationTraceWarning,
+    ];
+    return Padding(
+      padding: const EdgeInsets.all(8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onPanStart: (_) => unawaited(
+                    WindowControls.dragWindow(viewId: View.of(context).viewId),
+                  ),
+                  child: Text(
+                    l.translationTitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+              Tooltip(
+                message:
+                    '${model ?? l.translationModel}\n${l.translationPrivacy}\n${l.translationModelHint}',
+                triggerMode: TooltipTriggerMode.tap,
+                child: Semantics(
+                  label:
+                      '${model ?? l.translationModel}. ${l.translationPrivacy} ${l.translationModelHint}',
+                  button: true,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    child: SizedBox(
+                      width: largeText ? 72 : 140,
+                      child: Text(
+                        model ?? l.translationModel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: themeColors['descriptionForeground'],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              IdeButton(
+                label: l.translationClose,
+                secondary: true,
+                onPressed: _close,
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _language(true),
+                const SizedBox(width: 6),
+                IdeButton(
+                  label: l.translationSwap,
+                  secondary: true,
+                  onPressed: _source == 'auto'
+                      ? null
+                      : () => _change(() {
+                          final previous = _source;
+                          _source = _target;
+                          _target = previous;
+                          if (_answer.isNotEmpty) {
+                            _input.text = _answer;
+                            _edited = true;
+                          }
+                        }),
+                ),
+                const SizedBox(width: 6),
+                _language(false),
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
+          if (!largeText)
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    l.translationSource,
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                ),
+                Text(
+                  '${_input.text.length} / $translationSourceLimit',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: themeColors['descriptionForeground'],
+                  ),
+                ),
+              ],
+            ),
+          IdeInputBox(
+            key: const ValueKey('translation-source'),
+            controller: _input,
+            focusNode: _sourceFocus,
+            semanticsLabel: l.translationSource,
+            placeholder: l.translationPlaceholder,
+            minLines: largeText ? 1 : 2,
+            maxLines: largeText ? 1 : 2,
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            onChanged: (_) => _change(() => _edited = true),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _busy ? l.translationWorking : l.translationResult,
+            style: const TextStyle(fontSize: 11),
+          ),
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(
+                color: themeColors['input.background'],
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Scrollbar(
+                controller: _resultScroll,
+                child: SingleChildScrollView(
+                  key: const ValueKey('translation-result-scroll'),
+                  controller: _resultScroll,
+                  padding: const EdgeInsets.all(6),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (final notice in notices)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(
+                            notice,
+                            style: TextStyle(
+                              color: themeColors['errorForeground'],
+                            ),
+                          ),
+                        ),
+                      if (_entrySubmitted)
+                        Text(
+                          l.translationEntrySubmitted,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: themeColors['descriptionForeground'],
+                          ),
+                        ),
+                      SelectableText(
+                        _answer.isEmpty ? l.translationWaiting : _answer,
+                        key: const ValueKey('translation-result'),
+                        style: TextStyle(
+                          color:
+                              themeColors[_answer.isEmpty
+                                  ? 'descriptionForeground'
+                                  : 'foreground'],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Builder(
+            builder: (context) {
+              final actions = <Widget>[
+                IdeButton(
+                  label: _busy
+                      ? l.translationCancel
+                      : _error != null
+                      ? l.translationRetry
+                      : l.translationTitle,
+                  onPressed: _busy
+                      ? () => _change(() {})
+                      : tooLong || model == null
+                      ? null
+                      : _translate,
+                ),
+                const SizedBox(width: 6),
+                IdeButton(
+                  label: _copied ? l.translationCopied : l.translationCopy,
+                  secondary: true,
+                  onPressed: _busy || _answer.isEmpty ? null : _copy,
+                ),
+                if (widget.onModelSettings != null) ...[
+                  const SizedBox(width: 6),
+                  IdeButton(
+                    label: l.translationModel,
+                    secondary: true,
+                    onPressed: () {
+                      _close();
+                      widget.onModelSettings?.call();
+                    },
+                  ),
+                ],
+              ];
+              if (largeText) {
+                return SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(children: actions),
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  for (final action in actions)
+                    if (action is SizedBox) action else Expanded(child: action),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: Listenable.merge([
@@ -369,282 +623,306 @@ class _TranslationDialogState extends State<TranslationDialog> {
                       height: 1.5,
                       color: themeColors['foreground'],
                     ),
-                    child: SingleChildScrollView(
-                      padding: EdgeInsets.all(widget.embedded ? 12 : 18),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: GestureDetector(
-                                  behavior: HitTestBehavior.opaque,
-                                  onPanStart: widget.embedded
-                                      ? (_) => unawaited(
-                                          WindowControls.dragWindow(
-                                            viewId: View.of(context).viewId,
+                    child: widget.embedded
+                        ? _compactContent(
+                            model: model,
+                            tooLong: tooLong,
+                            error: error,
+                            restoreFailed: restoreFailed,
+                          )
+                        : SingleChildScrollView(
+                            padding: EdgeInsets.all(widget.embedded ? 12 : 18),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: GestureDetector(
+                                        behavior: HitTestBehavior.opaque,
+                                        onPanStart: widget.embedded
+                                            ? (_) => unawaited(
+                                                WindowControls.dragWindow(
+                                                  viewId: View.of(context)
+                                                      .viewId,
+                                                ),
+                                              )
+                                            : null,
+                                        child: Text(
+                                          l.translationTitle,
+                                          style: const TextStyle(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.w600,
                                           ),
-                                        )
-                                      : null,
-                                  child: Text(
-                                    l.translationTitle,
-                                    style: const TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
                                     ),
+                                    IdeButton(
+                                      label: l.translationClose,
+                                      secondary: true,
+                                      onPressed: _close,
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  model ??
+                                      l.translationError(
+                                        TranslationFailure.noModel,
+                                      ),
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: themeColors['descriptionForeground'],
                                   ),
                                 ),
-                              ),
-                              IdeButton(
-                                label: l.translationClose,
-                                secondary: true,
-                                onPressed: _close,
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            model ??
-                                l.translationError(TranslationFailure.noModel),
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: themeColors['descriptionForeground'],
-                            ),
-                          ),
-                          SizedBox(height: widget.embedded ? 8 : 12),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              _language(true),
-                              IdeButton(
-                                label: l.translationSwap,
-                                secondary: true,
-                                onPressed: _source == 'auto'
-                                    ? null
-                                    : () => _change(() {
-                                        final previous = _source;
-                                        _source = _target;
-                                        _target = previous;
-                                        if (_answer.isNotEmpty) {
-                                          _input.text = _answer;
-                                          _edited = true;
-                                        }
-                                      }),
-                              ),
-                              _language(false),
-                            ],
-                          ),
-                          SizedBox(height: widget.embedded ? 10 : 14),
-                          if (restoreFailed ||
-                              (!_edited &&
-                                  _captureStatus != null &&
-                                  _captureStatus != 'ok' &&
-                                  !tooLong)) ...[
-                            Text(
-                              restoreFailed
-                                  ? l.translationClipboardRestoreFailed
-                                  : l.translationNoSelection,
-                              style: TextStyle(
-                                color:
-                                    themeColors[restoreFailed
-                                        ? 'errorForeground'
-                                        : 'descriptionForeground'],
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                          ],
-                          LayoutBuilder(
-                            builder: (context, constraints) {
-                              final source = Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(l.translationSource),
-                                      ),
-                                      Text(
-                                        '${_input.text.length} / $translationSourceLimit',
-                                        style: const TextStyle(fontSize: 11),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 6),
-                                  IdeInputBox(
-                                    key: const ValueKey('translation-source'),
-                                    controller: _input,
-                                    focusNode: _sourceFocus,
-                                    autofocus: !widget.embedded,
-                                    semanticsLabel: l.translationSource,
-                                    placeholder: l.translationPlaceholder,
-                                    minLines: widget.embedded ? 3 : 7,
-                                    maxLines: widget.embedded ? 6 : 10,
-                                    padding: EdgeInsets.all(
-                                      widget.embedded ? 8 : 10,
+                                SizedBox(height: widget.embedded ? 8 : 12),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  children: [
+                                    _language(true),
+                                    IdeButton(
+                                      label: l.translationSwap,
+                                      secondary: true,
+                                      onPressed: _source == 'auto'
+                                          ? null
+                                          : () => _change(() {
+                                              final previous = _source;
+                                              _source = _target;
+                                              _target = previous;
+                                              if (_answer.isNotEmpty) {
+                                                _input.text = _answer;
+                                                _edited = true;
+                                              }
+                                            }),
                                     ),
-                                    onChanged: (_) =>
-                                        _change(() => _edited = true),
-                                  ),
-                                ],
-                              );
-                              final result = Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
+                                    _language(false),
+                                  ],
+                                ),
+                                SizedBox(height: widget.embedded ? 10 : 14),
+                                if (restoreFailed ||
+                                    (!_edited &&
+                                        _captureStatus != null &&
+                                        _captureStatus != 'ok' &&
+                                        !tooLong)) ...[
                                   Text(
-                                    _busy
-                                        ? l.translationWorking
-                                        : l.translationResult,
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Container(
-                                    height: widget.embedded ? 120 : 200,
-                                    padding: EdgeInsets.all(
-                                      widget.embedded ? 8 : 10,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: themeColors['input.background'],
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: SingleChildScrollView(
-                                      child: SelectableText(
-                                        _answer.isEmpty
-                                            ? l.translationWaiting
-                                            : _answer,
-                                        key: const ValueKey(
-                                          'translation-result',
-                                        ),
-                                        style: TextStyle(
-                                          color:
-                                              themeColors[_answer.isEmpty
-                                                  ? 'descriptionForeground'
-                                                  : 'foreground'],
-                                        ),
-                                      ),
+                                    restoreFailed
+                                        ? l.translationClipboardRestoreFailed
+                                        : l.translationNoSelection,
+                                    style: TextStyle(
+                                      color:
+                                          themeColors[restoreFailed
+                                              ? 'errorForeground'
+                                              : 'descriptionForeground'],
                                     ),
                                   ),
+                                  const SizedBox(height: 8),
                                 ],
-                              );
-                              return constraints.maxWidth < 520
-                                  ? Column(
-                                      children: [
-                                        source,
-                                        SizedBox(
-                                          height: widget.embedded ? 10 : 14,
-                                        ),
-                                        result,
-                                      ],
-                                    )
-                                  : Row(
+                                LayoutBuilder(
+                                  builder: (context, constraints) {
+                                    final source = Column(
                                       crossAxisAlignment:
-                                          CrossAxisAlignment.start,
+                                          CrossAxisAlignment.stretch,
                                       children: [
-                                        Expanded(child: source),
-                                        const SizedBox(width: 16),
-                                        Expanded(child: result),
+                                        Row(
+                                          children: [
+                                            Expanded(
+                                              child: Text(l.translationSource),
+                                            ),
+                                            Text(
+                                              '${_input.text.length} / $translationSourceLimit',
+                                              style: const TextStyle(
+                                                fontSize: 11,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 6),
+                                        IdeInputBox(
+                                          key: const ValueKey(
+                                            'translation-source',
+                                          ),
+                                          controller: _input,
+                                          focusNode: _sourceFocus,
+                                          autofocus: !widget.embedded,
+                                          semanticsLabel: l.translationSource,
+                                          placeholder: l.translationPlaceholder,
+                                          minLines: widget.embedded ? 3 : 7,
+                                          maxLines: widget.embedded ? 6 : 10,
+                                          padding: EdgeInsets.all(
+                                            widget.embedded ? 8 : 10,
+                                          ),
+                                          onChanged: (_) =>
+                                              _change(() => _edited = true),
+                                        ),
                                       ],
                                     );
-                            },
-                          ),
-                          if (_capture?.requestsImmediateTranslation == true &&
-                              _reviewNeeded) ...[
-                            const SizedBox(height: 8),
-                            Text(
-                              l.translationReviewRequired(
-                                model ?? l.translationModel,
-                              ),
-                              style: TextStyle(
-                                color: themeColors['errorForeground'],
-                              ),
-                            ),
-                          ],
-                          if (_entrySubmitted)
-                            Text(
-                              l.translationEntrySubmitted,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: themeColors['descriptionForeground'],
-                              ),
-                            ),
-                          if (error != null) ...[
-                            const SizedBox(height: 10),
-                            Text(
-                              l.translationError(error),
-                              style: TextStyle(
-                                color: themeColors['errorForeground'],
-                              ),
-                            ),
-                          ],
-                          if (_copyFailed) Text(l.translationCopyFailed),
-                          SizedBox(height: widget.embedded ? 10 : 14),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              IdeButton(
-                                label: _busy
-                                    ? l.translationCancel
-                                    : _error != null
-                                    ? l.translationRetry
-                                    : l.translationTitle,
-                                onPressed: _busy
-                                    ? () => _change(() {})
-                                    : tooLong || model == null
-                                    ? null
-                                    : _translate,
-                              ),
-                              IdeButton(
-                                label: _copied
-                                    ? l.translationCopied
-                                    : l.translationCopy,
-                                secondary: true,
-                                onPressed: _busy || _answer.isEmpty
-                                    ? null
-                                    : _copy,
-                              ),
-                              if (widget.onModelSettings != null)
-                                IdeButton(
-                                  label: l.translationModel,
-                                  secondary: true,
-                                  onPressed: () {
-                                    _close();
-                                    widget.onModelSettings?.call();
+                                    final result = Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        Text(
+                                          _busy
+                                              ? l.translationWorking
+                                              : l.translationResult,
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Container(
+                                          height: widget.embedded ? 120 : 200,
+                                          padding: EdgeInsets.all(
+                                            widget.embedded ? 8 : 10,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color:
+                                                themeColors['input.background'],
+                                            borderRadius: BorderRadius.circular(
+                                              4,
+                                            ),
+                                          ),
+                                          child: SingleChildScrollView(
+                                            child: SelectableText(
+                                              _answer.isEmpty
+                                                  ? l.translationWaiting
+                                                  : _answer,
+                                              key: const ValueKey(
+                                                'translation-result',
+                                              ),
+                                              style: TextStyle(
+                                                color:
+                                                    themeColors[_answer.isEmpty
+                                                        ? 'descriptionForeground'
+                                                        : 'foreground'],
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                    return constraints.maxWidth < 520
+                                        ? Column(
+                                            children: [
+                                              source,
+                                              SizedBox(
+                                                height: widget.embedded
+                                                    ? 10
+                                                    : 14,
+                                              ),
+                                              result,
+                                            ],
+                                          )
+                                        : Row(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Expanded(child: source),
+                                              const SizedBox(width: 16),
+                                              Expanded(child: result),
+                                            ],
+                                          );
                                   },
                                 ),
-                            ],
-                          ),
-                          SizedBox(height: widget.embedded ? 8 : 12),
-                          Text(
-                            l.translationPrivacy,
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: themeColors['descriptionForeground'],
+                                if (_capture?.requestsImmediateTranslation ==
+                                        true &&
+                                    _reviewNeeded) ...[
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    l.translationReviewRequired(
+                                      model ?? l.translationModel,
+                                    ),
+                                    style: TextStyle(
+                                      color: themeColors['errorForeground'],
+                                    ),
+                                  ),
+                                ],
+                                if (_entrySubmitted)
+                                  Text(
+                                    l.translationEntrySubmitted,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color:
+                                          themeColors['descriptionForeground'],
+                                    ),
+                                  ),
+                                if (error != null) ...[
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    l.translationError(error),
+                                    style: TextStyle(
+                                      color: themeColors['errorForeground'],
+                                    ),
+                                  ),
+                                ],
+                                if (_copyFailed) Text(l.translationCopyFailed),
+                                SizedBox(height: widget.embedded ? 10 : 14),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: [
+                                    IdeButton(
+                                      label: _busy
+                                          ? l.translationCancel
+                                          : _error != null
+                                          ? l.translationRetry
+                                          : l.translationTitle,
+                                      onPressed: _busy
+                                          ? () => _change(() {})
+                                          : tooLong || model == null
+                                          ? null
+                                          : _translate,
+                                    ),
+                                    IdeButton(
+                                      label: _copied
+                                          ? l.translationCopied
+                                          : l.translationCopy,
+                                      secondary: true,
+                                      onPressed: _busy || _answer.isEmpty
+                                          ? null
+                                          : _copy,
+                                    ),
+                                    if (widget.onModelSettings != null)
+                                      IdeButton(
+                                        label: l.translationModel,
+                                        secondary: true,
+                                        onPressed: () {
+                                          _close();
+                                          widget.onModelSettings?.call();
+                                        },
+                                      ),
+                                  ],
+                                ),
+                                SizedBox(height: widget.embedded ? 8 : 12),
+                                Text(
+                                  l.translationPrivacy,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: themeColors['descriptionForeground'],
+                                  ),
+                                ),
+                                Text(
+                                  l.translationModelHint,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: themeColors['descriptionForeground'],
+                                  ),
+                                ),
+                                if (UsageLedger.current.enabled &&
+                                    UsageLedger.current.trace)
+                                  Text(
+                                    _capture?.requestsImmediateTranslation ==
+                                                true &&
+                                            !_entrySubmitted
+                                        ? '${l.translationAutoTracePaused} ${l.translationTraceWarning}'
+                                        : l.translationTraceWarning,
+                                    style: TextStyle(
+                                      color: themeColors['errorForeground'],
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                              ],
                             ),
                           ),
-                          Text(
-                            l.translationModelHint,
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: themeColors['descriptionForeground'],
-                            ),
-                          ),
-                          if (UsageLedger.current.enabled &&
-                              UsageLedger.current.trace)
-                            Text(
-                              _capture?.requestsImmediateTranslation == true &&
-                                      !_entrySubmitted
-                                  ? '${l.translationAutoTracePaused} ${l.translationTraceWarning}'
-                                  : l.translationTraceWarning,
-                              style: TextStyle(
-                                color: themeColors['errorForeground'],
-                                fontSize: 11,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
                   ),
                 ),
               ),

@@ -9,6 +9,9 @@
 #include <vector>
 #include <stdexcept>
 #include <functional>
+#include <algorithm>
+#include <cmath>
+#include <wrl/client.h>
 
 namespace {
 constexpr UINT kPrepare = WM_APP + 23;
@@ -25,7 +28,7 @@ bool Wait(const std::function<bool()>& predicate, int attempts = 100) {
 }
 LRESULT CALLBACK Fixture(HWND w, UINT m, WPARAM a, LPARAM b) {
   if (m == WM_CREATE) {
-    edit = CreateWindowW(L"RICHEDIT50W", L"", WS_CHILD | WS_VISIBLE | ES_MULTILINE,
+    edit = CreateWindowW(L"RICHEDIT50W", L"", WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_NOHIDESEL,
       24, 24, 660, 200, w, nullptr, nullptr, nullptr);
     return 0;
   }
@@ -133,6 +136,57 @@ void DragFixture(HWND fixture) {
   }
   Mouse(end, MOUSEEVENTF_LEFTUP);
 }
+RECT FixtureSelection(IUIAutomation* uia) {
+  using Microsoft::WRL::ComPtr;
+  ComPtr<IUIAutomationElement> focused;
+  Check(SUCCEEDED(uia->GetFocusedElement(&focused)) && focused, "Fixture selection focus missing");
+  ComPtr<IUIAutomationTextPattern> pattern;
+  Check(SUCCEEDED(focused->GetCurrentPatternAs(UIA_TextPatternId, IID_PPV_ARGS(&pattern))) && pattern,
+      "Fixture selection pattern missing");
+  ComPtr<IUIAutomationTextRangeArray> ranges;
+  Check(SUCCEEDED(pattern->GetSelection(&ranges)) && ranges, "Fixture selection ranges missing");
+  ComPtr<IUIAutomationTextRange> range;
+  Check(SUCCEEDED(ranges->GetElement(0, &range)) && range, "Fixture selected range missing");
+  SAFEARRAY* array = nullptr;
+  Check(SUCCEEDED(range->GetBoundingRectangles(&array)) && array, "Fixture selection rectangles missing");
+  LONG lower = 0, upper = -1;
+  SafeArrayGetLBound(array, 1, &lower); SafeArrayGetUBound(array, 1, &upper);
+  double* data = nullptr;
+  Check(upper - lower >= 3 && SUCCEEDED(SafeArrayAccessData(array, reinterpret_cast<void**>(&data))) && data,
+      "Fixture selection coordinates missing");
+  RECT result{static_cast<LONG>(std::floor(data[0])), static_cast<LONG>(std::floor(data[1])),
+      static_cast<LONG>(std::ceil(data[0]+data[2])), static_cast<LONG>(std::ceil(data[1]+data[3]))};
+  SafeArrayUnaccessData(array); SafeArrayDestroy(array);
+  return result;
+}
+void VerifyCompactPopup(POINT pointer, RECT selection, const char* scenario) {
+  RECT actual{}; Check(GetWindowRect(popup, &actual) != 0, "Popup rectangle missing");
+  MONITORINFO monitor{}; monitor.cbSize = sizeof(monitor);
+  Check(GetMonitorInfoW(MonitorFromPoint(pointer, MONITOR_DEFAULTTONEAREST), &monitor) != 0,
+      "Cursor monitor missing");
+  const double scale = GetDpiForWindow(popup) / 96.0;
+  const LONG gap = static_cast<LONG>(std::lround(10 * scale));
+  const LONG margin = static_cast<LONG>(std::lround(8 * scale));
+  const LONG width = static_cast<LONG>(std::lround(360 * scale));
+  const LONG height = static_cast<LONG>(std::lround(300 * scale));
+  RECT work{monitor.rcWork.left+margin, monitor.rcWork.top+margin,
+      monitor.rcWork.right-margin, monitor.rcWork.bottom-margin};
+  LONG left = pointer.x + gap;
+  if (left+width > work.right) left = pointer.x-gap-width;
+  left = std::clamp(left, work.left, work.right-width);
+  LONG top = std::max(pointer.y, selection.bottom)+gap;
+  if (top+height > work.bottom) top = std::min(pointer.y, selection.top)-gap-height;
+  top = std::clamp(top, work.top, work.bottom-height);
+  std::printf("COMPACT_POPUP|scenario=%s|pointer=%ld,%ld|selection=%ld,%ld,%ld,%ld|expected=%ld,%ld,%ld,%ld|actual=%ld,%ld,%ld,%ld|dpi=%u\n",
+      scenario, pointer.x,pointer.y,selection.left,selection.top,selection.right,selection.bottom,
+      left,top,left+width,top+height,actual.left,actual.top,actual.right,actual.bottom,GetDpiForWindow(popup));
+  std::fflush(stdout);
+  Check(abs(actual.left-left) <= 2 && abs(actual.top-top) <= 2 &&
+      abs((actual.right-actual.left)-width) <= 2 && abs((actual.bottom-actual.top)-height) <= 2,
+      "Popup is not compact or did not follow the trigger cursor");
+  RECT overlap{};
+  Check(!IntersectRect(&overlap, &actual, &selection), "Popup covers the selected line despite available space");
+}
 std::wstring AccessibleText(IUIAutomation* uia, HWND w) {
   IUIAutomationElement* root = nullptr;
   if (FAILED(uia->ElementFromHandle(w, &root)) || !root) return L"";
@@ -154,7 +208,7 @@ std::wstring AccessibleText(IUIAutomation* uia, HWND w) {
   }
   if (condition) condition->Release(); root->Release(); return text;
 }
-void Screenshot(HWND w, const std::wstring& path, HWND syntheticSource = nullptr, bool darkEntry = false) {
+void Screenshot(HWND w, const std::wstring& path, HWND syntheticSource = nullptr, bool darkEntry = false, HWND contextSource = nullptr) {
   if (!syntheticSource) {
     Check(GetForegroundWindow() == w, "Refusing screenshot of obscured popup");
   } else {
@@ -173,6 +227,17 @@ void Screenshot(HWND w, const std::wstring& path, HWND syntheticSource = nullptr
   if (syntheticSource) Check(GetWindowRect(w, &r) != 0, "Entry rectangle missing");
   else Check(SUCCEEDED(DwmGetWindowAttribute(w, DWMWA_EXTENDED_FRAME_BOUNDS, &r, sizeof(r))),
       "Popup visible-frame bounds unavailable");
+  if (contextSource) {
+    wchar_t sourceClass[128]{}; GetClassNameW(contextSource, sourceClass, 128);
+    Check(!syntheticSource && std::wstring(sourceClass) == L"BaoTranslationWindowFixture" &&
+        IsWindowVisible(contextSource), "Refusing context capture without synthetic source");
+    RECT source{}; Check(GetWindowRect(contextSource,&source) != 0,"Synthetic source bounds missing");
+    RECT scene{}; UnionRect(&scene,&r,&source);
+    MONITORINFO monitor{}; monitor.cbSize = sizeof(monitor);
+    Check(GetMonitorInfoW(MonitorFromWindow(w,MONITOR_DEFAULTTONEAREST),&monitor) != 0,
+        "Scene monitor missing");
+    IntersectRect(&r,&scene,&monitor.rcWork);
+  }
   if (syntheticSource) {
     const POINT corners[] = {{r.left, r.top}, {r.right-1, r.top},
         {r.left, r.bottom-1}, {r.right-1, r.bottom-1}};
@@ -250,6 +315,13 @@ void Screenshot(HWND w, const std::wstring& path, HWND syntheticSource = nullptr
 }
 }
 int wmain(int argc, wchar_t** argv) {
+  // UIA and production placement use physical virtual-screen coordinates.
+  // Opt in before either the controller or its fixture creates any HWND.
+  if (!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) &&
+      !AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)) {
+    std::fputs("Per-monitor DPI awareness unavailable for real-window test\n",stderr);
+    return 2;
+  }
   if (argc > 1 && std::wstring(argv[1]) == L"--fixture") {
     LoadLibraryW(L"Msftedit.dll"); WNDCLASSW c{}; c.lpfnWndProc = Fixture;
     c.hInstance = GetModuleHandleW(nullptr); c.lpszClassName = L"BaoTranslationWindowFixture"; RegisterClassW(&c);
@@ -306,6 +378,13 @@ int wmain(int argc, wchar_t** argv) {
         AllowSetForegroundWindow(fixtureProcess.dwProcessId);
         SendMessageW(fixture, kPrepare, iteration % 2, 0);
         Check(Wait([&] { return GetForegroundWindow() == fixture; }), "Fixture could not take foreground");
+        const RECT selected = FixtureSelection(uia);
+        // Alternate both ends of the same selected line: opening at its left
+        // edge every time would pass the old 800px tolerance, but fails here.
+        const POINT trigger{iteration % 2 ? selected.left + 2 : selected.right - 2,
+                            (selected.top + selected.bottom) / 2};
+        Mouse(trigger, 0); Sleep(30);
+        POINT capturedPointer{}; Check(GetCursorPos(&capturedPointer) != 0, "Pointer snapshot failed");
         TraceMain(state, close, "before_open", visible, iconic);
         Keys({VK_CONTROL, VK_MENU, 'Y'});
         Check(Wait([] { EnumWindows(FindApp, 0); return popup && IsWindowVisible(popup); }), "Real global shortcut did not open popup");
@@ -314,16 +393,15 @@ int wmain(int argc, wchar_t** argv) {
         Check((IsWindowVisible(mainWindow) != FALSE) == (visible != FALSE) && (IsIconic(mainWindow) != FALSE) == (iconic != FALSE), "Shortcut changed main hidden/minimized state");
         const auto style = GetWindowLongPtrW(popup, GWL_EXSTYLE);
         Check((style & WS_EX_TOOLWINDOW) && !(style & WS_EX_APPWINDOW), "Popup is taskbar/AltTab eligible");
-        RECT r{}, anchor{}; GetWindowRect(popup, &r); GetWindowRect(fixture, &anchor);
-        MONITORINFO monitor{}; monitor.cbSize = sizeof(monitor);
-        GetMonitorInfoW(MonitorFromWindow(fixture, MONITOR_DEFAULTTONEAREST), &monitor);
-        Check(r.left >= monitor.rcWork.left && r.top >= monitor.rcWork.top && r.right <= monitor.rcWork.right && r.bottom <= monitor.rcWork.bottom, "Popup outside selection work area");
-        Check(abs(r.left - (anchor.left+24)) < 800 && abs(r.top - (anchor.top+24)) < 500, "Popup not near selection fixture");
+        VerifyCompactPopup(capturedPointer, selected, iteration % 2 ? "hotkey-left-end" : "hotkey-right-end");
         const std::wstring expected = iteration % 2 ? L"Fresh synthetic selection Bravo" : L"Synthetic selection Alpha";
         const std::wstring stale = iteration % 2 ? L"Synthetic selection Alpha" : L"Fresh synthetic selection Bravo";
         Check(Wait([&] { auto text = AccessibleText(uia, popup); return text.find(expected) != std::wstring::npos && text.find(stale) == std::wstring::npos && text.find(L"Synthetic clipboard decoy") == std::wstring::npos; }), "Popup UIA missing fresh selection or retaining stale text");
         Check(Wait([] { return GetForegroundWindow() == popup; }), "Popup not active");
-        if (state == 0 && close == 0) { Sleep(500); Screenshot(popup, argv[2]); }
+        if (state == 0 && close == 0) {
+          Sleep(500); Screenshot(popup, argv[2]);
+          Screenshot(popup,std::wstring(argv[2])+L".context.bmp",nullptr,false,fixture);
+        }
         TraceMain(state, close, "before_close", visible, iconic);
         if (close == 0) Keys({VK_ESCAPE});
         if (close == 1) PostMessageW(popup, WM_CLOSE, 0, 0); // Native caption X message.
@@ -373,6 +451,7 @@ int wmain(int argc, wchar_t** argv) {
       Check((actionStyle & WS_EX_NOACTIVATE) && (actionStyle & WS_EX_TOOLWINDOW), "Selection entry is activating or taskbar eligible");
       RECT bounds{}; Check(GetWindowRect(action, &bounds) != 0, "Selection entry bounds missing");
       const POINT center{(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2};
+      const RECT selected = FixtureSelection(uia);
       if (selection == 0) {
         Screenshot(action, std::wstring(argv[2]) + L".entry.bmp", fixture, darkTheme);
       }
@@ -388,6 +467,7 @@ int wmain(int argc, wchar_t** argv) {
             text.find(L"Synthetic clipboard decoy") == std::wstring::npos;
       }), "Mouse popup missing drag-selected source or retaining prior source");
       Check(Wait([] { return GetForegroundWindow() == popup; }), "Mouse popup did not receive focus");
+      VerifyCompactPopup(center, selected, "selection-entry-click");
       if (selection == 0) {
         Sleep(500);
         Screenshot(popup, std::wstring(argv[2]) + L".mouse.bmp");
@@ -399,6 +479,24 @@ int wmain(int argc, wchar_t** argv) {
       Check(GetClipboardSequenceNumber() == sequence, "Mouse translation changed clipboard");
       Check(Wait([&] { return AccessibleText(uia, popup).find(expected) == std::wstring::npos; }), "Dismissed mouse popup retained accessible source text");
     }
+    MONITORINFO edgeMonitor{}; edgeMonitor.cbSize = sizeof(edgeMonitor);
+    Check(GetMonitorInfoW(MonitorFromWindow(fixture, MONITOR_DEFAULTTONEAREST), &edgeMonitor) != 0,
+        "Edge fixture monitor unavailable");
+    SetWindowPos(fixture, nullptr, edgeMonitor.rcWork.right-500, edgeMonitor.rcWork.bottom-140,
+        0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    AllowSetForegroundWindow(fixtureProcess.dwProcessId); SendMessageW(fixture,kPrepare,0,0);
+    Check(Wait([&] { return GetForegroundWindow() == fixture; }), "Edge fixture focus unavailable");
+    const RECT edgeSelection = FixtureSelection(uia);
+    const POINT edgePointer{edgeSelection.right-2,(edgeSelection.top+edgeSelection.bottom)/2};
+    Mouse(edgePointer,0); Sleep(30);
+    POINT edgeSnapshot{}; GetCursorPos(&edgeSnapshot);
+    Keys({VK_CONTROL,VK_MENU,'Y'});
+    Check(Wait([] { return popup && IsWindowVisible(popup) && GetForegroundWindow() == popup; }), "Edge shortcut did not open popup");
+    VerifyCompactPopup(edgeSnapshot,edgeSelection,"bottom-right-flip");
+    Sleep(300); Screenshot(popup,std::wstring(argv[2])+L".edge.bmp");
+    Screenshot(popup,std::wstring(argv[2])+L".edge-context.bmp",nullptr,false,fixture);
+    Keys({VK_ESCAPE});
+    Check(Wait([] { return !IsWindowVisible(popup); }), "Edge popup failed to close");
     // The source is now BaoCode's own main view. Releasing a popup's F4 after
     // focus restoration must not produce a synthetic down in the main engine.
     // A subsequent genuinely new main AltF4 must still work (no stale swallow).

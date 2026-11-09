@@ -52,7 +52,9 @@ std::optional<RECT> SelectionBounds(HWND source,
     translation_selection::ConsoleBinding& console_binding,
     const std::function<bool()>& stopped, ULONGLONG deadline,
     ComPtr<IUIAutomation2>* transaction_control = nullptr,
-    ComPtr<IUIAutomationTextRange>* validated_range = nullptr) {
+    ComPtr<IUIAutomationTextRange>* validated_range = nullptr,
+    std::optional<RECT>* selected_area = nullptr) {
+  if (selected_area) selected_area->reset();
 #ifdef BAOCODE_TRANSLATION_ACTION_DIAGNOSTICS
   BoundsTrace bounds_trace{source};
 #endif
@@ -202,8 +204,13 @@ std::optional<RECT> SelectionBounds(HWND source,
         auto checked = translation_panel::SelectionRect(data[i], data[i + 1], data[i + 2], data[i + 3]);
         if (!checked) continue;
         RECT rect{checked->left, checked->top, checked->right, checked->bottom}, clipped{};
-        if (IntersectRect(&clipped, &rect, &window) && MonitorFromRect(&clipped, MONITOR_DEFAULTTONULL))
+        if (IntersectRect(&clipped, &rect, &window) && MonitorFromRect(&clipped, MONITOR_DEFAULTTONULL)) {
           result = clipped;  // Last visible selected line, not the mouse cursor.
+          if (selected_area) {
+            if (*selected_area) { RECT combined{}; UnionRect(&combined, &**selected_area, &clipped); *selected_area = combined; }
+            else *selected_area = clipped;
+          }
+        }
       }
       SafeArrayUnaccessData(rectangles);
     }
@@ -247,7 +254,7 @@ translation_selection::Selection CaptureBoundSelection(HWND source,
   ComPtr<IUIAutomation2> bounded;
   ComPtr<IUIAutomationTextRange> current_range;
   const auto bounds = SelectionBounds(source, element, range, retryable, require_text,
-      target, console, stopped, deadline, &bounded, &current_range);
+      target, console, stopped, deadline, &bounded, &current_range, &result.area);
   if (!bounds || stopped() || !bounded || !current_range) return result;
   const auto ready = [&] {
     ULONGLONG now = GetTickCount64();

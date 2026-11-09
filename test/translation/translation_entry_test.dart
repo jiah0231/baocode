@@ -163,7 +163,14 @@ void main() {
     (tester) async {
       await panel(tester, service, entry(1), active: false);
       expect(requests.inputs, isEmpty);
-      expect(find.text('Test provider · translate'), findsOneWidget);
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is Tooltip &&
+              widget.message!.contains('Test provider · translate'),
+        ),
+        findsOneWidget,
+      );
       await panel(tester, service, entry(1));
       expect(requests.inputs, ['Hello world']);
       await panel(tester, service, entry(1));
@@ -171,7 +178,11 @@ void main() {
       await panel(tester, service, entry(1));
       expect(requests.inputs, hasLength(1));
       expect(
-        find.textContaining('Selecting text alone never sends'),
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is Tooltip &&
+              widget.message!.contains('Selecting text alone never sends'),
+        ),
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);

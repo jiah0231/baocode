@@ -35,11 +35,14 @@ struct Selection {
   bool self = false;
   std::optional<RECT> bounds;
   std::optional<translation_clipboard::Proof> copy_proof;
+  std::optional<RECT> area;  // Visible selection union, used only to avoid covering it.
 };
 // Bounding rectangles are optional. A broken geometry provider must neither
 // expose arbitrary data nor invalidate otherwise valid selected text.
 inline std::optional<RECT> ReadBounds(IUIAutomationTextRange* range,
-                                      HWND foreground, CaptureDiagnostics* diagnostics = nullptr) {
+                                      HWND foreground, CaptureDiagnostics* diagnostics = nullptr,
+                                      std::optional<RECT>* area = nullptr) {
+  if (area) area->reset();
   SAFEARRAY* values = nullptr;
   const HRESULT read = range->GetBoundingRectangles(&values);
   if (diagnostics) {
@@ -73,14 +76,20 @@ inline std::optional<RECT> ReadBounds(IUIAutomationTextRange* range,
           diagnostics->bounds_source = source;
           for (int i = 0; i < 4; ++i) diagnostics->bounds_first[i] = data[i];
         }
-        for (int i = 0; i < count && !result; i += 4) {
+        for (int i = 0; i < count; i += 4) {
           const auto checked = translation_panel::SelectionRect(
               data[i], data[i + 1], data[i + 2], data[i + 3]);
           if (!checked) continue;
           const RECT rect{checked->left, checked->top, checked->right, checked->bottom};
           RECT clipped = {};
           if (IntersectRect(&clipped, &rect, &source) &&
-              MonitorFromRect(&clipped, MONITOR_DEFAULTTONULL)) result = clipped;
+              MonitorFromRect(&clipped, MONITOR_DEFAULTTONULL)) {
+            result = clipped;
+            if (area) {
+              if (*area) { RECT combined{}; UnionRect(&combined, &**area, &clipped); *area = combined; }
+              else *area = clipped;
+            }
+          }
         }
       }
       SafeArrayUnaccessData(values);
@@ -102,6 +111,7 @@ inline void RejectEmbeddedNull(Selection& selection) {
     selection.text.clear();
     selection.status = "unsupported";
     selection.bounds.reset();
+    selection.area.reset();
   }
 }
 // Call only on an MTA worker after an explicit user action. Never reads the
@@ -334,7 +344,15 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
                       SysFreeString(text);
                       if (FAILED(read) || !has_text) { failed = true; break; }
                       if (out.status == "tooLong") break;
-                      if (!out.bounds && !stopped()) out.bounds = ReadBounds(range.Get(), foreground, diagnostics);
+                      if (!stopped()) {
+                        std::optional<RECT> range_area;
+                        const auto bounds = ReadBounds(range.Get(), foreground, diagnostics, &range_area);
+                        if (bounds) out.bounds = bounds;
+                        if (range_area) {
+                          if (out.area) { RECT combined{}; UnionRect(&combined, &*out.area, &*range_area); out.area = combined; }
+                          else out.area = range_area;
+                        }
+                      }
                     }
                     if (failed || out.status == "tooLong") {
                       out.text.clear();
@@ -442,7 +460,7 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
     out.text.clear();
     out.status = "focusChanged";
   }
-  if (out.status != "ok") out.bounds.reset();
+  if (out.status != "ok") { out.bounds.reset(); out.area.reset(); }
   if (out.status != "unsupported") out.copy_proof.reset();
   return out;
 }

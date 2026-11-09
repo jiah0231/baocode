@@ -201,21 +201,23 @@ bool VerifyPointerPlacement(const char* selection, POINT pointer, UINT dpi) {
   // The pointer is required to remain on the source monitor, so the source
   // window's effective DPI is also the placement monitor's effective DPI.
   const double scale = dpi / 96.0;
-  const int requested_width = static_cast<int>(480 * scale);
-  const int requested_height = static_cast<int>(560 * scale);
-  const int gap = static_cast<int>(10 * scale);
-  const RECT& work = info.rcWork;
-  const auto placed = translation_panel::Place(
-      {static_cast<int>(pointer.x), static_cast<int>(pointer.y),
-       static_cast<int>(pointer.x), static_cast<int>(pointer.y)},
-      {static_cast<int>(work.left), static_cast<int>(work.top),
-       static_cast<int>(work.right), static_cast<int>(work.bottom)},
-      requested_width, requested_height, gap);
+  const int requested_width = static_cast<int>(std::lround(translation_panel::kCompactWidth * scale));
+  const int requested_height = static_cast<int>(std::lround(translation_panel::kCompactHeight * scale));
+  const int gap = static_cast<int>(std::lround(10 * scale));
+  const int margin = static_cast<int>(std::lround(8 * scale));
+  const RECT work{info.rcWork.left + margin, info.rcWork.top + margin,
+                  info.rcWork.right - margin, info.rcWork.bottom - margin};
+  const auto placed = translation_panel::CompactPlacement(
+      {static_cast<int>(pointer.x), static_cast<int>(pointer.y)}, std::nullopt,
+      {static_cast<int>(info.rcWork.left), static_cast<int>(info.rcWork.top),
+       static_cast<int>(info.rcWork.right), static_cast<int>(info.rcWork.bottom)}, scale);
   const RECT panel{placed.left, placed.top, placed.right, placed.bottom};
   RECT clipped{};
   const int width = std::min(requested_width, static_cast<int>(work.right - work.left));
   const int height = std::min(requested_height, static_cast<int>(work.bottom - work.top));
-  const LONG expected_left = std::clamp(pointer.x, work.left, work.right - width);
+  LONG expected_left = pointer.x + gap;
+  if (expected_left + width > work.right) expected_left = pointer.x - gap - width;
+  expected_left = std::clamp(expected_left, work.left, work.right - width);
   LONG expected_top = pointer.y + gap;
   if (expected_top + height > work.bottom) expected_top = pointer.y - gap - height;
   expected_top = std::clamp(expected_top, work.top, work.bottom - height);

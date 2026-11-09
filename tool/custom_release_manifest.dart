@@ -87,8 +87,8 @@ Future<void> main(List<String> args) async {
     'version': '$version',
     'pubDate': DateTime.now().toUtc().toIso8601String(),
     'notes': {
-      'zh': '新增轻量划词翻译：Windows 选中文字后按 Ctrl+Alt+Y，预览原文再翻译；应用内支持右键翻译。复用已配置模型，不监听剪贴板、不保存历史。确认重启后安装。',
-      'en': 'Adds lightweight selection translation. On Windows select text and press Ctrl+Alt+Y, then confirm Translate. Uses your configured model without clipboard monitoring or translation history. Install after confirming a restart.',
+      'zh': '修正翻译小窗：缩小为紧凑卡片，在光标或选区末端附近打开，屏幕边缘自动避让。保留原文预览、流式译文与安全保护。确认重启后安装。',
+      'en': 'Makes translation a compact popup beside the cursor or selection endpoint, with screen-edge avoidance. Retains source preview, streaming, and privacy protections. Install after confirming a restart.',
     },
     'platforms': {
       platform: UpdateAsset(

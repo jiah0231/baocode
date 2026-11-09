@@ -48,7 +48,7 @@ try {
     if ($app.ExitCode -ne 0) { throw "App crashed at native quit: $($app.ExitCode)" }
     $app.Dispose(); $app = $null
     if (!(Test-Path -LiteralPath $screenshot)) { throw 'Required real-app screenshot missing' }
-    foreach ($capture in @($screenshot, "$screenshot.mouse.bmp", "$screenshot.entry.bmp")) {
+    foreach ($capture in @($screenshot, "$screenshot.mouse.bmp", "$screenshot.entry.bmp", "$screenshot.edge.bmp", "$screenshot.context.bmp", "$screenshot.edge-context.bmp")) {
       if (!(Test-Path -LiteralPath $capture)) { throw "Required real-app screenshot missing: $capture" }
     }
   }

@@ -13,8 +13,8 @@ try {
     throw 'Translation native smoke timed out'
   }
   if ($test.ExitCode -ne 0) { throw "Translation native smoke failed ($($test.ExitCode))" }
-  foreach ($suite in @('target', 'console_binding')) {
-    $extraSource = Join-Path $PSScriptRoot "windows_translation_${suite}_smoke.cpp"
+  foreach ($suite in @('target', 'console_binding', 'geometry')) {
+    $extraSource = if ($suite -eq 'geometry') { Join-Path $PSScriptRoot 'translation_panel_geometry_test.cpp' } else { Join-Path $PSScriptRoot "windows_translation_${suite}_smoke.cpp" }
     $extraExe = Join-Path $build "${suite}_smoke.exe"
     & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX $extraSource "/Fe:$extraExe" /link user32.lib advapi32.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
     if ($LASTEXITCODE -ne 0) { throw "Translation $suite smoke compilation failed" }
