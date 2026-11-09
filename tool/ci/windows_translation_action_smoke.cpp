@@ -20,6 +20,7 @@ int queued_clicks = 0;
 bool mutation_verified = true;
 std::unique_ptr<TranslationSelectionAction> action;
 int clicks = 0;
+bool input_failed = false;
 HWND captured = nullptr;
 constexpr UINT kPrepare = WM_APP + 22;
 constexpr UINT kSwitchEdit = WM_APP + 23;
@@ -64,7 +65,18 @@ void Pump(DWORD duration) {
     Sleep(5);
   }
 }
-void Mouse(DWORD flags) { INPUT input{}; input.type = INPUT_MOUSE; input.mi.dwFlags = flags; SendInput(1, &input, sizeof(input)); Pump(40); }
+void Mouse(DWORD flags) {
+  INPUT input{}; input.type = INPUT_MOUSE; input.mi.dwFlags = flags;
+  SetLastError(ERROR_SUCCESS);
+  const UINT inserted = SendInput(1, &input, sizeof(input));
+  const DWORD error = GetLastError();
+  input_failed = input_failed || inserted != 1;
+  Pump(40);
+  POINT point{}; GetCursorPos(&point);
+  std::printf("ACTION_INPUT|flags=%lu|inserted=%u|error=%lu|pressed=%d|point=%ld,%ld\n",
+      flags, inserted, error, (GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1 : 0, point.x, point.y);
+  std::fflush(stdout);
+}
 bool Visible() { HWND entry = FindWindowW(L"BaoCodeTranslationSelectionAction", nullptr); return entry && IsWindowVisible(entry); }
 void Diagnose(const char* stage, HWND fixture) {
   const HWND entry = FindWindowW(L"BaoCodeTranslationSelectionAction", nullptr);
@@ -296,5 +308,6 @@ int wmain(int argc, wchar_t** argv) {
   DestroyWindow(dispatcher); PostMessage(fixture, WM_CLOSE, 0, 0);
   WaitForSingleObject(process.hProcess, 2000); CloseHandle(process.hProcess); CloseHandle(process.hThread);
   if (!result) std::puts("Translation action drag/no-selection/non-text/password/nonactivation/click/cleanup passed");
+  if (input_failed) result = Fail("Fixture mouse input was not inserted");
   return result;
 }

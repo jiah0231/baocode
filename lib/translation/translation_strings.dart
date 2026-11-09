@@ -12,10 +12,10 @@ extension TranslationStrings on AppLocalizations {
       ? '点击「翻译」后，译文将显示在这里。'
       : 'Your translation appears here after you click Translate.';
   String get translationPrivacy => _zh
-      ? '点击选词后的「译」或本页翻译会发送原文。松开选区不会发送，不附带文件或对话，不保存翻译历史。'
+      ? '点击选词后的翻译图标或本页翻译会发送原文。松开选区不会发送，不附带文件或对话，不保存翻译历史。'
       : 'Clicking the selection’s Translate button or Translate here sends the source. Selecting text alone never sends. No files, conversation or translation history.';
   String get translationEntrySubmitted => _zh
-      ? '已按本次「译」点击请求开始翻译。'
+      ? '已按本次翻译图标点击请求开始翻译。'
       : 'Translation started for this explicit selection-button click.';
   String translationReviewRequired(String destination) => _zh
       ? '此原文可能含敏感信息，已暂停自动发送。本地检查并非完整分类；请核对内容和服务方「$destination」，仅在确认后点击翻译。'
@@ -42,6 +42,13 @@ extension TranslationStrings on AppLocalizations {
   String get translationNoSelection => _zh
       ? '未取得选中文字，请在下方输入或粘贴。'
       : 'No selected text was captured. Type or paste below.';
+  String translationCaptureNotice(String? status) => switch (status) {
+    'unsupported' => _zh ? '无法从此应用安全读取选区。可手动复制文字后粘贴到下方。' : 'Could not safely read this app’s selection. Copy the text manually and paste it below.',
+    'focusChanged' => _zh ? '选区或焦点已变化。请回到原应用重新选词，或在下方粘贴。' : 'The selection or focus changed. Select the text again in the source app, or paste below.',
+    'timeout' => _zh ? '取词超时。请重新选词后再试，或在下方粘贴。' : 'Selection capture timed out. Select again and retry, or paste below.',
+    'password' => _zh ? '密码框不可取词。请勿粘贴密码或密钥。' : 'Password fields cannot be captured. Do not paste passwords or secret keys.',
+    _ => translationNoSelection,
+  };
   String get translationClipboardRestoreFailed => _zh
       ? '未能恢复原剪贴板内容，请检查剪贴板。本次取词失败的内容未发送；可手动输入原文后再翻译。'
       : 'Could not restore the previous clipboard contents. Please check your clipboard. No text from this failed capture was sent; you can enter the source manually to translate.';

@@ -376,6 +376,33 @@ void main() {
     });
   }
 
+  for (final status in {
+    'unsupported': 'Could not safely read this app’s selection',
+    'focusChanged': 'The selection or focus changed',
+    'timeout': 'Selection capture timed out',
+    'password': 'Password fields cannot be captured',
+    'noSelection': 'No selected text was captured',
+  }.entries) {
+    for (final embedded in [false, true]) {
+      testWidgets(
+        'capture ${status.key} explains next step, embedded=$embedded',
+        (tester) async {
+          await tester.pumpWidget(
+            MaterialApp(
+              home: TranslationDialog(
+                captureStatus: status.key,
+                embedded: embedded,
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          expect(find.textContaining(status.value), findsOneWidget);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
+
   testWidgets(
     'clipboard restore failure is explicit and persists while typing',
     (tester) async {

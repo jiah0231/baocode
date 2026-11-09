@@ -108,8 +108,8 @@ class _TranslationSettingsCardState extends State<TranslationSettingsCard> {
                     ? '选词后显示翻译按钮'
                     : 'Show a translation button after selection',
                 description: zh
-                    ? '选中文字后在附近显示小按钮。检测时不读取正文；点击「译」后才获取原文、打开翻译窗并请求翻译；敏感或不确定内容先预览确认。'
-                    : 'Show a small button near selected text. Detection does not read text; clicking Translate captures the source, opens the panel and requests translation. Sensitive or uncertain content stays in preview for confirmation.',
+                    ? '应用提供选区接口时，在选中文字附近显示翻译图标；未出现时可尝试翻译快捷键或手动粘贴。检测时不读取正文；点击图标后才获取原文、打开翻译窗并请求翻译；敏感或不确定内容先预览确认。'
+                    : 'Show a small icon when the app exposes a selection. If it does not appear, try the translation shortcut or paste manually. Detection does not read text; clicking Translate captures the source, opens the panel and requests translation. Sensitive or uncertain content stays in preview for confirmation.',
                 value:
                     widget.settings?[TranslationHost.selectionActionKey] !=
                     false,
@@ -121,7 +121,7 @@ class _TranslationSettingsCardState extends State<TranslationSettingsCard> {
               SettingsSwitchRow(
                 label: zh ? '自动复制选中文字' : 'Automatically copy selected text',
                 description: zh
-                    ? '仅按翻译快捷键且 UI Automation 不支持读取选区时，才尝试从已验证的非密码普通 Edit / RichEdit 控件复制选中文字。先预览，再点击面板翻译发送到模型；选词「译」入口不使用此复制回退。会临时使用剪贴板，剪贴板管理器或云同步可能看到这些文字。关闭本选项后可手动粘贴。'
+                    ? '仅按翻译快捷键且 UI Automation 不支持读取选区时，才尝试从已验证的非密码普通 Edit / RichEdit 控件复制选中文字。先预览，再点击面板翻译发送到模型；选词翻译图标不使用此复制回退。会临时使用剪贴板，剪贴板管理器或云同步可能看到这些文字。关闭本选项后可手动粘贴。'
                     : 'Only after pressing the translation shortcut, if UI Automation cannot read the selection, try copying from verified ordinary, non-password Edit / RichEdit controls. Preview first; only an explicit Translate click in the panel sends it to the model. The selection Translate button does not use this copy fallback. This temporarily uses the clipboard; clipboard managers or cloud sync may see the text. Turn this off to paste manually.',
                 value:
                     widget.settings?[TranslationHost.clipboardFallbackKey] !=

@@ -328,7 +328,7 @@ class _TranslationDialogState extends State<TranslationDialog> {
           _captureStatus != null &&
           _captureStatus != 'ok' &&
           !tooLong)
-        l.translationNoSelection,
+        l.translationCaptureNotice(_captureStatus),
       if (_capture?.requestsImmediateTranslation == true && _reviewNeeded)
         l.translationReviewRequired(model ?? l.translationModel),
       if (error != null) l.translationError(error),
@@ -732,7 +732,9 @@ class _TranslationDialogState extends State<TranslationDialog> {
                                   Text(
                                     restoreFailed
                                         ? l.translationClipboardRestoreFailed
-                                        : l.translationNoSelection,
+                                        : l.translationCaptureNotice(
+                                            _captureStatus,
+                                          ),
                                     style: TextStyle(
                                       color:
                                           themeColors[restoreFailed

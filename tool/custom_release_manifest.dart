@@ -87,8 +87,8 @@ Future<void> main(List<String> args) async {
     'version': '$version',
     'pubDate': DateTime.now().toUtc().toIso8601String(),
     'notes': {
-      'zh': '修正翻译小窗：缩小为紧凑卡片，在光标或选区末端附近打开，屏幕边缘自动避让。保留原文预览、流式译文与安全保护。确认重启后安装。',
-      'en': 'Makes translation a compact popup beside the cursor or selection endpoint, with screen-edge avoidance. Retains source preview, streaming, and privacy protections. Install after confirming a restart.',
+      'zh': '焕新划词入口：轻巧圆角翻译图标，适配深浅主题，增加悬停反馈和屏幕边缘避让。区分取词失败原因，并提供快捷键或粘贴指引。保留选区与隐私保护；确认重启后安装。',
+      'en': 'Refreshes the selection entry with a compact rounded translation icon, light/dark themes, hover feedback and screen-edge avoidance. Explains capture failures and shortcut/paste options. Retains selection and privacy protections. Install after confirming a restart.',
     },
     'platforms': {
       platform: UpdateAsset(
