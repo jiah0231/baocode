@@ -3,6 +3,8 @@
 #include <windows.h>
 #include <functional>
 #include <memory>
+#include <cstdint>
+#include <vector>
 #include "translation_selection.h"
 
 // A metadata-only mouse selection affordance. Text capture is exclusively the
@@ -34,8 +36,11 @@ class TranslationSelectionAction {
   void Request();
   void Show(const RECT& bounds);
   void PaintButton();
+  bool ButtonHit(POINT screen) const;
   bool hovered_ = false, pressed_ = false;
   int visual_size_ = 0;
+  int painted_size_ = 0;
+  std::vector<uint32_t> painted_pixels_;
   HWND dispatcher_ = nullptr;
   HWND button_ = nullptr;
   HWND source_ = nullptr;

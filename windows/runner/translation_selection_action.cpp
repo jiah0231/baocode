@@ -43,12 +43,7 @@ TranslationSelectionAction* active = nullptr;
 HWND hook_dispatcher = nullptr;
 HWND hook_button = nullptr;
 using Microsoft::WRL::ComPtr;
-bool ButtonHit(HWND hwnd, POINT screen) {
-  RECT rect{};
-  if (!GetWindowRect(hwnd, &rect) || !PtInRect(&rect, screen) || rect.right <= rect.left) return false;
-  const double scale = static_cast<double>(translation_action_visual::kExtent) / (rect.right - rect.left);
-  return translation_action_visual::Hit((screen.x - rect.left) * scale, (screen.y - rect.top) * scale);
-}
+
 
 // Deliberately accepts only one noncollapsed selection. No GetText,
 // ValuePattern, document range, clipboard, or keyboard monitoring is used.
@@ -456,7 +451,7 @@ LRESULT CALLBACK TranslationSelectionAction::MouseHook(int code, WPARAM wparam, 
     const auto* mouse = reinterpret_cast<const MSLLHOOKSTRUCT*>(lparam);
     if (!((wparam == WM_LBUTTONDOWN || wparam == WM_LBUTTONUP) &&
           hook_button && IsWindowVisible(hook_button) &&
-          ButtonHit(hook_button, mouse->pt))) {
+          active && active->ButtonHit(mouse->pt))) {
       // Coordinates remain signed on monitors left/above the primary display.
       static_assert(sizeof(LPARAM) >= sizeof(uint64_t), "Selection action requires Win64");
       const uint64_t packed = static_cast<uint32_t>(mouse->pt.x) |
@@ -630,10 +625,20 @@ void TranslationSelectionAction::Show(const RECT& bounds) {
   if (redraw) PaintButton();
 }
 
+bool TranslationSelectionAction::ButtonHit(POINT screen) const {
+  RECT rect{};
+  if (!button_ || !GetWindowRect(button_, &rect) || !PtInRect(&rect, screen)) return false;
+  // Layered-window alpha is the cross-process hit boundary. Include the soft
+  // shadow: HTTRANSPARENT alone cannot forward it into another app's thread.
+  // Both the low-level hook and native hit test use the last presented pixels.
+  return translation_action_visual::PixelHit(painted_pixels_, painted_size_,
+      screen.x - rect.left, screen.y - rect.top);
+}
+
 void TranslationSelectionAction::PaintButton() {
   if (!button_ || visual_size_ <= 0) return;
   using namespace translation_action_visual;
-  const auto pixels = Render(visual_size_, dark_, pressed_ ? State::pressed :
+  auto pixels = Render(visual_size_, dark_, pressed_ ? State::pressed :
       hovered_ ? State::hover : State::normal);
   BITMAPINFO info{};
   info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -651,7 +656,10 @@ void TranslationSelectionAction::PaintButton() {
     POINT origin{};
     SIZE size{visual_size_, visual_size_};
     BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
-    UpdateLayeredWindow(button_, screen, nullptr, &size, dc, &origin, 0, &blend, ULW_ALPHA);
+    if (UpdateLayeredWindow(button_, screen, nullptr, &size, dc, &origin, 0, &blend, ULW_ALPHA)) {
+      painted_size_ = visual_size_;
+      painted_pixels_ = std::move(pixels);
+    }
     SelectObject(dc, old);
   }
   if (bitmap) DeleteObject(bitmap);
@@ -669,7 +677,7 @@ LRESULT CALLBACK TranslationSelectionAction::WindowProc(HWND hwnd, UINT message,
   if (message == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
   if (message == WM_NCHITTEST) {
     const POINT point{static_cast<short>(LOWORD(lparam)), static_cast<short>(HIWORD(lparam))};
-    return ButtonHit(hwnd, point) ? HTCLIENT : HTTRANSPARENT;
+    return self->ButtonHit(point) ? HTCLIENT : HTTRANSPARENT;
   }
   if (message == WM_MOUSEMOVE) {
     if (!self->hovered_) {

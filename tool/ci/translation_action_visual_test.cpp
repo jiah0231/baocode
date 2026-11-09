@@ -22,6 +22,21 @@ int main(int argc, char** argv) {
       }
       assert(opaque > size * size / 2 && partial > size && ink > 10 * scale * scale);
       assert(normal == Render(size, dark, State::normal));
+      for (const auto& pixels : {normal, hover, pressed}) {
+        int shadow_hits = 0;
+        for (int y = 0; y < size; ++y) for (int x = 0; x < size; ++x) {
+          const bool hit = PixelHit(pixels, size, x, y);
+          assert(hit == ((pixels[y * size + x] >> 24) != 0));
+          if (hit && RoundedDistance((x + .5) * kExtent / size,
+                                     (y + .5) * kExtent / size) > 0) ++shadow_hits;
+        }
+        assert(shadow_hits > 0); // The visible shadow belongs to the button too.
+        assert(!PixelHit(pixels, size, 0, 0)); // Fully transparent corners pass through.
+        assert(!PixelHit(pixels, size, -1, size / 2));
+        assert(!PixelHit(pixels, size, size, size / 2));
+        assert(!PixelHit(pixels, size, size / 2, -1));
+        assert(!PixelHit(pixels, size, size / 2, size));
+      }
     }
     for (auto work : {translation_panel::Rect{0,0,1920,1040},
                       translation_panel::Rect{-1920,-1080,0,0}}) {
@@ -42,7 +57,7 @@ int main(int argc, char** argv) {
   assert(r.right == 1596); // Flip left at the right screen edge.
   r = Place({0,100,1920,120}, {0,0,1920,1040}, 1);
   assert(r.top == 124); // Full-width line uses below instead of covering text.
-  assert(!Hit(0,0) && !Hit(3,3) && Hit(18,18) && Hit(18,3));
+  assert(!PixelHit({}, 36, 18, 18) && !PixelHit({}, 0, 0, 0));
   if (argc > 1) {
     // Optional contact sheet from the exact production rasterizer, not a mock.
     constexpr int cell = 108, width = cell * 3, height = cell * 2;

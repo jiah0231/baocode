@@ -225,6 +225,27 @@ std::wstring AccessibleText(IUIAutomation* uia, HWND w) {
   }
   if (condition) condition->Release(); root->Release(); return text;
 }
+bool SafeEntryCapture(HWND entry, HWND source, const RECT& region) {
+  RECT sourceRect{};
+  if (GetForegroundWindow() != source || !IsWindowVisible(entry) ||
+      !GetWindowRect(source, &sourceRect) || region.left < sourceRect.left ||
+      region.top < sourceRect.top || region.right > sourceRect.right || region.bottom > sourceRect.bottom)
+    return false;
+  struct CheckRegion { HWND entry, source; RECT region; bool sourceSeen = false, obscured = false; };
+  CheckRegion check{entry, source, region};
+  // Z order includes click-through layered overlays which WindowFromPoint skips.
+  EnumWindows([](HWND candidate, LPARAM data) -> BOOL {
+    auto& state = *reinterpret_cast<CheckRegion*>(data);
+    if (candidate == state.source) { state.sourceSeen = true; return FALSE; }
+    if (candidate == state.entry || !IsWindowVisible(candidate) || IsIconic(candidate)) return TRUE;
+    RECT rect{}, overlap{};
+    if (!GetWindowRect(candidate, &rect) || IntersectRect(&overlap, &state.region, &rect)) {
+      state.obscured = true; return FALSE;
+    }
+    return TRUE;
+  }, reinterpret_cast<LPARAM>(&check));
+  return check.sourceSeen && !check.obscured;
+}
 void Screenshot(HWND w, const std::wstring& path, HWND syntheticSource = nullptr, bool darkEntry = false, HWND contextSource = nullptr) {
   if (!syntheticSource) {
     Check(GetForegroundWindow() == w, "Refusing screenshot of obscured popup");
@@ -257,17 +278,8 @@ void Screenshot(HWND w, const std::wstring& path, HWND syntheticSource = nullptr
         "Scene monitor missing");
     IntersectRect(&r,&scene,&monitor.rcWork);
   }
-  if (syntheticSource) {
-    const POINT corners[] = {{r.left, r.top}, {r.right-1, r.top},
-        {r.left, r.bottom-1}, {r.right-1, r.bottom-1}};
-    for (const POINT point : corners) {
-      // Rounded layered-window corners are intentionally transparent. The
-      // only allowed background is this exact synthetic fixture, never another app.
-      const HWND visible = GetAncestor(WindowFromPoint(point), GA_ROOT);
-      Check(visible == w || visible == syntheticSource,
-          "Refusing screenshot of selection entry over an unverified background");
-    }
-  }
+  if (syntheticSource) Check(SafeEntryCapture(w, syntheticSource, r),
+      "Refusing selection entry capture over an unverified background");
   const int width = r.right-r.left, height = r.bottom-r.top;
   HDC screen = GetDC(nullptr), dc = CreateCompatibleDC(screen);
   BITMAPINFO info{}; info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -284,9 +296,14 @@ void Screenshot(HWND w, const std::wstring& path, HWND syntheticSource = nullptr
     if ((!syntheticSource && GetForegroundWindow() != w) ||
         (syntheticSource && (!IsWindowVisible(w) || GetForegroundWindow() != syntheticSource ||
         GetAncestor(WindowFromPoint(POINT{(r.left+r.right)/2, (r.top+r.bottom)/2}), GA_ROOT) != w))) break;
+    if (syntheticSource && !SafeEntryCapture(w, syntheticSource, r)) break;
     Check(SUCCEEDED(DwmFlush()), "Compositor screenshot synchronization failed");
     Check(BitBlt(dc, 0, 0, width, height, screen, r.left, r.top, SRCCOPY) != 0, "Screenshot failed");
-    GdiFlush(); captured = true;
+    GdiFlush();
+    if (syntheticSource && !SafeEntryCapture(w, syntheticSource, r)) {
+      captured = false; break;  // Discard a frame whose background became unsafe.
+    }
+    captured = true;
     // Observe real on-screen pixels only. Do not SendMessage(WM_PAINT), redraw
     // the control, choose a font for it, or manufacture glyphs in the bitmap.
     const auto* rgb = static_cast<const DWORD*>(pixels);

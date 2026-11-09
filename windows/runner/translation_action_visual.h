@@ -43,7 +43,11 @@ inline double RoundedDistance(double x, double y) {
   return std::hypot(std::max(0.0, dx), std::max(0.0, dy)) +
       std::min(std::max(dx, dy), 0.0) - 8;
 }
-inline bool Hit(double x, double y) { return RoundedDistance(x, y) <= 0; }
+inline bool PixelHit(const std::vector<uint32_t>& pixels, int size, int x, int y) {
+  if (size <= 0 || x < 0 || y < 0 || x >= size || y >= size) return false;
+  const size_t index = static_cast<size_t>(y) * size + x;
+  return index < pixels.size() && (pixels[index] >> 24) != 0;
+}
 inline double Segment(double x, double y, double ax, double ay, double bx, double by) {
   const double dx = bx - ax, dy = by - ay;
   const double t = std::clamp(((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy), 0.0, 1.0);

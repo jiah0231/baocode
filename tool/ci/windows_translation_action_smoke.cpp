@@ -189,7 +189,15 @@ int wmain(int argc, wchar_t** argv) {
   if (entry && IsWindowVisible(entry)) {
     click_attempted = true;
     RECT button{}; GetWindowRect(entry, &button);
-    SetCursorPos((button.left + button.right) / 2, (button.top + button.bottom) / 2);
+    // Fully transparent corners pass to the separate source process, while
+    // painted shadow pixels deliberately share the entry's native/hook hit area.
+    const POINT corner{button.left, button.top};
+    if (GetAncestor(WindowFromPoint(corner), GA_ROOT) != fixture)
+      result = Fail("Transparent entry corner intercepted the external source");
+    const POINT shadow{(button.left + button.right) / 2, button.bottom - 2};
+    SetCursorPos(shadow.x, shadow.y); Pump(50);
+    if (GetAncestor(WindowFromPoint(shadow), GA_ROOT) != entry)
+      result = Fail("Painted entry shadow disagrees with the native hit region");
     Mouse(MOUSEEVENTF_LEFTDOWN); Mouse(MOUSEEVENTF_LEFTUP);
     for (int i = 0; i < 160 && completions.load() == 0; ++i) Pump(10);
     DWORD start = 0, end = 0; SendMessage(control, EM_GETSEL, reinterpret_cast<WPARAM>(&start), reinterpret_cast<LPARAM>(&end));
