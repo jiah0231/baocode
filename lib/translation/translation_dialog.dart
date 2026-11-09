@@ -318,6 +318,8 @@ class _TranslationDialogState extends State<TranslationDialog> {
   }) {
     final l = context.l10n;
     final largeText = MediaQuery.textScalerOf(context).scale(13) > 20;
+    final tightHeight = MediaQuery.sizeOf(context).height < 260;
+    final compactSource = largeText || tightHeight;
     final notices = <String>[
       if (model == null) l.translationError(TranslationFailure.noModel),
       if (restoreFailed)
@@ -336,7 +338,7 @@ class _TranslationDialogState extends State<TranslationDialog> {
             ? '${l.translationAutoTracePaused} ${l.translationTraceWarning}'
             : l.translationTraceWarning,
     ];
-    return Padding(
+    final content = Padding(
       padding: const EdgeInsets.all(8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -423,7 +425,7 @@ class _TranslationDialogState extends State<TranslationDialog> {
             ),
           ),
           const SizedBox(height: 4),
-          if (!largeText)
+          if (!compactSource)
             Row(
               children: [
                 Expanded(
@@ -447,16 +449,17 @@ class _TranslationDialogState extends State<TranslationDialog> {
             focusNode: _sourceFocus,
             semanticsLabel: l.translationSource,
             placeholder: l.translationPlaceholder,
-            minLines: largeText ? 1 : 2,
-            maxLines: largeText ? 1 : 2,
+            minLines: compactSource ? 1 : 2,
+            maxLines: compactSource ? 1 : 2,
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
             onChanged: (_) => _change(() => _edited = true),
           ),
           const SizedBox(height: 4),
-          Text(
-            _busy ? l.translationWorking : l.translationResult,
-            style: const TextStyle(fontSize: 11),
-          ),
+          if (!tightHeight)
+            Text(
+              _busy ? l.translationWorking : l.translationResult,
+              style: const TextStyle(fontSize: 11),
+            ),
           Expanded(
             child: Container(
               decoration: BoxDecoration(
@@ -557,6 +560,25 @@ class _TranslationDialogState extends State<TranslationDialog> {
           ),
         ],
       ),
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxHeight < 180 || constraints.maxWidth < 280) {
+          // Only windows too small for usable controls need page scrolling.
+          // Normal and minimum native sizes keep the footer fixed.
+          return SingleChildScrollView(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: math.max(280, constraints.maxWidth),
+                height: math.max(260, constraints.maxHeight),
+                child: content,
+              ),
+            ),
+          );
+        }
+        return content;
+      },
     );
   }
 

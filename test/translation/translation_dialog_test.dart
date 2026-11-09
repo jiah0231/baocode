@@ -20,6 +20,67 @@ import 'package:baocode/usage/usage_ledger.dart';
 import 'translation_service_test.dart' show configured;
 
 void main() {
+  for (final entry in [
+    (const Size(360, 300), 2.0),
+    (const Size(280, 220), 1.0),
+    (const Size(160, 140), 1.0),
+  ]) {
+    testWidgets(
+      'compact layout stays usable at ${entry.$1} with ${entry.$2} text',
+      (tester) async {
+        tester.view.physicalSize = entry.$1;
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final providers = configured();
+        addTearDown(providers.dispose);
+        await providers.setQuickAskModel('@test/translate');
+        var closed = false;
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildAppTheme(),
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(context)
+                  .copyWith(textScaler: TextScaler.linear(entry.$2)),
+              child: child!,
+            ),
+            home: TranslationDialog(
+              embedded: true,
+              selectedText: 'A short source text with more words to translate.',
+              service: TranslationService(providers: providers),
+              onModelSettings: () {},
+              onClose: () => closed = true,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        for (final label in [
+          'Translate',
+          'Copy translation',
+          'Model settings',
+        ]) {
+          final action = find.widgetWithText(IdeButton, label);
+          if (entry.$2 > 1 || entry.$1.width < 280) {
+            await tester.ensureVisible(action);
+          }
+          await tester.pumpAndSettle();
+          expect(action.hitTestable(), findsOneWidget, reason: label);
+        }
+        expect(
+          tester
+              .getSize(find.byKey(const ValueKey('translation-result-scroll')))
+              .height,
+          greaterThan(15),
+        );
+        await tester.ensureVisible(find.widgetWithText(IdeButton, 'Close'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.widgetWithText(IdeButton, 'Close'));
+        expect(closed, isTrue);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
   testWidgets('starting a workbench below a host listener is build-safe', (
     tester,
   ) async {
