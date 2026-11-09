@@ -640,10 +640,14 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
     // Share a transition already awaiting confirmation, including one
     // started from Settings. A canceled prompt must not immediately repeat.
     if (_switching case final switching?) {
+      final toSeparate = _switchingToSeparate;
       await switching;
-      return multi;
+      // A completed move into the main window must not swallow this newer
+      // explicit request. A canceled move out, however, must not ask twice.
+      return multi || (toSeparate == false && await _enableSeparateWindows());
     }
     if (multi) return true;
+    _switchingToSeparate = true;
     final switching = _switching = () async {
       await _toSeparate();
       if (multi) {
@@ -658,6 +662,7 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
       return multi;
     } finally {
       _switching = null;
+      _switchingToSeparate = null;
     }
   }
 
@@ -1321,6 +1326,7 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
   /// IDE where it was): not asked again until it changes.
   bool? _declined;
   Future<void>? _switching;
+  bool? _switchingToSeparate;
 
   /// settings.json changed: what shows at the next launch, and the IDE
   /// moved to windows of its own or into the main window, as
@@ -1334,9 +1340,11 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
       return;
     }
     if (separate == _declined) return;
-    _switching = (separate ? _toSeparate() : _toMainWindow()).whenComplete(
-      () => _switching = null,
-    );
+    _switchingToSeparate = separate;
+    _switching = (separate ? _toSeparate() : _toMainWindow()).whenComplete(() {
+      _switching = null;
+      _switchingToSeparate = null;
+    });
     unawaited(_switching);
   }
 

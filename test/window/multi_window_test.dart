@@ -301,8 +301,9 @@ void main() {
     );
   });
 
-  _testWindows('the IDE in the main window: New Window (⇧⌘N) from the chat '
-      'shows its start page there', (tester) async {
+  _testWindows('New Window (⇧⌘N) from the default chat opens a native view', (
+    tester,
+  ) async {
     final (windows, host, _) = await _pumpApp(
       tester,
       settings: () => const WindowSettings(ideWindows: IdeWindows.mainWindow),
@@ -316,8 +317,12 @@ void main() {
     for (var i = 0; i < 3; i++) {
       await tester.pump();
     }
-    expect(host.created, isEmpty);
-    expect(_inView(0, find.byType(IdeStartPage)), findsOneWidget);
+    expect(windows.multi, isTrue);
+    expect(host.created, hasLength(1));
+    final opened = windows.ideWindows.single;
+    expect(_inView(opened.viewId, find.byType(IdeStartPage)), findsOneWidget);
+    expect(_inView(0, find.byType(IdeStartPage)), findsNothing);
+    expect(find.byType(Workbench), findsNWidgets(2));
   });
 
   _testWindows('an agent\'s window has the search palette (Ctrl+Shift+P), '

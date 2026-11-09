@@ -1440,6 +1440,20 @@ void main() {
       expect(harness.host.created, isEmpty);
     });
 
+    testWidgets('New Window survives a pending move into the main window', (
+      tester,
+    ) async {
+      final harness = _Harness(tester);
+      await harness.start();
+      await harness.windows.showFolder('/w/a');
+      harness.settings = inMain;
+      harness.windows.settingsChanged();
+      final opened = await harness.windows.newWindow();
+      expect(opened, isNotNull);
+      expect(harness.windows.multi, isTrue);
+      expect(harness.folders, ['/w/a', null]);
+    });
+
     testWidgets('unsupported hosts keep the main-window fallback', (
       tester,
     ) async {

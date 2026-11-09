@@ -2,7 +2,7 @@
 name: Global translation validation
 on:
   push:
-    branches: ['feat/global-translation*', 'feat/windows-new-window']
+    branches: ['feat/global-translation*']
 permissions:
   contents: read
 concurrency:
