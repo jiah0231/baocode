@@ -13,6 +13,9 @@ class TranslationSelectionAction {
   ~TranslationSelectionAction();
   bool Configure(bool enabled, bool dark);
   void Hide();
+  // Physical point from the click message, valid only inside on_click. Cursor
+  // movement while the native message or UIA work is queued cannot replace it.
+  std::optional<POINT> ClickPoint() const { return click_point_; }
   // Valid only synchronously inside on_click. Completion runs on the existing
   // MTA worker and must not access UI/channel objects. No fresh/unbound capture.
   bool CaptureClickedSelection(HWND source, ULONGLONG deadline,
@@ -41,6 +44,7 @@ class TranslationSelectionAction {
   bool shown_ = false;
   bool accepting_click_ = false, click_queued_ = false;
   POINT down_point_{};
+  std::optional<POINT> click_point_;
   DWORD last_up_ = 0;
   POINT last_up_point_{};
   ULONGLONG due_ = 0, expires_ = 0, started_ = 0;

@@ -219,15 +219,14 @@ bool TranslationChannel::ShowPanel(std::optional<int64_t> request_id) {
   };
   const auto selected = anchor_ ? std::optional(rect(*anchor_)) : std::nullopt;
   const auto area = selected_area_ ? std::optional(rect(*selected_area_)) : selected;
-  // Resolve in physical coordinates first, then obtain that monitor's DPI.
-  // Re-evaluate the proximity threshold in its DPI, not the main window's.
-  auto point = translation_panel::FollowPoint({pointer_.x, pointer_.y}, selected, 48, area);
-  HMONITOR monitor = MonitorFromPoint(POINT{point.x, point.y}, MONITOR_DEFAULTTONEAREST);
-  double scale = FlutterDesktopGetDpiForMonitor(monitor) / 96.0;
-  point = translation_panel::FollowPoint({pointer_.x, pointer_.y}, selected,
-      static_cast<int>(48 * scale), area);
-  monitor = MonitorFromPoint(POINT{point.x, point.y}, MONITOR_DEFAULTTONEAREST);
-  scale = FlutterDesktopGetDpiForMonitor(monitor) / 96.0;
+  // Decide pointer proximity in the pointer monitor's DPI, never the main
+  // window's or an endpoint on a differently scaled neighboring display.
+  const HMONITOR pointer_monitor = MonitorFromPoint(pointer_, MONITOR_DEFAULTTONEAREST);
+  const double pointer_scale = FlutterDesktopGetDpiForMonitor(pointer_monitor) / 96.0;
+  const auto point = translation_panel::FollowPoint({pointer_.x, pointer_.y}, selected,
+      static_cast<int>(48 * pointer_scale), area);
+  const HMONITOR monitor = MonitorFromPoint(POINT{point.x, point.y}, MONITOR_DEFAULTTONEAREST);
+  const double scale = FlutterDesktopGetDpiForMonitor(monitor) / 96.0;
   MONITORINFO info = {};
   info.cbSize = sizeof(info);
   if (!GetMonitorInfoW(monitor, &info)) return false;
@@ -316,6 +315,7 @@ void TranslationChannel::CaptureEntry(HWND source) {
   // Allocate/cancel requests synchronously at the physical click, not when a
   // queued MTA job eventually completes. Late clicks can never become fresh.
   BeginRequest(source);
+  if (const auto click = selection_action_->ClickPoint()) pointer_ = *click;
   if (result_) {
     result_->Success(Encode({L"", "focusChanged", false, std::nullopt},
                             pending_ ? pending_->request_id : request_id_));

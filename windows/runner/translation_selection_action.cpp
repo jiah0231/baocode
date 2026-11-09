@@ -631,6 +631,9 @@ LRESULT CALLBACK TranslationSelectionAction::WindowProc(HWND hwnd, UINT message,
     const bool valid = self->candidate_ && self->shown_ && source &&
                        source == GetForegroundWindow() && GetTickCount64() < self->expires_;
     if (valid && self->on_click_) {
+      POINT click{static_cast<short>(LOWORD(lparam)), static_cast<short>(HIWORD(lparam))};
+      if (!ClientToScreen(hwnd, &click)) { self->Hide(); return 0; }
+      self->click_point_ = click;
       // Consume the visible affordance, but preserve THIS generation until its
       // synchronous callback has queued a bound job and allocated requestId.
       self->candidate_ = false;
@@ -639,6 +642,7 @@ LRESULT CALLBACK TranslationSelectionAction::WindowProc(HWND hwnd, UINT message,
       self->accepting_click_ = true;
       self->click_queued_ = false;
       self->on_click_(source);
+      self->click_point_.reset();
       self->accepting_click_ = false;
       if (!self->click_queued_) self->Hide();
     } else {

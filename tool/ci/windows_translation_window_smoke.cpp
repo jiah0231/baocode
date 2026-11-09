@@ -15,6 +15,9 @@
 
 namespace {
 constexpr UINT kPrepare = WM_APP + 23;
+constexpr UINT kPlaceEdge = WM_APP + 24;
+constexpr UINT kHoldSource = WM_APP + 25;
+HANDLE fixtureBusy = nullptr;
 constexpr int kCloseModeCount = 7;
 constexpr int kAltF4StressCount = 6;
 HWND edit = nullptr;
@@ -39,6 +42,17 @@ LRESULT CALLBACK Fixture(HWND w, UINT m, WPARAM a, LPARAM b) {
     SetWindowTextW(edit, text);
     ShowWindow(w, SW_SHOW); SetForegroundWindow(w); SetFocus(edit);
     SendMessageW(edit, EM_SETSEL, 0, b ? 0 : -1); return 1;
+  }
+  if (m == kHoldSource) {
+    SetEvent(fixtureBusy);
+    Sleep(160);  // Only our fixture's UI thread, never a user's application.
+    ResetEvent(fixtureBusy);
+    return 1;
+  }
+  if (m == kPlaceEdge) {
+    RECT client{}; GetClientRect(w,&client);
+    SetWindowPos(edit,nullptr,client.right-450,client.bottom-100,420,80,SWP_NOZORDER|SWP_NOACTIVATE);
+    return 1;
   }
   if (m == WM_DESTROY) { PostQuitMessage(0); return 0; }
   return DefWindowProcW(w, m, a, b);
@@ -231,7 +245,9 @@ void Screenshot(HWND w, const std::wstring& path, HWND syntheticSource = nullptr
     wchar_t sourceClass[128]{}; GetClassNameW(contextSource, sourceClass, 128);
     Check(!syntheticSource && std::wstring(sourceClass) == L"BaoTranslationWindowFixture" &&
         IsWindowVisible(contextSource), "Refusing context capture without synthetic source");
-    RECT source{}; Check(GetWindowRect(contextSource,&source) != 0,"Synthetic source bounds missing");
+    RECT source{};
+    Check(SUCCEEDED(DwmGetWindowAttribute(contextSource,DWMWA_EXTENDED_FRAME_BOUNDS,&source,sizeof(source))),
+        "Synthetic source visible bounds missing");
     RECT scene{}; UnionRect(&scene,&r,&source);
     MONITORINFO monitor{}; monitor.cbSize = sizeof(monitor);
     Check(GetMonitorInfoW(MonitorFromWindow(w,MONITOR_DEFAULTTONEAREST),&monitor) != 0,
@@ -323,6 +339,9 @@ int wmain(int argc, wchar_t** argv) {
     return 2;
   }
   if (argc > 1 && std::wstring(argv[1]) == L"--fixture") {
+    const std::wstring eventName = L"Local\\BaoPopupSourceBusy-" + std::to_wstring(GetCurrentProcessId());
+    fixtureBusy = CreateEventW(nullptr,TRUE,FALSE,eventName.c_str());
+    if (!fixtureBusy) return 2;
     LoadLibraryW(L"Msftedit.dll"); WNDCLASSW c{}; c.lpfnWndProc = Fixture;
     c.hInstance = GetModuleHandleW(nullptr); c.lpszClassName = L"BaoTranslationWindowFixture"; RegisterClassW(&c);
     HWND w = CreateWindowW(c.lpszClassName, L"Synthetic translation fixture", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
@@ -335,6 +354,7 @@ int wmain(int argc, wchar_t** argv) {
   appPid = wcstoul(argv[1], nullptr, 10);
   PROCESS_INFORMATION fixtureProcess{}; HWND fixture = nullptr;
   IUIAutomation* uia = nullptr; int result = 0;
+  HANDLE sourceBusy = nullptr;
   CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
   try {
     Check(SUCCEEDED(CoCreateInstance(CLSID_CUIAutomation, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&uia))), "UIA unavailable");
@@ -346,6 +366,23 @@ int wmain(int argc, wchar_t** argv) {
     STARTUPINFOW startup{}; startup.cb = sizeof(startup);
     Check(CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &fixtureProcess) != 0, "Fixture launch failed");
     Check(Wait([&] { fixture = FindWindowW(L"BaoTranslationWindowFixture", nullptr); return fixture != nullptr; }), "Fixture unavailable");
+    const std::wstring eventName = L"Local\\BaoPopupSourceBusy-" + std::to_wstring(fixtureProcess.dwProcessId);
+    sourceBusy = OpenEventW(SYNCHRONIZE | EVENT_MODIFY_STATE,FALSE,eventName.c_str());
+    Check(sourceBusy != nullptr,"Synthetic source delay event unavailable");
+    const auto holdSource = [&] {
+      ResetEvent(sourceBusy);
+      Check(PostMessageW(fixture,kHoldSource,0,0) != 0,"Cannot delay synthetic source");
+      Check(WaitForSingleObject(sourceBusy,1000) == WAIT_OBJECT_0,"Synthetic source did not enter delay");
+    };
+    const auto moveDuringCapture = [&](POINT original) {
+      Sleep(25);
+      Check(WaitForSingleObject(sourceBusy,0) == WAIT_OBJECT_0,"Synthetic delay ended before pointer movement");
+      Check(!popup || !IsWindowVisible(popup),"Delayed capture completed before the pointer-movement probe");
+      Mouse(POINT{original.x+300,original.y+200},0);
+      POINT now{}; GetCursorPos(&now);
+      Check(abs(now.x-original.x)>100 || abs(now.y-original.y)>100,"Pointer did not move during capture");
+      std::printf("CAPTURE_POINTER_MOVED|trigger=%ld,%ld|later=%ld,%ld|sourceStillDelayed=1\n",original.x,original.y,now.x,now.y);
+    };
     // Seed a decoy, then require sequence and Unicode content to survive every interaction.
     Check(OpenClipboard(fixture) != 0, "Clipboard unavailable"); EmptyClipboard();
     const wchar_t decoy[] = L"Synthetic clipboard decoy: must never be translated";
@@ -386,7 +423,9 @@ int wmain(int argc, wchar_t** argv) {
         Mouse(trigger, 0); Sleep(30);
         POINT capturedPointer{}; Check(GetCursorPos(&capturedPointer) != 0, "Pointer snapshot failed");
         TraceMain(state, close, "before_open", visible, iconic);
+        if (state == 0 && iteration == 0) holdSource();
         Keys({VK_CONTROL, VK_MENU, 'Y'});
+        if (state == 0 && iteration == 0) moveDuringCapture(capturedPointer);
         Check(Wait([] { EnumWindows(FindApp, 0); return popup && IsWindowVisible(popup); }), "Real global shortcut did not open popup");
         TraceMain(state, close, "after_open", visible, iconic);
         Check(popup != mainWindow, "Translation reused the main HWND");
@@ -455,7 +494,10 @@ int wmain(int argc, wchar_t** argv) {
       if (selection == 0) {
         Screenshot(action, std::wstring(argv[2]) + L".entry.bmp", fixture, darkTheme);
       }
-      Mouse(center, 0); Mouse(center, MOUSEEVENTF_LEFTDOWN); Sleep(50); Mouse(center, MOUSEEVENTF_LEFTUP);
+      Mouse(center, 0); Mouse(center, MOUSEEVENTF_LEFTDOWN); Sleep(50);
+      if (selection == 0) holdSource();
+      Mouse(center, MOUSEEVENTF_LEFTUP);
+      if (selection == 0) moveDuringCapture(center);
       Check(Wait([] { EnumWindows(FindApp, 0); return popup && IsWindowVisible(popup); }), "Clicking selection entry did not open independent popup");
       Check(popup != mainWindow && !IsWindowVisible(mainWindow), "Selection entry reused or revealed main window");
       Check(Wait([&] { return !IsWindowVisible(action); }), "Clicked selection entry did not dismiss");
@@ -482,8 +524,10 @@ int wmain(int argc, wchar_t** argv) {
     MONITORINFO edgeMonitor{}; edgeMonitor.cbSize = sizeof(edgeMonitor);
     Check(GetMonitorInfoW(MonitorFromWindow(fixture, MONITOR_DEFAULTTONEAREST), &edgeMonitor) != 0,
         "Edge fixture monitor unavailable");
-    SetWindowPos(fixture, nullptr, edgeMonitor.rcWork.right-500, edgeMonitor.rcWork.bottom-140,
-        0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    // Keep the entire evidence background inside our synthetic source. A
+    // partially off-screen fixture would expose unrelated CI desktop pixels.
+    ShowWindow(fixture,SW_MAXIMIZE);
+    SendMessageW(fixture,kPlaceEdge,0,0);
     AllowSetForegroundWindow(fixtureProcess.dwProcessId); SendMessageW(fixture,kPrepare,0,0);
     Check(Wait([&] { return GetForegroundWindow() == fixture; }), "Edge fixture focus unavailable");
     const RECT edgeSelection = FixtureSelection(uia);
@@ -546,5 +590,6 @@ int wmain(int argc, wchar_t** argv) {
   } catch (const std::exception& e) { std::fprintf(stderr, "FAIL: %s\n", e.what()); result = 1; }
   if (fixture) PostMessageW(fixture, WM_CLOSE, 0, 0);
   if (fixtureProcess.hProcess) { if (WaitForSingleObject(fixtureProcess.hProcess, 3000) == WAIT_TIMEOUT) TerminateProcess(fixtureProcess.hProcess, 1); CloseHandle(fixtureProcess.hProcess); CloseHandle(fixtureProcess.hThread); }
+  if (sourceBusy) CloseHandle(sourceBusy);
   if (uia) uia->Release(); CoUninitialize(); return result;
 }
