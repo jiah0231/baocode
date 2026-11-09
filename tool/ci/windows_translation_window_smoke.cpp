@@ -18,6 +18,7 @@ constexpr UINT kPrepare = WM_APP + 23;
 constexpr UINT kPlaceEdge = WM_APP + 24;
 constexpr UINT kHoldSource = WM_APP + 25;
 HANDLE fixtureBusy = nullptr;
+HANDLE fixtureRelease = nullptr;
 constexpr int kCloseModeCount = 7;
 constexpr int kAltF4StressCount = 6;
 HWND edit = nullptr;
@@ -45,7 +46,9 @@ LRESULT CALLBACK Fixture(HWND w, UINT m, WPARAM a, LPARAM b) {
   }
   if (m == kHoldSource) {
     SetEvent(fixtureBusy);
-    Sleep(160);  // Only our fixture's UI thread, never a user's application.
+    // Coordinate pointer movement, not a provider timeout. Bound entry reads
+    // intentionally fail closed after a 150ms connection timeout.
+    WaitForSingleObject(fixtureRelease,100);
     ResetEvent(fixtureBusy);
     return 1;
   }
@@ -341,7 +344,8 @@ int wmain(int argc, wchar_t** argv) {
   if (argc > 1 && std::wstring(argv[1]) == L"--fixture") {
     const std::wstring eventName = L"Local\\BaoPopupSourceBusy-" + std::to_wstring(GetCurrentProcessId());
     fixtureBusy = CreateEventW(nullptr,TRUE,FALSE,eventName.c_str());
-    if (!fixtureBusy) return 2;
+    fixtureRelease = CreateEventW(nullptr,TRUE,FALSE,(eventName+L"-release").c_str());
+    if (!fixtureBusy || !fixtureRelease) return 2;
     LoadLibraryW(L"Msftedit.dll"); WNDCLASSW c{}; c.lpfnWndProc = Fixture;
     c.hInstance = GetModuleHandleW(nullptr); c.lpszClassName = L"BaoTranslationWindowFixture"; RegisterClassW(&c);
     HWND w = CreateWindowW(c.lpszClassName, L"Synthetic translation fixture", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
@@ -355,6 +359,7 @@ int wmain(int argc, wchar_t** argv) {
   PROCESS_INFORMATION fixtureProcess{}; HWND fixture = nullptr;
   IUIAutomation* uia = nullptr; int result = 0;
   HANDLE sourceBusy = nullptr;
+  HANDLE sourceRelease = nullptr;
   CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
   try {
     Check(SUCCEEDED(CoCreateInstance(CLSID_CUIAutomation, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&uia))), "UIA unavailable");
@@ -368,19 +373,28 @@ int wmain(int argc, wchar_t** argv) {
     Check(Wait([&] { fixture = FindWindowW(L"BaoTranslationWindowFixture", nullptr); return fixture != nullptr; }), "Fixture unavailable");
     const std::wstring eventName = L"Local\\BaoPopupSourceBusy-" + std::to_wstring(fixtureProcess.dwProcessId);
     sourceBusy = OpenEventW(SYNCHRONIZE | EVENT_MODIFY_STATE,FALSE,eventName.c_str());
-    Check(sourceBusy != nullptr,"Synthetic source delay event unavailable");
+    sourceRelease = OpenEventW(EVENT_MODIFY_STATE,FALSE,(eventName+L"-release").c_str());
+    Check(sourceBusy && sourceRelease,"Synthetic source delay events unavailable");
     const auto holdSource = [&] {
       ResetEvent(sourceBusy);
+      ResetEvent(sourceRelease);
       Check(PostMessageW(fixture,kHoldSource,0,0) != 0,"Cannot delay synthetic source");
       Check(WaitForSingleObject(sourceBusy,1000) == WAIT_OBJECT_0,"Synthetic source did not enter delay");
     };
-    const auto moveDuringCapture = [&](POINT original) {
-      Sleep(25);
+    const auto moveDuringCapture = [&](POINT original, HWND clickedEntry = nullptr) {
+      if (clickedEntry) {
+        // Hidden means the real mouse-up handler consumed the click and saved
+        // its event coordinates. Do not race the click with the later move.
+        for (int i=0; i<50 && IsWindowVisible(clickedEntry); ++i) Sleep(1);
+        Check(!IsWindowVisible(clickedEntry),"Selection entry did not consume the click within the movement probe budget");
+      } else Sleep(25);
       Check(WaitForSingleObject(sourceBusy,0) == WAIT_OBJECT_0,"Synthetic delay ended before pointer movement");
       Check(!popup || !IsWindowVisible(popup),"Delayed capture completed before the pointer-movement probe");
       Mouse(POINT{original.x+300,original.y+200},0);
       POINT now{}; GetCursorPos(&now);
       Check(abs(now.x-original.x)>100 || abs(now.y-original.y)>100,"Pointer did not move during capture");
+      Check(WaitForSingleObject(sourceBusy,0) == WAIT_OBJECT_0,"Synthetic delay ended during pointer movement");
+      SetEvent(sourceRelease);
       std::printf("CAPTURE_POINTER_MOVED|trigger=%ld,%ld|later=%ld,%ld|sourceStillDelayed=1\n",original.x,original.y,now.x,now.y);
     };
     // Seed a decoy, then require sequence and Unicode content to survive every interaction.
@@ -497,7 +511,7 @@ int wmain(int argc, wchar_t** argv) {
       Mouse(center, 0); Mouse(center, MOUSEEVENTF_LEFTDOWN); Sleep(50);
       if (selection == 0) holdSource();
       Mouse(center, MOUSEEVENTF_LEFTUP);
-      if (selection == 0) moveDuringCapture(center);
+      if (selection == 0) moveDuringCapture(center,action);
       Check(Wait([] { EnumWindows(FindApp, 0); return popup && IsWindowVisible(popup); }), "Clicking selection entry did not open independent popup");
       Check(popup != mainWindow && !IsWindowVisible(mainWindow), "Selection entry reused or revealed main window");
       Check(Wait([&] { return !IsWindowVisible(action); }), "Clicked selection entry did not dismiss");
@@ -588,8 +602,10 @@ int wmain(int argc, wchar_t** argv) {
     Check(Wait([] { if (!RegisterHotKey(nullptr, 0x6123, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'Y')) return false; UnregisterHotKey(nullptr, 0x6123); return true; }), "Quit leaked global hotkey");
     std::puts("PASS actual release app: selection UIA, hidden/minimized independence, toolwindow, positioning, Escape/X/Alt+F4/blur/hotkey toggle/Ctrl+W/Ctrl+Shift+W, fresh reopen, six extra AltF4 cycles per main state with both release orders, main-source release isolation and fresh main chord, clipboard sequence, mouse drag/entry click/fresh reopen/focus, native cleanup and hotkey release");
   } catch (const std::exception& e) { std::fprintf(stderr, "FAIL: %s\n", e.what()); result = 1; }
+  if (sourceRelease) SetEvent(sourceRelease);
   if (fixture) PostMessageW(fixture, WM_CLOSE, 0, 0);
   if (fixtureProcess.hProcess) { if (WaitForSingleObject(fixtureProcess.hProcess, 3000) == WAIT_TIMEOUT) TerminateProcess(fixtureProcess.hProcess, 1); CloseHandle(fixtureProcess.hProcess); CloseHandle(fixtureProcess.hThread); }
   if (sourceBusy) CloseHandle(sourceBusy);
+  if (sourceRelease) CloseHandle(sourceRelease);
   if (uia) uia->Release(); CoUninitialize(); return result;
 }
