@@ -1249,6 +1249,9 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
 
   @override
   void windowFocused(int viewId) {
+    // Native view setup can report focus before the first frame. The launch
+    // plan, not that provisional focus, decides which windows will show.
+    if (_launch != null) return;
     if (defaultTargetPlatform == TargetPlatform.windows) _reattachTextInput();
     final window = windowOf(viewId);
     if (window == null) return;

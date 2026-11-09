@@ -88,6 +88,9 @@ bool FlutterWindow::OnCreate() {
   // Shown with its first frame — unless the app starts in the IDE's windows
   // alone (see AppWindows::MainShownAtLaunch), which show themselves.
   flutter_controller_->engine()->SetNextFrameCallback([this]() {
+    if (app_windows_ != nullptr && app_windows_->main_visibility_managed()) {
+      return;
+    }
     if (AppWindows::MainShownAtLaunch()) {
       ::ShowWindow(GetHandle(), app_windows_ != nullptr
                                     ? app_windows_->MainShowCommand(SW_SHOWNORMAL)

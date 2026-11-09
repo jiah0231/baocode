@@ -382,6 +382,8 @@ HWND AppWindows::FrontWindow() const {
 
 void AppWindows::Focus(int64_t view_id) {
   if (view_id == 0) {
+    main_visibility_managed_ = true;
+    ::KillTimer(main_, kHoldBackTimer);
     BringToFront(main_, MainShowCommand(SW_SHOW));
     return;
   }
@@ -415,6 +417,7 @@ bool AppWindows::MainShownAtLaunch() {
 }
 
 void AppWindows::HoldMainBack() {
+  if (main_visibility_managed_) return;
   ::SetTimer(main_, kHoldBackTimer, kHoldBackMilliseconds,
              &AppWindows::HoldBackTimer);
 }
@@ -423,7 +426,7 @@ void CALLBACK AppWindows::HoldBackTimer(HWND window, UINT message,
                                         UINT_PTR id, DWORD time) {
   ::KillTimer(window, id);
   AppWindows* windows = g_app_windows;
-  if (windows == nullptr) {
+  if (windows == nullptr || windows->main_visibility_managed_) {
     return;
   }
   // Flutter never started its windows, or none of them showed: the main
@@ -481,7 +484,10 @@ void AppWindows::KeepMainFrame() {
 }
 
 void AppWindows::WindowActivated(int64_t view_id) {
-  if (started_) {
+  const HWND window = HandleOf(view_id);
+  // Flutter may assign focus to a view before its top-level window shows.
+  // This must not turn a deliberately hidden startup window into a shown one.
+  if (started_ && window != nullptr && ::IsWindowVisible(window)) {
     Send("focused", flutter::EncodableValue(view_id));
   }
 }
@@ -878,6 +884,10 @@ void AppWindows::ClosePendingWindows() {
 }
 
 void AppWindows::Hide(int64_t view_id) {
+  if (view_id == 0) {
+    main_visibility_managed_ = true;
+    ::KillTimer(main_, kHoldBackTimer);
+  }
   if (const HWND window = HandleOf(view_id)) {
     ::ShowWindow(window, SW_HIDE);
   }

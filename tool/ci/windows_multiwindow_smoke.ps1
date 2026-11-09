@@ -19,6 +19,10 @@ public static class BaoCodeMultiwindow {
   [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint process);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr hwnd, StringBuilder name, int count);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int count);
+  public static string Title(IntPtr hwnd) {
+    var text = new StringBuilder(512); GetWindowText(hwnd, text, text.Capacity); return text.ToString();
+  }
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr GetProp(IntPtr hwnd, string name);
   [DllImport("user32.dll", SetLastError = true)] public static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
   public static IntPtr[] Windows(int process, bool visibleOnly) {
@@ -57,10 +61,18 @@ function Start-NewWindow {
 function Wait-WindowCount($app, [int]$expected) {
   $deadline = [DateTime]::UtcNow.AddSeconds(60)
   $stable = 0
+  $previous = -1
   do {
     $app.Refresh()
     if ($app.HasExited) { throw "Owner exited waiting for $expected windows: $($app.ExitCode)" }
     $windows = @([BaoCodeMultiwindow]::Windows($app.Id, $true))
+    if ($windows.Count -ne $previous) {
+      $previous = $windows.Count
+      Write-Host "WINDOW_COUNT pid=$($app.Id) expected=$expected actual=$previous"
+      foreach ($window in [BaoCodeMultiwindow]::Windows($app.Id, $false)) {
+        Write-Host "WINDOW hwnd=$window visible=$([BaoCodeMultiwindow]::IsWindowVisible($window)) receiver=$($window -eq [BaoCodeMultiwindow]::Receiver($app.Id)) title=$([BaoCodeMultiwindow]::Title($window))"
+      }
+    }
     if ($windows.Count -eq $expected) { $stable++ } else { $stable = 0 }
     if ($stable -ge 5) { return }
     Start-Sleep -Milliseconds 200
@@ -162,6 +174,16 @@ try {
   if ($app.ExitCode -ne 0) { throw "Warm-default app crashed: $($app.ExitCode)" }
   Write-Host 'PASS: ordinary default launch, warm promotion, repeated windows, hide main, forward again, clean exit'
 
+} catch {
+  Write-Host "ISOLATED_DATA $env:BAOCODE_DATA_DIR"
+  Get-ChildItem -LiteralPath $root -File -Recurse | Where-Object {
+    $_.Name -in @('settings.json', 'windows.json', 'events.log', 'errors.log')
+  } | ForEach-Object {
+    Write-Host "DIAGNOSTIC_FILE $($_.FullName)"
+    Get-Content -LiteralPath $_.FullName -Tail 100
+  }
+  Get-ItemProperty 'HKCU:\Software\BaoCode' | Select-Object MainShownAtLaunch | Format-List
+  throw
 } finally {
   foreach ($process in $processes) {
     try {

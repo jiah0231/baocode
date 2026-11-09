@@ -2,7 +2,7 @@
 name: Windows multiwindow validation
 on:
   push:
-    branches: ['feat/windows-new-window']
+    branches: ['feat/windows-new-window', 'feat/global-translation-floating-window']
   workflow_dispatch:
 permissions:
   contents: read
@@ -53,6 +53,7 @@ jobs:
       - name: Test window and launch regressions
         run: flutter test --no-pub --reporter expanded --timeout 2m test/window test/platform/open_requests_test.dart test/keybindings/window_keybindings_test.dart test/update/version_test.dart
       - name: Build actual Windows release app
+        id: build
         shell: pwsh
         run: |
           dart run tool/build_windows.dart --arch x64 --custom-updates --build-only
@@ -64,6 +65,7 @@ jobs:
         shell: pwsh
         run: ./tool/ci/windows_multiwindow_smoke.ps1 -Executable build/windows/x64/runner/Release/baocode.exe
       - name: Keep test-only release bundle
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         uses: actions/upload-artifact@v6
         with:
           name: multiwindow-test-bundle-${{ github.sha }}

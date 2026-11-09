@@ -1383,6 +1383,9 @@ void main() {
       harness.workspace.openIdeFolder('/w/a');
       harness.workspace.layout = WorkspaceLayout.ide;
       await harness.windows.prepareLaunch(request: LaunchRequest.newWindow);
+      // A hidden native view may receive provisional focus before first draw.
+      harness.host.events!.windowFocused(harness.windows.chat.viewId);
+      expect(harness.windows.chat.shown, isFalse);
       await harness.windows.restore();
       await harness.windows.handleCode(
         CodeArgs.parse(['--new-window'], cwd: '.'),
