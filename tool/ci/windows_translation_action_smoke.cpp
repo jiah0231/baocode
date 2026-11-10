@@ -112,6 +112,22 @@ bool NativeSelectionEstablished(HWND fixture, HWND source_edit) {
   return begin != end && GetForegroundWindow() == fixture &&
       GetGUIThreadInfo(GetWindowThreadProcessId(fixture, nullptr), &gui) && gui.hwndFocus == source_edit;
 }
+bool ShiftSelectionGeometry(HWND fixture, HWND source_edit) {
+  RECT before{}, after{};
+  DWORD begin = 0, end = 0, next_begin = 0, next_end = 0;
+  if (!GetWindowRect(source_edit, &before)) return false;
+  SendMessage(source_edit, EM_GETSEL, reinterpret_cast<WPARAM>(&begin), reinterpret_cast<LPARAM>(&end));
+  SendMessage(fixture, kShiftSelectedEdit, 0, 0);
+  SendMessage(source_edit, EM_GETSEL, reinterpret_cast<WPARAM>(&next_begin), reinterpret_cast<LPARAM>(&next_end));
+  if (!GetWindowRect(source_edit, &after)) return false;
+  const bool verified = before.left + 220 == after.left && before.top == after.top &&
+      begin != end && begin == next_begin && end == next_end &&
+      NativeSelectionEstablished(fixture, source_edit);
+  std::printf("ACTION_GEOMETRY_FIXTURE|verified=%d|deltaX=%ld|deltaY=%ld|endpointsUnchanged=%d\n",
+      verified ? 1 : 0, after.left - before.left, after.top - before.top,
+      begin == next_begin && end == next_end ? 1 : 0);
+  return verified;
+}
 int Fail(const char* reason) { std::fprintf(stderr, "%s\n", reason); return 1; }
 }
 int wmain(int argc, wchar_t** argv) {
@@ -169,9 +185,8 @@ int wmain(int argc, wchar_t** argv) {
       mutation_verified = second_edit && GetGUIThreadInfo(GetWindowThreadProcessId(source, nullptr), &gui) &&
           gui.hwndFocus == second_edit;
     } else if (mutate_before_queue == 3) {
-      SendMessage(source, kShiftSelectedEdit, 0, 0);
       HWND source_edit = FindWindowExW(source, nullptr, L"RICHEDIT50W", nullptr);
-      mutation_verified = NativeSelectionEstablished(source, source_edit);
+      mutation_verified = ShiftSelectionGeometry(source, source_edit);
     }
     const bool queued = action->CaptureClickedSelection(source, GetTickCount64() + 1500,
         [] { return cancel_capture.load(); },
@@ -241,9 +256,8 @@ int wmain(int argc, wchar_t** argv) {
   SetCursorPos(rect.left + 3, rect.top + 8); Mouse(MOUSEEVENTF_LEFTDOWN);
   for (int i = 1; i <= 8; ++i) { SetCursorPos(rect.left + 3 + i * 15, rect.top + 8); Pump(35); }
   Mouse(MOUSEEVENTF_LEFTUP);
-  SendMessage(fixture, kShiftSelectedEdit, 0, 0);
-  if (!NativeSelectionEstablished(fixture, control))
-    result = Fail("Geometry mismatch fixture lost its nonempty selection or focus");
+  if (Visible() || !ShiftSelectionGeometry(fixture, control))
+    result = Fail("Geometry mismatch fixture did not move only geometry before discovery");
   Pump(1600);
   Diagnose("unrelated_selection_geometry", fixture);
   if (Visible() || clicks != 1 || completions.load() != 1)
