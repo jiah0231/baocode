@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/l10n/l10n.dart';
+import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/window/app_windows.dart';
 import 'package:baocode/window/window_settings.dart';
 import 'package:baocode/workspace/main_window.dart';
@@ -21,16 +22,26 @@ class _DelayedStore extends MemoryPreferenceStore {
   }
 }
 
+class _DelayedRemoteCatalog extends FakeCatalog {
+  static const folder = 'ssh://test-host/project';
+  final ready = Completer<List<SessionRecord>>();
+
+  @override
+  Future<List<SessionRecord>> sessionsIn(String cwd) =>
+      cwd == folder ? ready.future : super.sessionsIn(cwd);
+}
+
 class _Harness {
   _Harness(
     WidgetTester tester, {
     MemoryPreferenceStore? store,
     MemoryPreferenceStore? drafts,
     PreferenceStore? preferences,
+    KernelDescriptor? kernel,
   }) : host = FakeWindowHost(tester.view),
        store = store ?? MemoryPreferenceStore(),
        workspace = Workspace(
-         kernels: [claude],
+         kernels: [kernel ?? claude],
          preferences: preferences ?? MemoryPreferenceStore(),
          drafts: drafts ?? MemoryPreferenceStore(),
        ) {
@@ -66,6 +77,94 @@ class _Harness {
 }
 
 void main() {
+  for (final found in <bool?>[true, false, null]) {
+    testWidgets(
+      'remote restoration waits without blocking launch: found=$found',
+      (tester) async {
+        final catalog = _DelayedRemoteCatalog();
+        const state = {
+          'project': _DelayedRemoteCatalog.folder,
+          'sessionId': 'remote-session',
+          'kernel': 'claude-code',
+        };
+        final h = _Harness(
+          tester,
+          kernel: KernelDescriptor(
+            id: claude.id,
+            label: claude.label,
+            icon: claude.icon,
+            description: '',
+            catalog: catalog,
+            create: claude.create,
+          ),
+          preferences: MemoryPreferenceStore({
+            'sidebar': {
+              'folders': [_DelayedRemoteCatalog.folder],
+            },
+          }),
+          store: MemoryPreferenceStore({
+            'version': 1,
+            'leftIn': 'ide',
+            'windows': [
+              {
+                'folder': _DelayedRemoteCatalog.folder,
+                'chatMode': true,
+                'conversation': state,
+              },
+            ],
+          }),
+        );
+        await h.start(tester);
+        final main = h.workspace.current;
+        await h.windows.prepareLaunch();
+        await h.windows.restore();
+        final window = h.windows.ideWindows.single;
+        expect(catalog.ready.isCompleted, isFalse);
+        expect(window.thread, isNull);
+        await h.windows.saved;
+        final pending = ((await h.store.read())['windows'] as List)
+            .cast<Map>()
+            .singleWhere((entry) => entry['folder'] != null);
+        expect(pending['conversation'], state);
+        expect(pending['chatMode'], isTrue);
+
+        if (found == null) {
+          catalog.ready.completeError(StateError('Remote host unavailable'));
+        } else {
+          catalog.ready.complete([
+            if (found)
+              SessionRecord(
+                id: 'remote-session',
+                title: 'Remote conversation',
+                updatedAt: DateTime(2026, 9, 28),
+                cwd: _DelayedRemoteCatalog.folder,
+              ),
+          ]);
+        }
+        await tester.runAsync(() async {
+          await Future<void>.delayed(Duration.zero);
+        });
+        if (found == null) {
+          expect(window.thread, isNull);
+          expect(h.workspace.windowAgentRestorePending(state), isTrue);
+          await h.windows.saved;
+          final saved = ((await h.store.read())['windows'] as List)
+              .cast<Map>()
+              .singleWhere((entry) => entry['folder'] != null);
+          expect(saved['conversation'], state);
+          expect(saved['chatMode'], isTrue);
+        } else {
+          expect(window.chatMode, isTrue);
+          expect(window.thread, isNotNull);
+          expect(window.thread!.id, found ? 'remote-session' : null);
+          expect(window.thread!.project.path, _DelayedRemoteCatalog.folder);
+        }
+        expect(h.workspace.current, same(main));
+        await h.dispose();
+      },
+    );
+  }
+
   testWidgets('B and C keep independent chats, selection, focus and IDE', (
     tester,
   ) async {

@@ -93,6 +93,8 @@ class AppWindow {
   /// takes its place: see [AppWindows.showInWindow]).
   AgentThread? get thread => _thread;
   AgentThread? _thread;
+  Map<String, Object?>? _pendingConversation;
+  bool _pendingChatMode = false;
 
   /// An IDE window can return to its own conversation without leaving its
   /// native view or taking over the main chat's selection.
@@ -572,7 +574,10 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
           conversation: kept.conversation,
           chatMode: kept.chatMode,
         );
-        if (window != null && kept.chatMode && window.thread == null) {
+        if (window != null &&
+            kept.chatMode &&
+            window.thread == null &&
+            window._pendingConversation == null) {
           showChatIn(window);
         }
       }
@@ -739,11 +744,18 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
     );
     if (conversation != null) {
       created._thread = workspace.restoreWindowAgent(conversation);
+      if (created.thread == null &&
+          workspace.windowAgentRestorePending(conversation)) {
+        created._pendingConversation = conversation;
+        created._pendingChatMode = chatMode;
+      }
     }
     created._chatMode = chatMode && created.thread != null;
     _ide.add(created);
     _mru.insert(0, created);
-    if (created.thread != null) _watchAgents();
+    if (created.thread != null || created._pendingConversation != null) {
+      _watchAgents();
+    }
     _changed();
     // Shown once it has something to show.
     await _nextFrame();
@@ -812,6 +824,8 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
       showChat();
       return;
     }
+    window._pendingConversation = null;
+    window._pendingChatMode = false;
     if (window.thread == null || !workspace.threads.contains(window.thread)) {
       window._thread = workspace.newWindowAgent(_chatFolder(window));
     }
@@ -832,7 +846,12 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
 
   /// Shows the retained editor in the same view. No chat or editor is closed.
   void showIdeIn(AppWindow window) {
-    if (!window.isIde || !window._chatMode) return;
+    if (!window.isIde) return;
+    if (window._pendingChatMode) {
+      window._pendingChatMode = false;
+      _save();
+    }
+    if (!window._chatMode) return;
     window._chatMode = false;
     _changed();
     _retitle(window);
@@ -1054,6 +1073,25 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
     _checkingAgents = true;
     try {
       var changed = false;
+      for (final window in _ide) {
+        final pending = window._pendingConversation;
+        if (pending == null) continue;
+        final restored = workspace.restoreWindowAgent(pending);
+        if (restored == null && workspace.windowAgentRestorePending(pending)) {
+          continue;
+        }
+        final chatMode = window._pendingChatMode;
+        window._pendingConversation = null;
+        window._pendingChatMode = false;
+        window._thread = restored;
+        if (chatMode) {
+          window._thread ??= workspace.newWindowAgent(
+            pending['project'] as String,
+          );
+        }
+        window._chatMode = chatMode;
+        changed = true;
+      }
       for (final window in [
         ..._agents,
         ..._ide.where((w) => w.thread != null),
@@ -1150,6 +1188,8 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
     if (!await _confirmUnsaved([window])) return;
     if (folder != null) workspace.noteIdeFolder(folder);
     if (window.delegate case final delegate?) window.detach(delegate);
+    window._pendingConversation = null;
+    window._pendingChatMode = false;
     window._setFolder(folder);
     window._chatMode = false;
     _focus(window);
@@ -1566,6 +1606,8 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
       if (window.isIde && !window.chatMode) showChatIn(window);
       return;
     }
+    window._pendingConversation = null;
+    window._pendingChatMode = false;
     window._thread = thread;
     if (window.isIde) window._chatMode = true;
     _watchAgents();
@@ -1771,10 +1813,12 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
                   : _KeptWindow(
                       folder: window.folder,
                       frame: window.frame,
-                      chatMode: window.chatMode,
-                      conversation: window.thread == null
-                          ? null
-                          : workspace.windowAgentState(window.thread!),
+                      chatMode: window.chatMode || window._pendingChatMode,
+                      conversation:
+                          window._pendingConversation ??
+                          (window.thread == null
+                              ? null
+                              : workspace.windowAgentState(window.thread!)),
                     ))
               .toJson(),
       ],

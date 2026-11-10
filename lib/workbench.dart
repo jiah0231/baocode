@@ -3180,8 +3180,9 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
                 ideClaudeCommitMessage(prompt, cancel: cancel, location: path),
             agentEdits: _ideAgentEdits.putIfAbsent(path, IdeAgentEdits.new)
               ..sessions = _agentSessionsIn(path),
-            chat: shown
-                // On the IDE's card for it, its tabs on the window's color.
+            // A native IDE remains mounted behind its window-local chat,
+            // including the embedded composer's state and scroll position.
+            chat: shown || _ideWindow
                 ? _buildIdeChat(path)
                 : const SizedBox.shrink(),
             onAddToChat: _workspace.ideChat(path) == null

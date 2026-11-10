@@ -727,9 +727,13 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     return project;
   }
 
+  final Set<String> _sessionListingStarted = {};
+  final Set<(String, String)> _sessionListingsComplete = {};
+
   /// Lists the sessions the kernels keep in [project]. Not waited for: to
   /// find them, Claude Code's are all read, which may take a while.
   Future<void> _listKept(Project project) async {
+    _sessionListingStarted.add(project.path);
     final before = _threads.length;
     for (final kernel in kernels) {
       final List<SessionRecord> sessions;
@@ -741,11 +745,15 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
         continue;
       }
       if (_disposed) return;
+      _sessionListingsComplete.add((project.path, kernel.id));
       for (final session in sessions) {
         _addKept(kernel, project, session);
       }
     }
-    if (_threads.length != before) notifyListeners();
+    if (!_disposed &&
+        (_threads.length != before || RemoteLocation.isRemote(project.path))) {
+      notifyListeners();
+    }
   }
 
   /// Remote projects whose sessions were not asked for, being off the
@@ -1151,6 +1159,27 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
         kind.name: ?thread.session.selected(kind),
     },
   };
+
+  /// A remote catalog may still be loading, or unavailable until reconnect.
+  /// Only a successful listing can establish that a saved session is gone.
+  bool windowAgentRestorePending(Map<String, Object?> state) {
+    final path = state['project'];
+    if (path is! String ||
+        !RemoteLocation.isRemote(path) ||
+        state['sessionId'] is! String) {
+      return false;
+    }
+    final matching = kernels.where(
+      (kernel) => state['kernel'] == null || kernel.id == state['kernel'],
+    );
+    if (matching.isEmpty) return false;
+    if (!_sessionListingStarted.contains(path)) {
+      unawaited(_listKept(_project(path)));
+    }
+    return matching.any(
+      (kernel) => !_sessionListingsComplete.contains((path, kernel.id)),
+    );
+  }
 
   AgentThread? restoreWindowAgent(Map<String, Object?> state) {
     final path = state['project'];

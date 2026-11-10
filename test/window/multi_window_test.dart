@@ -213,10 +213,25 @@ void main() {
       // each surface needs its own widget key, while its data stays shared.
       workspace.openIdeChat(window.folder!, local);
       ide.showChat();
+      final embeddedChat = _inView(
+        window.viewId,
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is ChatScreen &&
+              widget.embedded &&
+              identical(widget.session, local.session),
+          skipOffstage: false,
+        ),
+        skipOffstage: false,
+      );
+      State? embeddedState;
       for (var round = 0; round < 3; round++) {
         windows.showIdeIn(window);
         await tester.pump();
         await tester.pump();
+        expect(embeddedChat, findsOneWidget);
+        embeddedState ??= tester.state(embeddedChat);
+        expect(tester.state(embeddedChat), same(embeddedState));
         await tester.tap(
           _inView(window.viewId, find.byType(BackToChatButton)).first,
         );
@@ -224,6 +239,19 @@ void main() {
         await tester.pump();
         expect(window.thread, same(local));
         expect(window.delegate!.ideSpace, same(space));
+        expect(embeddedChat, findsOneWidget);
+        expect(tester.state(embeddedChat), same(embeddedState));
+        expect(
+          tester.state<IdeWorkbenchState>(
+            _inView(
+              window.viewId,
+              find.byType(IdeWorkbench, skipOffstage: false),
+              skipOffstage: false,
+            ),
+          ),
+          same(ide),
+        );
+        expect(space.documents, contains(document));
         expect(
           _inView(
             window.viewId,
