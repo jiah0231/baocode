@@ -1,0 +1,37 @@
+name: Edge public PDF selection diagnostic
+on:
+  push:
+    branches: ['test/edge-public-pdf-selection-20261111']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pdf:
+    if: github.repository == 'jiah0231/baocode'
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Fetch and verify public fixture
+        shell: pwsh
+        run: |
+          $pdf = Join-Path $env:RUNNER_TEMP '2608.11260.pdf'
+          Invoke-WebRequest -Uri 'https://arxiv.org/pdf/2608.11260' -OutFile $pdf
+          if ((Get-FileHash $pdf -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'd159155dffad685a388562d1d2a4e0f869a5473be90c6c06381ab68a381451dc') { throw 'Public fixture changed' }
+      - name: Calibrate actual PDF viewport
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+        run: |
+          ./tool/ci/run_edge_pdf_probe.ps1 -Repository . -Pdf (Join-Path $env:RUNNER_TEMP '2608.11260.pdf') -Output (Join-Path $env:RUNNER_TEMP 'edge-public-pdf-evidence') -Zoom 150 -ScrollY 450 -CalibrateOnly
+      - name: Keep isolated public PDF evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: edge-public-pdf-${{ github.sha }}
+          retention-days: 3
+          if-no-files-found: error
+          path: ${{ runner.temp }}/edge-public-pdf-evidence/
