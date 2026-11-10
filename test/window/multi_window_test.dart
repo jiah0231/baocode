@@ -194,6 +194,29 @@ void main() {
       expect(host.focused, window.viewId);
       expect(workspace.current, same(main));
       expect(workspace.grid.panes, mainGrid);
+      // Exercise the actual composer input path, rather than saving directly
+      // to the model: its client must belong to this native view.
+      expect(tester.testTextInput.hasAnyClients, isTrue);
+      final inputClient = tester.testTextInput.log.lastWhere(
+        (call) => call.method == 'TextInput.setClient',
+      );
+      final inputConfiguration = (inputClient.arguments as List)[1] as Map;
+      expect(inputConfiguration['viewId'], window.viewId);
+      expect(
+        View.of(FocusManager.instance.primaryFocus!.context!).viewId,
+        window.viewId,
+      );
+      tester.testTextInput.updateEditingValue(
+        const TextEditingValue(
+          text: 'local input without clicking composer',
+          selection: TextSelection.collapsed(offset: 37),
+        ),
+      );
+      await tester.pump();
+      expect(
+        local.session.draft.content,
+        'local input without clicking composer',
+      );
       expect(_inView(window.viewId, find.byType(ChatScreen)), findsOneWidget);
       expect(_inView(window.viewId, find.byType(IdeWorkbench)), findsNothing);
       expect(

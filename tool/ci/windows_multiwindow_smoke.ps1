@@ -1,7 +1,8 @@
 # Real release-app integration, restricted to disposable Windows Actions runners.
 # Enumerate and close only windows belonging to processes this test started.
 param(
-  [Parameter(Mandatory = $true)][string]$Executable
+  [Parameter(Mandatory = $true)][string]$Executable,
+  [string]$DiagnosticsDirectory = (Join-Path $env:RUNNER_TEMP 'baocode-multiwindow-diagnostics')
 )
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or !$env:RUNNER_TEMP -or $env:OS -ne 'Windows_NT') {
@@ -25,6 +26,8 @@ public static class BaoCodeMultiwindow {
   }
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr GetProp(IntPtr hwnd, string name);
   [DllImport("user32.dll", SetLastError = true)] public static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
   [DllImport("user32.dll", SetLastError = true)] private static extern uint SendInput(uint count, INPUT[] inputs, int size);
@@ -263,6 +266,14 @@ try {
     'models.providers' = @()
     'update.mode' = 'none'
   } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $user 'settings.json') -Encoding utf8
+  # The input scenario models an existing user's windows, not first-run setup.
+  # An empty provider list otherwise opens the real model welcome modal and
+  # intentionally prevents typing into the composer behind it. Keep providers
+  # empty (no external requests), but mark that onboarding as already seen.
+  $stateDirectory = Join-Path $env:BAOCODE_DATA_DIR 'state'
+  New-Item -ItemType Directory -Force $stateDirectory | Out-Null
+  @{ 'models.welcomed' = $true } | ConvertTo-Json |
+    Set-Content -LiteralPath (Join-Path $stateDirectory 'storage.json') -Encoding utf8
   $app = Start-NewWindow
   Wait-WindowCount $app 1
   $a = @([BaoCodeMultiwindow]::Windows($app.Id, $true))[0]
@@ -314,11 +325,45 @@ try {
 
 } catch {
   Write-Host "ISOLATED_DATA $env:BAOCODE_DATA_DIR"
+  New-Item -ItemType Directory -Force $DiagnosticsDirectory | Out-Null
+  # Capture only the synthetic test app's owned foreground window, never the desktop.
+  try {
+    $foreground = [BaoCodeMultiwindow]::GetForegroundWindow()
+    $owned = @($processes | ForEach-Object {
+      if (!$_.HasExited) { [BaoCodeMultiwindow]::Windows($_.Id, $true) }
+    })
+    if ($owned -contains $foreground) {
+      Add-Type -AssemblyName System.Drawing
+      $rect = [BaoCodeMultiwindow+RECT]::new()
+      if ([BaoCodeMultiwindow]::GetWindowRect($foreground, [ref]$rect)) {
+        $bitmap = [Drawing.Bitmap]::new($rect.Right - $rect.Left, $rect.Bottom - $rect.Top)
+        $graphics = [Drawing.Graphics]::FromImage($bitmap)
+        try {
+          $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bitmap.Size)
+          $bitmap.Save((Join-Path $DiagnosticsDirectory 'owned-window.png'), [Drawing.Imaging.ImageFormat]::Png)
+        } finally { $graphics.Dispose(); $bitmap.Dispose() }
+      }
+      try {
+        Add-Type -AssemblyName UIAutomationClient
+        Add-Type -AssemblyName UIAutomationTypes
+        $element = [Windows.Automation.AutomationElement]::FromHandle($foreground)
+        $elements = $element.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
+        for ($i = 0; $i -lt [Math]::Min($elements.Count, 300); $i++) {
+          $current = $elements[$i].Current
+          Write-Host "OWNED_UIA type=$($current.ControlType.ProgrammaticName) focused=$($current.HasKeyboardFocus) enabled=$($current.IsEnabled) name=$($current.Name)"
+        }
+      } catch { Write-Host "OWNED_UIA unavailable: $_" }
+    } else { Write-Host "OWNED_SCREENSHOT omitted: foreground $foreground is not owned" }
+  } catch { Write-Host "OWNED_DIAGNOSTIC unavailable: $_" }
   Get-ChildItem -LiteralPath $root -File -Recurse | Where-Object {
-    $_.Name -in @('settings.json', 'windows.json', 'events.log', 'errors.log')
+    $_.Name -in @('settings.json', 'windows.json', 'drafts.json', 'storage.json', 'events.log', 'errors.log')
   } | ForEach-Object {
     Write-Host "DIAGNOSTIC_FILE $($_.FullName)"
     Get-Content -LiteralPath $_.FullName -Tail 100
+    $relative = [IO.Path]::GetRelativePath($root, $_.FullName)
+    $copy = Join-Path $DiagnosticsDirectory $relative
+    New-Item -ItemType Directory -Force (Split-Path $copy) | Out-Null
+    Copy-Item -LiteralPath $_.FullName -Destination $copy
   }
   Get-ItemProperty 'HKCU:\Software\BaoCode' | Select-Object MainShownAtLaunch | Format-List
   throw
