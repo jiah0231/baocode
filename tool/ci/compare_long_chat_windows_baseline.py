@@ -50,7 +50,8 @@ ARTIFACTS = Path("build/perf/long-chat-ci/windows-baseline")
 # Infrastructure failures are not evidence of a completed testcase baseline.
 INFRASTRUCTURE = re.compile(
     r"failed to load|compilation failed|compiler (?:crash|error)|"
-    r"error when reading|could not (?:load|resolve|find)|"
+    r"error when reading|could not (?:load|resolve)|"
+    r"unable to load asset|could not\s+find (?:package|asset|file|sdk|flutter|dart|compiler)\b|"
     r"timed out|timeoutexception|"
     r"test (?:was )?cancel(?:ed|led)|connection (?:closed|reset)|"
     r"lost connection|shell subprocess|exited unexpectedly|"
@@ -103,6 +104,7 @@ def canonical_suite(raw: str, root: Path) -> str:
 
 def parse_run(path: Path, stderr: Path, returncode: int, root: Path) -> Run:
     suites, tests, ended, errors, expected_counts = {}, {}, {}, {}, {}
+    diagnostics = {}
     suite_count = None
     started = done = None
     for number, line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
@@ -165,6 +167,21 @@ def parse_run(path: Path, stderr: Path, returncode: int, root: Path) -> Run:
             if tid not in tests or not isinstance(event.get("error"), str):
                 raise InvalidRun("Unattributed error")
             errors.setdefault(tid, []).append(event)
+        elif kind == "print" and "EXCEPTION CAUGHT BY" in event.get("message", ""):
+            tid = event.get("testID")
+            if tid not in tests:
+                raise InvalidRun("Unattributed Flutter exception diagnostic")
+            message = event["message"]
+            marker = "\nWhen the exception was thrown, this was the stack:"
+            if marker not in message:
+                raise InvalidRun("Incomplete Flutter exception diagnostic")
+            diagnostic = message.split(marker, 1)[0]
+            category = "assertion" if re.search(
+                r"The following (?:TestFailure|assertion) was thrown", diagnostic
+            ) else "runtime"
+            diagnostics.setdefault(tid, []).append(
+                (category, normalize_message(diagnostic, root))
+            )
         elif kind == "done":
             done = event
         elif kind not in ("allSuites", "group", "print", "debug"):
@@ -189,7 +206,7 @@ def parse_run(path: Path, stderr: Path, returncode: int, root: Path) -> Run:
         if not isinstance(hidden, bool):
             raise InvalidRun("Invalid hidden flag")
         if hidden or name.startswith("loading ") or name.endswith(("(setUpAll)", "(tearDownAll)")):
-            if result["result"] != "success" or errors.get(tid):
+            if result["result"] != "success" or errors.get(tid) or diagnostics.get(tid):
                 raise InvalidRun(f"Suite loading/setup failed: {name}")
             continue
         key = (suites[test["suiteID"]], name)
@@ -197,12 +214,21 @@ def parse_run(path: Path, stderr: Path, returncode: int, root: Path) -> Run:
         if result["result"] in ("failure", "error"):
             if not errors.get(tid) or any(type(e.get("isFailure")) is not bool for e in errors[tid]):
                 raise InvalidRun(f"Unconfirmed test failure: {key}")
-            signatures[key] = tuple(sorted(
-                ("assertion" if e["isFailure"] else "runtime",
-                 normalize_message(e["error"], root)) for e in errors[tid]
-            ))
+            signatures_for_test = []
+            for error in errors[tid]:
+                if error["error"].startswith("Test failed. See exception logs above."):
+                    if not diagnostics.get(tid):
+                        raise InvalidRun(f"Missing diagnostic for generic Flutter failure: {key}")
+                    # isFailure=false on this transport wrapper does not mean
+                    # the underlying Flutter exception was a runtime error.
+                    category = "flutter_failure_wrapper"
+                else:
+                    category = "assertion" if error["isFailure"] else "runtime"
+                signatures_for_test.append((category, normalize_message(error["error"], root)))
+            signatures_for_test.extend(diagnostics.get(tid, []))
+            signatures[key] = tuple(sorted(signatures_for_test))
             failures.add(key)
-        elif errors.get(tid):
+        elif errors.get(tid) or diagnostics.get(tid):
             raise InvalidRun(f"Error reported for successful test: {key}")
     if {suite for suite, _ in cases} != set(SUITES):
         raise InvalidRun("A requested suite executed no test cases")

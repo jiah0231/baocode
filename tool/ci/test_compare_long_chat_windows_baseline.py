@@ -105,6 +105,50 @@ class ParserTests(unittest.TestCase):
         error["isFailure"] = True
         self.assertFalse(gate.compare(self.parse(events, 1), run)["passed_comparison"])
 
+    def flutter_failure(self, diagnostic, exception="assertion", stack="#0 stable stack"):
+        events = stream((0,))
+        index = next(i for i, event in enumerate(events) if event["type"] == "error")
+        events[index].update(error="Test failed. See exception logs above.", isFailure=False)
+        events.insert(index, {"type": "print", "testID": 1, "message":
+            "══╡ EXCEPTION CAUGHT BY FLUTTER TEST FRAMEWORK ╞══\n"
+            f"The following {exception} was thrown running a test:\n{diagnostic}\n"
+            "\nWhen the exception was thrown, this was the stack:\n" + stack})
+        return events
+
+    def test_widget_finder_failure_is_not_compiler_failure(self):
+        events = self.flutter_failure('The finder (used in a call to "tap()") could not find any matching widgets.')
+        run = self.parse(events, 1)
+        report = gate.compare(run, self.parse(events, 1))
+        self.assertTrue(report["passed_comparison"])
+        self.assertIn("assertion", [e["kind"] for e in report["shared_failures"][0]["errors"]])
+
+    def test_generic_wrapper_requires_identical_root_diagnostics(self):
+        baseline = self.parse(self.flutter_failure("Expected: 1\n Actual: 2", "TestFailure"), 1)
+        changed = self.parse(self.flutter_failure("Expected: 1\n Actual: 3", "TestFailure"), 1)
+        self.assertFalse(gate.compare(changed, baseline)["passed_comparison"])
+        changed_stack = self.parse(self.flutter_failure("Expected: 1\n Actual: 2", "TestFailure", "#7 other stack"), 1)
+        self.assertTrue(gate.compare(changed_stack, baseline)["passed_comparison"])
+        runtime = self.parse(self.flutter_failure("Bad state: No element", "StateError"), 1)
+        self.assertFalse(gate.compare(runtime, baseline)["passed_comparison"])
+        events = self.flutter_failure("Expected: 1")
+        events = [e for e in events if e["type"] != "print"]
+        with self.assertRaisesRegex(gate.InvalidRun, "Missing diagnostic"):
+            self.parse(events, 1)
+
+    def test_compiler_asset_and_incomplete_diagnostics_still_fail(self):
+        for message in ("Could not find package missing", "Unable to load asset: x.png",
+                        "Failed to load test: compilation failed"):
+            with self.subTest(message=message), self.assertRaises(gate.InvalidRun):
+                self.parse(self.flutter_failure(message), 1)
+        events = self.flutter_failure("Expected: 1")
+        diagnostic = next(e for e in events if e["type"] == "print")
+        diagnostic["message"] = diagnostic["message"].split("\nWhen the exception")[0]
+        with self.assertRaisesRegex(gate.InvalidRun, "Incomplete Flutter"):
+            self.parse(events, 1)
+        diagnostic["testID"] = 999
+        with self.assertRaisesRegex(gate.InvalidRun, "Unattributed Flutter"):
+            self.parse(events, 1)
+
     def test_stderr_errors_and_exit_mismatch(self):
         with self.assertRaises(gate.InvalidRun):
             self.parse(stream(), stderr="Error: compiler broke")

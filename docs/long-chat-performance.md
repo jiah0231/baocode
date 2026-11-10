@@ -62,6 +62,37 @@ are CI artifacts.
 Profile results require a visible desktop and must not be compared across
 unlike machines. Existing release checks remain independently required.
 
+### Recorded Windows profile
+
+Run [42861390402](https://github.com/jiah0231/baocode/actions/runs/42861390402)
+at `7b56aac44fb7c1a0b2ef902e75bf5cc797cf5742` passed native checks, 97
+affected conversation tests, analyze/format, profile compilation and both
+profile scenarios. Its overall result remained red at the baseline comparison
+parser, which mistook a widget-finder assertion for an infrastructure failure.
+The two completed raw test runs and all four profile runs were retained.
+Reparsing those unchanged raw test streams with the corrected parser found
+94 matching cases across seven suites, 27 identical failures, no introduced
+failures and no changed failure signatures. The signatures include the actual
+Flutter assertion/exception text, not just its generic "Test failed" wrapper.
+This offline classification does not change the original CI run's red status.
+
+The profile fixture uses 40 synthetic turns, not the 2,000-turn work-count
+fixture above. On Windows Server 2025 with four cores, Skia profile, 64 Hz,
+1008 x 712 at 1x, medians of two runs were:
+
+| Phase | Frames/s | Build p90 ms | Build p99 ms | Delta-to-frame p90 ms |
+| --- | ---: | ---: | ---: | ---: |
+| Stream | 63 | 7.26 | 9.91 | 16.1 |
+| Stream, semantics enabled | 63 | 7.71 | 10.70 | 17.4 |
+| Initial load | 39 | 25.8 | 64.74 | 56.6 |
+| Initial load, semantics enabled | 38 | 26.2 | 36.74 | 52.7 |
+
+All four raw profile runs were complete and had no `disturbed` flags.
+Initial loading still exceeds frame budgets. These are patched-only results,
+not a before/after FPS comparison or proof about a particular user's session.
+The [raw artifact](https://github.com/jiah0231/baocode/actions/runs/42861390402/artifacts/13787426715)
+is retained until 2026-11-17.
+
 ## Existing unrelated test discrepancy
 
 `test/transcript_test.dart`, test `a turn done is timed on its message; a stopped
