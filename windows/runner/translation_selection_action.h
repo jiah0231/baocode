@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <vector>
 #include "translation_selection.h"
+#include "translation_gesture_geometry.h"
 
 // A metadata-only mouse selection affordance. Text capture is exclusively the
 // caller's explicit-click callback. All public methods run on the UI thread.
@@ -52,6 +53,7 @@ class TranslationSelectionAction {
   bool shown_ = false;
   bool accepting_click_ = false, click_queued_ = false;
   POINT down_point_{};
+  translation_gesture::Gesture gesture_;
   std::optional<POINT> click_point_;
   DWORD last_up_ = 0;
   POINT last_up_point_{};

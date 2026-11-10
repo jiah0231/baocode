@@ -24,6 +24,7 @@ bool input_failed = false;
 HWND captured = nullptr;
 constexpr UINT kPrepare = WM_APP + 22;
 constexpr UINT kSwitchEdit = WM_APP + 23;
+constexpr UINT kShiftSelectedEdit = WM_APP + 24;
 LRESULT CALLBACK Fixture(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
   if (message == WM_CREATE) {
     edit = CreateWindowW(L"RICHEDIT50W", L"Select these sample words for translation",
@@ -43,10 +44,17 @@ LRESULT CALLBACK Fixture(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) 
     return 0;
   }
   if (message == kPrepare) {
+    SetWindowPos(edit, nullptr, 20, 20, 480, 80, SWP_NOZORDER | SWP_NOACTIVATE);
     SetForegroundWindow(hwnd);
     const HWND target = wparam == 2 ? ordinary_button : (wparam == 1 ? password : edit);
     SetFocus(target);
     if (wparam != 2) SendMessage(target, EM_SETSEL, 0, 0);
+    return 0;
+  }
+  if (message == kShiftSelectedEdit) {
+    // Preserve focus/text/endpoints, but make the provider's selected range
+    // spatially unrelated to the just-completed physical drag.
+    SetWindowPos(edit, nullptr, 240, 20, 480, 80, SWP_NOZORDER | SWP_NOACTIVATE);
     return 0;
   }
   if (message == WM_DESTROY) { PostQuitMessage(0); return 0; }
@@ -104,6 +112,22 @@ bool NativeSelectionEstablished(HWND fixture, HWND source_edit) {
   return begin != end && GetForegroundWindow() == fixture &&
       GetGUIThreadInfo(GetWindowThreadProcessId(fixture, nullptr), &gui) && gui.hwndFocus == source_edit;
 }
+bool ShiftSelectionGeometry(HWND fixture, HWND source_edit) {
+  RECT before{}, after{};
+  DWORD begin = 0, end = 0, next_begin = 0, next_end = 0;
+  if (!GetWindowRect(source_edit, &before)) return false;
+  SendMessage(source_edit, EM_GETSEL, reinterpret_cast<WPARAM>(&begin), reinterpret_cast<LPARAM>(&end));
+  SendMessage(fixture, kShiftSelectedEdit, 0, 0);
+  SendMessage(source_edit, EM_GETSEL, reinterpret_cast<WPARAM>(&next_begin), reinterpret_cast<LPARAM>(&next_end));
+  if (!GetWindowRect(source_edit, &after)) return false;
+  const bool verified = before.left + 220 == after.left && before.top == after.top &&
+      begin != end && begin == next_begin && end == next_end &&
+      NativeSelectionEstablished(fixture, source_edit);
+  std::printf("ACTION_GEOMETRY_FIXTURE|verified=%d|deltaX=%ld|deltaY=%ld|endpointsUnchanged=%d\n",
+      verified ? 1 : 0, after.left - before.left, after.top - before.top,
+      begin == next_begin && end == next_end ? 1 : 0);
+  return verified;
+}
 int Fail(const char* reason) { std::fprintf(stderr, "%s\n", reason); return 1; }
 }
 int wmain(int argc, wchar_t** argv) {
@@ -160,6 +184,9 @@ int wmain(int argc, wchar_t** argv) {
       GUITHREADINFO gui{}; gui.cbSize = sizeof(gui);
       mutation_verified = second_edit && GetGUIThreadInfo(GetWindowThreadProcessId(source, nullptr), &gui) &&
           gui.hwndFocus == second_edit;
+    } else if (mutate_before_queue == 3) {
+      HWND source_edit = FindWindowExW(source, nullptr, L"RICHEDIT50W", nullptr);
+      mutation_verified = ShiftSelectionGeometry(source, source_edit);
     }
     const bool queued = action->CaptureClickedSelection(source, GetTickCount64() + 1500,
         [] { return cancel_capture.load(); },
@@ -225,6 +252,16 @@ int wmain(int argc, wchar_t** argv) {
     result = Fail("Positive entry click did not complete; negative-case click baseline is invalid");
   action->Hide();
   if (!cancel_capture.load()) result = Fail("Finished click lost invalidation link before delivery");
+  SendMessage(fixture, kPrepare, 0, 0); Pump(150);
+  SetCursorPos(rect.left + 3, rect.top + 8); Mouse(MOUSEEVENTF_LEFTDOWN);
+  for (int i = 1; i <= 8; ++i) { SetCursorPos(rect.left + 3 + i * 15, rect.top + 8); Pump(35); }
+  Mouse(MOUSEEVENTF_LEFTUP);
+  if (Visible() || !ShiftSelectionGeometry(fixture, control))
+    result = Fail("Geometry mismatch fixture did not move only geometry before discovery");
+  Pump(1600);
+  Diagnose("unrelated_selection_geometry", fixture);
+  if (Visible() || clicks != 1 || completions.load() != 1)
+    result = Fail("Spatially unrelated selection showed an entry or read text");
   // A drag gesture is not evidence of selected text. Keep the earlier
   // RichEdit selection intact and verify a focused ordinary button cannot
   // cause a stale selection from another control to expose an entry.
@@ -263,7 +300,7 @@ int wmain(int argc, wchar_t** argv) {
   // Re-arm a real entry. Its accepted physical click changes the selection or
   // focused edit in the SAME source HWND immediately before queueing the read.
   // This ensures the verifier is exercised rather than a prior timer hiding it.
-  for (int mutation = 0; mutation < 3; ++mutation) {
+  for (int mutation = 0; mutation < 4; ++mutation) {
     SendMessage(fixture, kPrepare, 0, 0); Pump(150);
     SetCursorPos(rect.left + 3, rect.top + 8); Mouse(MOUSEEVENTF_LEFTDOWN);
     for (int i = 1; i <= 8; ++i) { SetCursorPos(rect.left + 3 + i * 15, rect.top + 8); Pump(35); }
@@ -292,7 +329,7 @@ int wmain(int argc, wchar_t** argv) {
     if (SendInput(2, mouse, sizeof(INPUT)) != 2) result = Fail("Old-entry click input failed");
     for (int i = 0; i < 160 && completions.load() == before_completions; ++i) Pump(10);
     mutate_before_queue = -1;
-    Diagnose(mutation == 0 ? "changed_range_before_read" : (mutation == 1 ? "changed_control_before_read" : "cancel_after_queue"), fixture);
+    Diagnose(mutation == 0 ? "changed_range_before_read" : (mutation == 1 ? "changed_control_before_read" : (mutation == 2 ? "cancel_after_queue" : "moved_geometry_before_read")), fixture);
     { std::lock_guard<std::mutex> lock(capture_mutex);
       if (clicks != before_clicks + 1 || queued_clicks != before_queued + 1 ||
           completions.load() != before_completions + 1 || !mutation_verified || bound_result.status == "notQueued")
@@ -307,7 +344,7 @@ int wmain(int argc, wchar_t** argv) {
   if (FindWindowW(L"BaoCodeTranslationSelectionAction", nullptr)) result = Fail("Destructor leaked entry window");
   DestroyWindow(dispatcher); PostMessage(fixture, WM_CLOSE, 0, 0);
   WaitForSingleObject(process.hProcess, 2000); CloseHandle(process.hProcess); CloseHandle(process.hThread);
-  if (!result) std::puts("Translation action drag/no-selection/non-text/password/nonactivation/click/cleanup passed");
+  if (!result) std::puts("Translation action drag/geometry-mismatch/no-selection/non-text/password/nonactivation/click/cleanup passed");
   if (input_failed) result = Fail("Fixture mouse input was not inserted");
   return result;
 }
