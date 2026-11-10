@@ -146,20 +146,54 @@ namespace {
     for(UINT i=0;t&&i<SysStringLen(t);++i)printf("\\u%04X",static_cast<unsigned>(t[i]));
     puts("");
   }
-  int Selected(ComPtr<IUIAutomation> uia,bool read,int documentLimit=8) {
+  int Selected(ComPtr<IUIAutomation> uia,bool read,int documentLimit=8,bool focusParentsOnly=false) {
     Scoped();
     ComPtr<IUIAutomationElement> root;
     Check(SUCCEEDED(uia->ElementFromHandle(browser,&root)),"UIA root unavailable");
+    HRESULT hr=E_FAIL;
+    int found=0;
+    std::vector<ComPtr<IUIAutomationElement>> chosen;
+#if defined(BAOCODE_PUBLIC_PDF_IA2_DIAGNOSTIC)
+    ComPtr<IUIAutomationElement> boundFocus;
+    ComPtr<IUIAutomationTreeWalker> boundWalker;
+    int boundFocusPid=0;
+    if(focusParentsOnly) {
+      if(FAILED(uia->get_ControlViewWalker(&boundWalker)) ||
+          FAILED(uia->GetFocusedElement(&boundFocus)) || !boundFocus ||
+          FAILED(boundFocus->get_CurrentProcessId(&boundFocusPid)) ||
+          !edge_pdf_ia2::SafeElement(boundFocus.Get(),boundFocusPid,true) ||
+          !edge_pdf_ia2::InSource(uia.Get(),boundWalker.Get(),root.Get(),boundFocus.Get())) {
+        puts("UIA_FOCUS_TARGET_REJECT|unsafe_or_unbound_focus");return 0;
+      }
+      ComPtr<IUIAutomationElement> node=boundFocus;
+      for(int depth=0;node&&depth<=4;++depth) {
+        CONTROLTYPEID type=0;
+        if(FAILED(node->get_CurrentControlType(&type)) ||
+            !edge_pdf_ia2::SafeElement(node.Get(),boundFocusPid,depth==0) ||
+            (type!=UIA_GroupControlTypeId && type!=UIA_DocumentControlTypeId &&
+             !(depth==0 && type==UIA_TextControlTypeId))) {
+          puts("UIA_FOCUS_TARGET_REJECT|unsafe_control_path");return 0;
+        }
+        if(depth==0 || type==UIA_DocumentControlTypeId)chosen.push_back(node);
+        if(type==UIA_DocumentControlTypeId)break;
+        ComPtr<IUIAutomationElement> parent;
+        if(FAILED(boundWalker->GetParentElement(node.Get(),&parent)))break;
+        node=parent;
+      }
+      printf("UIA_TARGETS|mode=focused_control_and_bounded_document_parent|processedTargets=%zu|maxTargets=2\n",chosen.size());
+    } else
+#endif
+    {
     ComPtr<IUIAutomationCondition> condition;
     uia->CreatePropertyCondition(UIA_IsTextPatternAvailablePropertyId,[] {
       VARIANT v{};v.vt=VT_BOOL;v.boolVal=VARIANT_TRUE;return v;
     }
     (),&condition);
     ComPtr<IUIAutomationElementArray> elements;
-    HRESULT hr=root->FindAll(TreeScope_Subtree,condition.Get(),&elements);
+    hr=root->FindAll(TreeScope_Subtree,condition.Get(),&elements);
     printf("UIA_ENUM|hr=0x%08lX|warm=%d\n",static_cast<unsigned long>(hr),!read);
     if(FAILED(hr)||!elements)return 0;
-    int count=0,found=0;
+    int count=0;
     elements->get_Length(&count);
     Check(count>=0&&count<=2000,"Unexpected huge isolated document tree");
     // Enumerate metadata only. Many PDF text children inherit the same pattern
@@ -184,10 +218,26 @@ namespace {
     printf("UIA_TARGETS|availableTextPatternElements=%d|documentElements=%d|focusedNonDocumentElements=%d|processedTargets=%zu|maxDocuments=%d|maxFocusedNonDocument=1\n",
         count,documentCount,focusedNonDocumentCount,targets.size(),documentLimit);
     for(int n:targets) {
+      ComPtr<IUIAutomationElement> element;
+      if(SUCCEEDED(elements->GetElement(n,&element))&&element)chosen.push_back(element);
+    }
+    }
+    int n=-1;
+    for(const auto& e:chosen) {
+      ++n;
       Scoped();
-      ComPtr<IUIAutomationElement> e;
-      elements->GetElement(n,&e);
-      if(!e)continue;
+#if defined(BAOCODE_PUBLIC_PDF_IA2_DIAGNOSTIC)
+      if(focusParentsOnly) {
+        ComPtr<IUIAutomationElement> now;
+        if(FAILED(uia->GetFocusedElement(&now)) ||
+            !edge_pdf_ia2::Same(uia.Get(),now.Get(),boundFocus.Get()) ||
+            !edge_pdf_ia2::SafeElement(boundFocus.Get(),boundFocusPid,true) ||
+            !edge_pdf_ia2::SafeElement(e.Get(),boundFocusPid,n==0) ||
+            !edge_pdf_ia2::InSource(uia.Get(),boundWalker.Get(),root.Get(),e.Get())) {
+          puts("UIA_FOCUS_TARGET_REJECT|identity_changed");return found;
+        }
+      }
+#endif
       // Recheck current target metadata immediately before pattern access.
       CONTROLTYPEID targetType=0;
       BOOL targetFocused=FALSE;
@@ -195,8 +245,7 @@ namespace {
       if(targetType!=UIA_DocumentControlTypeId &&
           (FAILED(e->get_CurrentHasKeyboardFocus(&targetFocused))||!targetFocused))continue;
       BOOL password=TRUE;
-      e->get_CurrentIsPassword(&password);
-      if(password)continue;
+      if(FAILED(e->get_CurrentIsPassword(&password))||password)continue;
       ComPtr<IUIAutomationTextPattern> pattern;
       e->GetCurrentPatternAs(UIA_TextPatternId,IID_PPV_ARGS(&pattern));
       if(!pattern)continue;
@@ -398,11 +447,11 @@ int wmain(int argc,wchar_t** argv) {
     // Both comparisons follow production icon/click evidence. Limit each
     // snapshot to one Document and one focused non-Document TextPattern.
     puts("RAW_UIA_PHASE|BEFORE_IA2");
-    Selected(uia,true,1);
+    Selected(uia,true,1,true);
     edge_pdf_ia2::Run(uia.Get(), browser, [] { Scoped(); });
     puts("RAW_UIA_PHASE|AFTER_IA2");
     phraseMatched=false;
-    int selected=Selected(uia,true,1);
+    int selected=Selected(uia,true,1,true);
 #else
     int selected=Selected(uia,true);
 #endif

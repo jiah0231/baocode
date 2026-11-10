@@ -7,6 +7,7 @@
 #include <functional>
 #include <cstdio>
 #include <string>
+#include <vector>
 #include <wrl/client.h>
 
 namespace edge_pdf_ia2 {
@@ -43,8 +44,11 @@ inline bool SafeElement(IUIAutomationElement* element, int expectedPid,
 }
 inline bool SafeAccessible(IAccessible* accessible, HWND source) {
   HWND native = nullptr;
-  if (FAILED(WindowFromAccessibleObject(accessible, &native)) || !native ||
-      GetAncestor(native, GA_ROOT) != source) return false;
+  const HRESULT windowHr = WindowFromAccessibleObject(accessible, &native);
+  Hr("WindowFromAccessibleObject", windowHr);
+  printf("IA2_NATIVE_SOURCE|windowPresent=%d|rootMatches=%d\n",
+      native != nullptr, native && GetAncestor(native, GA_ROOT) == source);
+  if (FAILED(windowHr) || !native || GetAncestor(native, GA_ROOT) != source) return false;
   DWORD sourcePid = 0, nativePid = 0;
   GetWindowThreadProcessId(source, &sourcePid);
   GetWindowThreadProcessId(native, &nativePid);
@@ -52,6 +56,9 @@ inline bool SafeAccessible(IAccessible* accessible, HWND source) {
   VARIANT self{}; self.vt = VT_I4; self.lVal = CHILDID_SELF;
   VARIANT state{};
   const HRESULT hr = accessible->get_accState(self, &state);
+  Hr("get_accState_self", hr);
+  printf("IA2_MSAA_STATE|variantType=%u|value=0x%08lX\n",
+      static_cast<unsigned>(state.vt), static_cast<unsigned long>(state.vt == VT_I4 ? state.lVal : 0));
   const bool safe = SUCCEEDED(hr) && state.vt == VT_I4 &&
       !(state.lVal & (STATE_SYSTEM_PROTECTED | STATE_SYSTEM_INVISIBLE |
                       STATE_SYSTEM_OFFSCREEN | STATE_SYSTEM_UNAVAILABLE));
@@ -79,10 +86,162 @@ inline bool SameAccessible(IAccessible* first, IAccessible* second) {
   return first && second && SUCCEEDED(first->QueryInterface(IID_PPV_ARGS(&a))) &&
       SUCCEEDED(second->QueryInterface(IID_PPV_ARGS(&b))) && a.Get() == b.Get();
 }
+inline ComPtr<IAccessibleText> QueryText(ComPtr<IAccessible> accessible, int depth) {
+  ComPtr<IAccessibleText> text;
+  HRESULT hr = accessible.As(&text); Hr("nativeQI_IAccessibleText", hr, depth);
+  if (FAILED(hr) || !text) {
+    ComPtr<IServiceProvider> service;
+    hr = accessible.As(&service); Hr("nativeQI_IServiceProvider", hr, depth);
+    if (SUCCEEDED(hr) && service) {
+      hr = service->QueryService(__uuidof(IAccessible), __uuidof(IAccessibleText),
+          reinterpret_cast<void**>(text.GetAddressOf()));
+      Hr("QueryService_IAccessible_IAccessibleText", hr, depth);
+    }
+  }
+  if (text) {
+    ComPtr<IUnknown> accessibleIdentity, textIdentity;
+    const bool same = SUCCEEDED(accessible.As(&accessibleIdentity)) &&
+        SUCCEEDED(text.As(&textIdentity)) && accessibleIdentity.Get() == textIdentity.Get();
+    printf("IA2_TEXT_COM_IDENTITY|sameAsAccessible=%d\n", same);
+    if (!same) text.Reset();
+  }
+  return text;
+}
+
+inline bool ReadSelected(ComPtr<IAccessibleText> text,
+                         const std::function<bool()>& validateCandidate,
+                         int depth, bool* consumed) {
+  if (*consumed) return true;
+  long start = -1, end = -1;
+  if (!validateCandidate()) { puts("IA2_REJECT|pre_read_identity"); return true; }
+  if (ReadOffsets(text.Get(), &start, &end, "before")) {
+    // Only boundary characters of the CURRENT explicit selection.
+    long x[2]{}, y[2]{}, width[2]{}, height[2]{};
+    HRESULT extents[2] = {E_FAIL, E_FAIL};
+    for (int k = 0; k < 2; ++k) {
+      extents[k] = text->get_characterExtents(k == 0 ? start : end - 1,
+          IA2_COORDTYPE_SCREEN_RELATIVE, &x[k], &y[k], &width[k], &height[k]);
+    }
+    long beforeStart = -1, beforeEnd = -1;
+    if (!validateCandidate() || !ReadOffsets(text.Get(), &beforeStart, &beforeEnd,
+        "immediately_before_text") || beforeStart != start || beforeEnd != end) {
+      puts("IA2_REJECT|pre_text_selection_changed"); return true;
+    }
+    BSTR selected = nullptr;
+    *consumed = true;
+    const HRESULT readHr = text->get_text(start, end, &selected);
+    Hr("get_text_explicit_selected_offsets", readHr, depth);
+    long afterStart = -1, afterEnd = -1;
+    const bool valid = readHr == S_OK && selected && SysStringLen(selected) <= 4096 &&
+        validateCandidate() && ReadOffsets(text.Get(), &afterStart, &afterEnd, "after") &&
+        afterStart == start && afterEnd == end && validateCandidate();
+    if (valid) {
+      printf("IA2_SELECTED_UTF16|");
+      for (UINT i = 0; i < SysStringLen(selected); ++i)
+        printf("\\u%04X", static_cast<unsigned>(selected[i]));
+      puts("");
+      for (int k = 0; k < 2; ++k)
+        printf("IA2_BOUNDARY_EXTENT|offset=%ld|hr=0x%08lX|x=%ld|y=%ld|w=%ld|h=%ld\n",
+            k == 0 ? start : end - 1, static_cast<unsigned long>(extents[k]),
+            x[k], y[k], width[k], height[k]);
+      printf("IA2_MATCH|VAD_method=%d|diagnostic_only=1\n",
+          std::wstring(selected, SysStringLen(selected)) == L"VAD method");
+    } else puts("IA2_REJECT|post_read_validation_failed|text_not_logged");
+    SysFreeString(selected);
+    return true; // At most one selected-range text read in this entire probe.
+  }
+  return false;
+}
+
+struct NativeFocusChain {
+  std::vector<ComPtr<IAccessible>> objects;
+  std::vector<long> roles;
+  std::vector<long> states;
+};
+inline bool NativeMetadata(IAccessible* accessible, long* role, long* state) {
+  VARIANT self{}; self.vt = VT_I4; self.lVal = CHILDID_SELF;
+  VARIANT roleValue{}, stateValue{};
+  const HRESULT roleHr = accessible->get_accRole(self, &roleValue);
+  const HRESULT stateHr = accessible->get_accState(self, &stateValue);
+  Hr("native_role_self", roleHr); Hr("native_state_self", stateHr);
+  const bool valid = SUCCEEDED(roleHr) && roleValue.vt == VT_I4 &&
+      SUCCEEDED(stateHr) && stateValue.vt == VT_I4;
+  if (valid) { *role = roleValue.lVal; *state = stateValue.lVal; }
+  VariantClear(&roleValue); VariantClear(&stateValue);
+  return valid;
+}
+inline bool NativeFocusedDocument(long role, long state) {
+  return (state & STATE_SYSTEM_FOCUSED) &&
+      (role == ROLE_SYSTEM_DOCUMENT ||
+       (role == ROLE_SYSTEM_TEXT && (state & STATE_SYSTEM_READONLY)));
+}
+inline bool SnapshotNativeFocus(HWND source,
+                                const std::function<bool()>& validateFocus,
+                                NativeFocusChain* result) {
+  result->objects.clear(); result->roles.clear(); result->states.clear();
+  if (!validateFocus()) return false;
+  ComPtr<IAccessible> node;
+  HRESULT hr = AccessibleObjectFromWindow(source, static_cast<DWORD>(OBJID_CLIENT), IID_IAccessible,
+      reinterpret_cast<void**>(node.GetAddressOf()));
+  Hr("AccessibleObjectFromWindow_exact_source_client", hr);
+  printf("IA2_NATIVE_BRIDGE|accessiblePresent=%d\n", node != nullptr);
+  if (FAILED(hr) || !node) return false;
+  for (int depth = 0; depth < 8; ++depth) {
+    if (!validateFocus() || !SafeAccessible(node.Get(), source)) return false;
+    long role = 0, state = 0;
+    if (!NativeMetadata(node.Get(), &role, &state)) return false;
+    printf("IA2_NATIVE_FOCUS_METADATA|depth=%d|role=%ld|state=0x%08lX\n",
+        depth, role, static_cast<unsigned long>(state));
+    result->objects.push_back(node); result->roles.push_back(role); result->states.push_back(state);
+    VARIANT next{};
+    hr = node->get_accFocus(&next); Hr("get_accFocus", hr, depth);
+    printf("IA2_NATIVE_FOCUS_VARIANT|depth=%d|type=%u\n", depth,
+        static_cast<unsigned>(next.vt));
+    if (hr != S_OK) { VariantClear(&next); return false; }
+    if (next.vt == VT_I4 && next.lVal == CHILDID_SELF) {
+      VariantClear(&next);
+      if (!NativeFocusedDocument(role, state)) {
+        puts("IA2_REJECT|native_terminal_not_focused_readonly_document_text"); return false;
+      }
+      return validateFocus() && SafeAccessible(node.Get(), source);
+    }
+    if (next.vt != VT_DISPATCH || !next.pdispVal) {
+      VariantClear(&next);
+      puts("IA2_REJECT|native_focus_not_dispatch_or_self|no_child_id_resolution");
+      return false;
+    }
+    ComPtr<IAccessible> child;
+    hr = next.pdispVal->QueryInterface(IID_PPV_ARGS(&child));
+    VariantClear(&next); Hr("focused_dispatch_IAccessible", hr, depth);
+    if (FAILED(hr) || !child) return false;
+    for (const auto& prior : result->objects)
+      if (SameAccessible(prior.Get(), child.Get())) {
+        puts("IA2_REJECT|native_focus_chain_cycle"); return false;
+      }
+    node = child;
+  }
+  puts("IA2_REJECT|native_focus_chain_limit");
+  return false;
+}
+inline bool SameNativeFocusChain(const NativeFocusChain& before,
+                                const NativeFocusChain& after) {
+  if (before.objects.empty() || before.objects.size() != after.objects.size() ||
+      before.roles != after.roles || before.states != after.states) return false;
+  for (size_t index = 0; index < before.objects.size(); ++index)
+    if (!SameAccessible(before.objects[index].Get(), after.objects[index].Get())) return false;
+  return true;
+}
+
 inline void Run(IUIAutomation* uia, HWND source,
                 const std::function<void()>& validateNativeIdentity) {
-  puts("IA2_DIAGNOSTIC_BEGIN|legacy_focus_only|not_product_fallback|no_proxy_registration");
+  puts("IA2_DIAGNOSTIC_BEGIN|bounded_focus_only|not_product_fallback|no_proxy_registration");
   validateNativeIdentity();
+  CLSID proxy{};
+  HRESULT proxyHr = CoGetPSClsid(__uuidof(IAccessibleText), &proxy);
+  Hr("CoGetPSClsid_IAccessibleText_read_only", proxyHr);
+  wchar_t proxyString[64]{};
+  if (SUCCEEDED(proxyHr) && StringFromGUID2(proxy, proxyString, 64))
+    printf("IA2_REGISTERED_PROXY|clsid=%ls|registration_performed=0\n", proxyString);
   ComPtr<IUIAutomationElement> root, focus;
   ComPtr<IUIAutomationTreeWalker> walker;
   HRESULT hr = uia->ElementFromHandle(source, &root); Hr("source_root", hr);
@@ -98,16 +257,61 @@ inline void Run(IUIAutomation* uia, HWND source,
       !SafeElement(focus.Get(), focusPid, true)) {
     puts("IA2_REJECT|focus_metadata_unsafe_or_unknown"); return;
   }
+  CONTROLTYPEID focusType = 0;
+  hr = focus->get_CurrentControlType(&focusType); Hr("focused_control_type", hr);
+  printf("IA2_FOCUSED_CONTROL|type=%d\n", focusType);
+  if (FAILED(hr)) return;
+  std::vector<ComPtr<IUIAutomationElement>> focusPath{focus};
+  std::vector<CONTROLTYPEID> focusTypes{focusType};
+  if (focusType == UIA_GroupControlTypeId) {
+    // This fixed PDF reports Group focus and a Document parent. Only that
+    // metadata-proven Group/Document path is permitted, never toolbar controls.
+    bool reachedDocument = false;
+    for (int depth = 0; depth < 4; ++depth) {
+      ComPtr<IUIAutomationElement> parent;
+      CONTROLTYPEID type = 0;
+      if (FAILED(walker->GetParentElement(focusPath.back().Get(), &parent)) || !parent ||
+          !SafeElement(parent.Get(), focusPid, false) ||
+          !InSource(uia, walker.Get(), root.Get(), parent.Get()) ||
+          FAILED(parent->get_CurrentControlType(&type)) ||
+          (type != UIA_GroupControlTypeId && type != UIA_DocumentControlTypeId)) {
+        puts("IA2_REJECT|group_focus_path_not_safe_group_document"); return;
+      }
+      focusPath.push_back(parent); focusTypes.push_back(type);
+      if (type == UIA_DocumentControlTypeId) { reachedDocument = true; break; }
+    }
+    if (!reachedDocument) { puts("IA2_REJECT|group_focus_document_not_reached"); return; }
+  } else if (focusType != UIA_DocumentControlTypeId && focusType != UIA_TextControlTypeId) {
+    puts("IA2_REJECT|focused_control_not_public_document_text_group"); return;
+  }
+  auto validateFocusPath = [&]() {
+    ComPtr<IUIAutomationElement> node = focus;
+    for (size_t index = 0; index < focusPath.size(); ++index) {
+      CONTROLTYPEID type = 0;
+      if (!Same(uia, node.Get(), focusPath[index].Get()) ||
+          !SafeElement(node.Get(), focusPid, index == 0) ||
+          FAILED(node->get_CurrentControlType(&type)) || type != focusTypes[index]) return false;
+      if (index + 1 < focusPath.size()) {
+        ComPtr<IUIAutomationElement> parent;
+        if (FAILED(walker->GetParentElement(node.Get(), &parent))) return false;
+        node = parent;
+      }
+    }
+    return true;
+  };
   auto validateFocus = [&]() {
     validateNativeIdentity();
     ComPtr<IUIAutomationElement> now;
-    return SUCCEEDED(uia->GetFocusedElement(&now)) &&
+    CONTROLTYPEID nowType = 0;
+    return SUCCEEDED(uia->GetFocusedElement(&now)) && now &&
+        SUCCEEDED(now->get_CurrentControlType(&nowType)) && nowType == focusType &&
         Same(uia, focus.Get(), now.Get()) && SafeElement(now.Get(), focusPid, true) &&
-        InSource(uia, walker.Get(), root.Get(), now.Get());
+        InSource(uia, walker.Get(), root.Get(), now.Get()) && validateFocusPath();
   };
+  bool consumed = false;
   ComPtr<IUIAutomationElement> candidate = focus;
   // Exact focus, followed only by four Control parents; no descendant search.
-  for (int depth = 0; candidate && depth <= 4; ++depth) {
+  for (int depth = 0; candidate && depth <= 4 && depth < static_cast<int>(focusPath.size()); ++depth) {
     if (Same(uia, candidate.Get(), root.Get())) break;
     if (!validateFocus()) { puts("IA2_REJECT|focus_changed"); return; }
     int candidatePid = 0; CONTROLTYPEID control = 0;
@@ -132,21 +336,12 @@ inline void Run(IUIAutomation* uia, HWND source,
       }
       ComPtr<IAccessible> accessible;
       hr = legacy->GetIAccessible(&accessible); Hr("legacy_get_accessible", hr, depth);
+      printf("IA2_LEGACY_BRIDGE|depth=%d|accessiblePresent=%d\n", depth, accessible != nullptr);
       if (SUCCEEDED(hr) && accessible) {
         if (!SafeAccessible(accessible.Get(), source)) {
           puts("IA2_REJECT|MSAA_state_or_native_source_unsafe_unknown"); return;
         }
-        ComPtr<IAccessibleText> text;
-        hr = accessible.As(&text); Hr("nativeQI_IAccessibleText", hr, depth);
-        if (FAILED(hr) || !text) {
-          ComPtr<IServiceProvider> service;
-          hr = accessible.As(&service); Hr("nativeQI_IServiceProvider", hr, depth);
-          if (SUCCEEDED(hr) && service) {
-            hr = service->QueryService(__uuidof(IAccessible), __uuidof(IAccessibleText),
-                reinterpret_cast<void**>(text.GetAddressOf()));
-            Hr("QueryService_IAccessible_IAccessibleText", hr, depth);
-          }
-        }
+        ComPtr<IAccessibleText> text = QueryText(accessible, depth);
         if (text) {
           auto validateCandidate = [&]() {
             if (!validateFocus() || !SafeElement(candidate.Get(), candidatePid, depth == 0) ||
@@ -159,51 +354,32 @@ inline void Run(IUIAutomation* uia, HWND source,
                 SUCCEEDED(legacy->GetIAccessible(&currentAccessible)) &&
                 SameAccessible(accessible.Get(), currentAccessible.Get());
           };
-          long start = -1, end = -1;
-          if (!validateCandidate()) { puts("IA2_REJECT|pre_read_identity"); return; }
-          if (ReadOffsets(text.Get(), &start, &end, "before")) {
-            // Only boundary characters of the CURRENT explicit selection.
-            long x[2]{}, y[2]{}, width[2]{}, height[2]{};
-            HRESULT extents[2] = {E_FAIL, E_FAIL};
-            for (int k = 0; k < 2; ++k) {
-              extents[k] = text->get_characterExtents(k == 0 ? start : end - 1,
-                  IA2_COORDTYPE_SCREEN_RELATIVE, &x[k], &y[k], &width[k], &height[k]);
-            }
-            long beforeStart = -1, beforeEnd = -1;
-            if (!validateCandidate() || !ReadOffsets(text.Get(), &beforeStart, &beforeEnd,
-                "immediately_before_text") || beforeStart != start || beforeEnd != end) {
-              puts("IA2_REJECT|pre_text_selection_changed"); return;
-            }
-            BSTR selected = nullptr;
-            const HRESULT readHr = text->get_text(start, end, &selected);
-            Hr("get_text_explicit_selected_offsets", readHr, depth);
-            long afterStart = -1, afterEnd = -1;
-            const bool valid = readHr == S_OK && selected && SysStringLen(selected) <= 4096 &&
-                validateCandidate() && ReadOffsets(text.Get(), &afterStart, &afterEnd, "after") &&
-                afterStart == start && afterEnd == end && validateCandidate();
-            if (valid) {
-              printf("IA2_SELECTED_UTF16|");
-              for (UINT i = 0; i < SysStringLen(selected); ++i)
-                printf("\\u%04X", static_cast<unsigned>(selected[i]));
-              puts("");
-              for (int k = 0; k < 2; ++k)
-                printf("IA2_BOUNDARY_EXTENT|offset=%ld|hr=0x%08lX|x=%ld|y=%ld|w=%ld|h=%ld\n",
-                    k == 0 ? start : end - 1, static_cast<unsigned long>(extents[k]),
-                    x[k], y[k], width[k], height[k]);
-              printf("IA2_MATCH|VAD_method=%d|diagnostic_only=1\n",
-                  std::wstring(selected, SysStringLen(selected)) == L"VAD method");
-            } else puts("IA2_REJECT|post_read_validation_failed|text_not_logged");
-            SysFreeString(selected);
-            return; // At most one selected-range text read in this entire probe.
-          }
+          if (ReadSelected(text, validateCandidate, depth, &consumed)) return;
         }
       }
     }
+    if (depth + 1 >= static_cast<int>(focusPath.size())) break;
     ComPtr<IUIAutomationElement> parent;
     hr = walker->GetParentElement(candidate.Get(), &parent); Hr("control_parent", hr, depth);
     if (FAILED(hr)) return;
     candidate = parent;
   }
-  puts("IA2_UNAVAILABLE|bounded_legacy_path|QI_failure_does_not_prove_provider_absence|proxy_may_be_unavailable");
+  puts("IA2_NATIVE_FOCUS_ATTEMPT|legacy_path_had_no_text_read");
+  NativeFocusChain originalChain;
+  if (!SnapshotNativeFocus(source, validateFocus, &originalChain)) {
+    puts("IA2_UNAVAILABLE|native_focus_bridge_or_safety_gate"); return;
+  }
+  const auto accessible = originalChain.objects.back();
+  ComPtr<IAccessibleText> nativeText = QueryText(accessible, 100);
+  if (!nativeText) {
+    puts("IA2_UNAVAILABLE|verified_native_focus_interface_missing|proxy_may_be_unavailable"); return;
+  }
+  auto validateNativeCandidate = [&]() {
+    NativeFocusChain currentChain;
+    return validateFocus() && SnapshotNativeFocus(source, validateFocus, &currentChain) &&
+        SameNativeFocusChain(originalChain, currentChain) &&
+        SafeAccessible(accessible.Get(), source);
+  };
+  ReadSelected(nativeText, validateNativeCandidate, 100, &consumed);
 }
 }  // namespace edge_pdf_ia2
