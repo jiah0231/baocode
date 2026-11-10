@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [baseline, foreground_handle, timeout_continuation]
+        mode: [baseline, shared_300_500, shared_150_200]
         replica: [1, 2, 3, 4, 5, 6]
     env:
       BAOCODE_DISPOSABLE_UI_TEST: '1'
@@ -30,9 +30,9 @@ jobs:
             $case = $_
             Write-Host "ENTRY_CASE_BEGIN|mode=${{ matrix.mode }}|replica=${{ matrix.replica }}|case=$case"
             try {
-              $probe = '${{ matrix.mode }}' -eq 'foreground_handle'
-              $continuation = '${{ matrix.mode }}' -eq 'timeout_continuation'
-              ./tool/ci/windows_translation_browser_smoke.ps1 -OutputDirectory "build/entry/case-$case" -SkipPostFailureUiaDiagnostics -ForegroundConnectionExperiment:$probe -ForegroundConnectionTimeoutContinuation:$continuation
+              $shared = '${{ matrix.mode }}' -eq 'shared_300_500'
+              $metadata = '${{ matrix.mode }}' -eq 'shared_150_200'
+              ./tool/ci/windows_translation_browser_smoke.ps1 -OutputDirectory "build/entry/case-$case" -SkipPostFailureUiaDiagnostics -SharedForegroundDiscoveryExperiment:$shared -SharedForegroundMetadataExperiment:$metadata
               Write-Host "ENTRY_CASE_END|case=$case|result=success"
             } catch {
               $failures++

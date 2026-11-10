@@ -3,14 +3,18 @@ param(
   [string]$OutputDirectory = 'build/translation-browser-previews',
   [switch]$SkipPostFailureUiaDiagnostics,
   [switch]$ForegroundConnectionExperiment,
-  [switch]$ForegroundConnectionTimeoutContinuation
+  [switch]$ForegroundConnectionTimeoutContinuation,
+  [switch]$SharedForegroundDiscoveryExperiment,
+  [switch]$SharedForegroundMetadataExperiment
 )
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or !$env:RUNNER_TEMP -or $env:OS -ne 'Windows_NT' -or $env:BAOCODE_DISPOSABLE_UI_TEST -ne '1') {
   throw 'Browser selection smoke requires an explicitly enabled disposable Windows Actions desktop.'
 }
-if ($ForegroundConnectionExperiment -and $ForegroundConnectionTimeoutContinuation) {
-  throw 'Choose either strict foreground connection or timeout continuation, not both.'
+$selectedModes = @(@($ForegroundConnectionExperiment, $ForegroundConnectionTimeoutContinuation,
+  $SharedForegroundDiscoveryExperiment, $SharedForegroundMetadataExperiment) | Where-Object { $_ })
+if ($selectedModes.Count -gt 1) {
+  throw 'Choose only one foreground connection diagnostic mode.'
 }
 $output = [IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Force $output | Out-Null
@@ -45,13 +49,21 @@ try {
     $diagnosticFlags = @('/DBAOCODE_SKIP_POST_FAILURE_UIA_DIAGNOSTICS=1')
     Write-Host 'Post-failure UIA diagnostics disabled explicitly; exact capture assertions remain enabled.'
   }
-  if ($ForegroundConnectionExperiment -or $ForegroundConnectionTimeoutContinuation) {
+  if ($selectedModes.Count -gt 0) {
     $diagnosticFlags += @('/DBAOCODE_DISPOSABLE_UI_TEST_BUILD=1', '/DBAOCODE_CAPTURE_FOREGROUND_CONNECTION_EXPERIMENT=1')
     Write-Host 'Diagnostic foreground connection enabled inside the original capture deadline; exact assertions remain enabled.'
   }
-  if ($ForegroundConnectionTimeoutContinuation) {
+  if ($ForegroundConnectionTimeoutContinuation -or $SharedForegroundDiscoveryExperiment -or $SharedForegroundMetadataExperiment) {
     $diagnosticFlags += '/DBAOCODE_CAPTURE_FOREGROUND_TIMEOUT_CONTINUATION=1'
-    Write-Host 'Only an exact root timeout may continue once to original focus discovery within its unchanged deadline.'
+    Write-Host 'Only an exact root timeout may enter original focus discovery within its unchanged deadline.'
+  }
+  if ($SharedForegroundDiscoveryExperiment -or $SharedForegroundMetadataExperiment) {
+    $diagnosticFlags += '/DBAOCODE_CAPTURE_FOREGROUND_SHARED_DISCOVERY=1'
+    Write-Host 'Root connection consumes one of four total initial discovery calls; original bounded retry categories remain unchanged.'
+  }
+  if ($SharedForegroundMetadataExperiment) {
+    $diagnosticFlags += '/DBAOCODE_CAPTURE_FOREGROUND_METADATA_BUDGET=1'
+    Write-Host 'Diagnostic root connection uses 150/200 ms connection/transaction settings, not a whole-call timeout guarantee.'
   }
   & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX @diagnosticFlags $source /Fe:browser_smoke.exe /link user32.lib advapi32.lib gdi32.lib dwmapi.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
   if ($LASTEXITCODE -ne 0) { throw 'Browser selection harness compilation failed' }

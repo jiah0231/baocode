@@ -16,6 +16,15 @@
 #error Timeout continuation requires the foreground connection diagnostic experiment.
 #endif
 
+#if defined(BAOCODE_CAPTURE_FOREGROUND_SHARED_DISCOVERY) && \
+    !defined(BAOCODE_CAPTURE_FOREGROUND_TIMEOUT_CONTINUATION)
+#error Shared discovery requires the timeout continuation diagnostic experiment.
+#endif
+#if defined(BAOCODE_CAPTURE_FOREGROUND_METADATA_BUDGET) && \
+    !defined(BAOCODE_CAPTURE_FOREGROUND_SHARED_DISCOVERY)
+#error Metadata root budget requires shared discovery accounting.
+#endif
+
 namespace translation_selection {
 // Optional test diagnostics contain only operation names/HRESULTs, never text.
 struct FocusAttemptDiagnostics {
@@ -30,6 +39,7 @@ struct CaptureDiagnostics {
   HRESULT last_failure = S_OK;
   unsigned attempts = 0;
   unsigned final_attempts = 0;
+  unsigned initial_discovery_calls = 0;
   FocusAttemptDiagnostics com_initialize, automation_create, foreground_connection;
   bool foreground_connection_timeout_continued = false;
   FocusAttemptDiagnostics focus_attempts[translation_retry::kMaxAttempts];
@@ -223,10 +233,27 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
         }
         return verified;
       };
+#if defined(BAOCODE_CAPTURE_FOREGROUND_CONNECTION_EXPERIMENT)
+      DWORD connection_source_pid = 0;
+      const DWORD foreground_connection_source_thread =
+          GetWindowThreadProcessId(foreground, &connection_source_pid);
+      const auto source_current = [&] {
+        DWORD current_pid = 0;
+        const DWORD current_thread = GetWindowThreadProcessId(foreground, &current_pid);
+        return foreground_connection_source_thread &&
+            current_thread == foreground_connection_source_thread &&
+            connection_source_pid == process && current_pid == process &&
+            GetForegroundWindow() == foreground &&
+            GetAncestor(foreground, GA_ROOT) == foreground;
+      };
+#endif
       const auto ready = [&] {
         const ULONGLONG now = GetTickCount64();
         if (stopped() || now >= deadline || GetForegroundWindow() != foreground) return false;
         if (!bounded) return false;
+#if defined(BAOCODE_CAPTURE_FOREGROUND_SHARED_DISCOVERY)
+        if (!source_current()) return false;
+#endif
         const DWORD remaining = static_cast<DWORD>(std::min<ULONGLONG>(200, deadline - now));
         return SUCCEEDED(set_connection_timeout(std::min<DWORD>(150, remaining))) &&
             !stopped() && SUCCEEDED(set_transaction_timeout(remaining)) && !stopped();
@@ -240,24 +267,13 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
       // The root is retained as a connection, NEVER as a selection target.
       // No root properties, patterns, text, children or descendants are read.
       ComPtr<IUIAutomationElement> foreground_connection;
+#if defined(BAOCODE_CAPTURE_FOREGROUND_SHARED_DISCOVERY)
+      bool foreground_connection_called = false;
+#endif
 #if defined(BAOCODE_CAPTURE_FOREGROUND_TIMEOUT_CONTINUATION)
       bool foreground_connection_timeout_continued = false;
-      DWORD foreground_connection_source_thread = 0;
 #endif
       const bool foreground_connection_permitted = [&] {
-        DWORD source_pid = 0;
-        const DWORD source_thread = GetWindowThreadProcessId(foreground, &source_pid);
-#if defined(BAOCODE_CAPTURE_FOREGROUND_TIMEOUT_CONTINUATION)
-        foreground_connection_source_thread = source_thread;
-#endif
-        const auto source_current = [&] {
-          DWORD current_pid = 0;
-          const DWORD current_thread = GetWindowThreadProcessId(foreground, &current_pid);
-          return source_thread && current_thread == source_thread &&
-              source_pid == process && current_pid == process &&
-              GetForegroundWindow() == foreground &&
-              GetAncestor(foreground, GA_ROOT) == foreground;
-        };
         if (stopped()) return false;
         if (!source_current()) { out.status = "focusChanged"; return false; }
         wchar_t source_class[64] = {};
@@ -267,12 +283,21 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
         const ULONGLONG now = GetTickCount64();
         if (now >= deadline) return false;
         const DWORD remaining = static_cast<DWORD>(deadline - now);
-        if (FAILED(set_connection_timeout(std::min<DWORD>(300, remaining))) ||
+#if defined(BAOCODE_CAPTURE_FOREGROUND_METADATA_BUDGET)
+        constexpr DWORD root_connection_ms = 150, root_transaction_ms = 200;
+#else
+        constexpr DWORD root_connection_ms = 300, root_transaction_ms = 500;
+#endif
+        if (FAILED(set_connection_timeout(std::min(root_connection_ms, remaining))) ||
             stopped() || !source_current() ||
-            FAILED(set_transaction_timeout(std::min<DWORD>(500, remaining))) ||
+            FAILED(set_transaction_timeout(std::min(root_transaction_ms, remaining))) ||
             stopped() || !source_current()) return false;
         auto* connection_record = diagnostics ? &diagnostics->foreground_connection : nullptr;
         start_diagnostic(connection_record);
+#if defined(BAOCODE_CAPTURE_FOREGROUND_SHARED_DISCOVERY)
+        foreground_connection_called = true;
+#endif
+        if (diagnostics) ++diagnostics->initial_discovery_calls;
         const HRESULT connected = observe("ForegroundConnection.ElementFromHandle",
             automation->ElementFromHandle(foreground, &foreground_connection));
         finish_diagnostic(connection_record, connected);
@@ -304,11 +329,19 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
 #if defined(BAOCODE_CAPTURE_FOREGROUND_CONNECTION_EXPERIMENT)
           && foreground_connection_permitted
 #endif
-#if defined(BAOCODE_CAPTURE_FOREGROUND_TIMEOUT_CONTINUATION)
+#if defined(BAOCODE_CAPTURE_FOREGROUND_SHARED_DISCOVERY)
+          && attempt < translation_retry::FocusDiscoveryLimit(foreground_connection_called)
+#elif defined(BAOCODE_CAPTURE_FOREGROUND_TIMEOUT_CONTINUATION)
           && (!foreground_connection_timeout_continued || attempt == 0)
 #endif
           ; ++attempt) {
         if (diagnostics) diagnostics->attempts = attempt + 1;
+#if defined(BAOCODE_CAPTURE_FOREGROUND_SHARED_DISCOVERY)
+        const unsigned completed_attempts = translation_retry::DiscoveryCompleted(
+            attempt + 1, foreground_connection_called);
+#else
+        const unsigned completed_attempts = attempt + 1;
+#endif
         bool retryable = false;
         out = Selection{};
         out.self = process == GetCurrentProcessId();
@@ -325,28 +358,29 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
           if (FAILED(set_connection_timeout(std::min(connection, remaining))) ||
               FAILED(set_transaction_timeout(std::min(transaction, remaining)))) break;
         }
-#if defined(BAOCODE_CAPTURE_FOREGROUND_TIMEOUT_CONTINUATION)
+#if defined(BAOCODE_CAPTURE_FOREGROUND_SHARED_DISCOVERY)
+        if (stopped()) break;
+        if (!source_current()) { out.status = "focusChanged"; break; }
+#elif defined(BAOCODE_CAPTURE_FOREGROUND_TIMEOUT_CONTINUATION)
         if (foreground_connection_timeout_continued) {
           if (stopped()) break;
-          DWORD current_pid = 0;
-          const DWORD current_thread = GetWindowThreadProcessId(foreground, &current_pid);
-          if (GetForegroundWindow() != foreground || current_pid != process ||
-              !current_thread || current_thread != foreground_connection_source_thread) {
-            out.status = "focusChanged";
-            break;
-          }
+          if (!source_current()) { out.status = "focusChanged"; break; }
         }
 #endif
         ComPtr<IUIAutomationElement> focused;
         auto* focus_record = diagnostics ? &diagnostics->focus_attempts[attempt] : nullptr;
         start_diagnostic(focus_record);
+        if (diagnostics) ++diagnostics->initial_discovery_calls;
         const HRESULT focus_result = observe("GetFocusedElement", automation->GetFocusedElement(&focused));
         finish_diagnostic(focus_record, focus_result);
         if (stopped()) break;
+#if defined(BAOCODE_CAPTURE_FOREGROUND_SHARED_DISCOVERY)
+        if (!source_current()) { out.status = "focusChanged"; break; }
+#endif
         if (GetForegroundWindow() != foreground) { out.status = "focusChanged"; break; }
         retryable = translation_retry::CanRetryInitialFocus(
             static_cast<uint32_t>(focus_result), original_element != nullptr,
-            GetForegroundWindow() == foreground, attempt + 1, GetTickCount64(), deadline,
+            GetForegroundWindow() == foreground, completed_attempts, GetTickCount64(), deadline,
             canceled && canceled->load());
         if (SUCCEEDED(focus_result) && focused) {
           // The longer budget is solely for initial focus discovery, not for
@@ -502,17 +536,18 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
             }
           }
         }
-#if defined(BAOCODE_CAPTURE_FOREGROUND_TIMEOUT_CONTINUATION)
+#if defined(BAOCODE_CAPTURE_FOREGROUND_TIMEOUT_CONTINUATION) && \
+    !defined(BAOCODE_CAPTURE_FOREGROUND_SHARED_DISCOVERY)
         // One original discovery attempt after a root timeout, not a fresh
         // four-attempt allowance. Preserve final validation of successful text.
         if (foreground_connection_timeout_continued) break;
 #endif
         if ((out.status != "unsupported" && out.status != "noSelection") ||
-            !translation_retry::CanRetry(retryable, attempt + 1, GetTickCount64(), deadline,
+            !translation_retry::CanRetry(retryable, completed_attempts, GetTickCount64(), deadline,
                                          canceled && canceled->load())) break;
         // Small interruptible backoff, no replacement workers or provider retry
         // after cancellation. Empty selection/password/unknown controls stop above.
-        const ULONGLONG wake = std::min<ULONGLONG>(deadline, GetTickCount64() + translation_retry::Delay(attempt + 1));
+        const ULONGLONG wake = std::min<ULONGLONG>(deadline, GetTickCount64() + translation_retry::Delay(completed_attempts));
         while (GetTickCount64() < wake && !stopped() && GetForegroundWindow() == foreground) Sleep(5);
       }
       // A source can switch controls without changing its foreground HWND.
@@ -533,6 +568,9 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
             if (FAILED(set_connection_timeout(std::min<DWORD>(150, remaining))) ||
                 FAILED(set_transaction_timeout(std::min<DWORD>(200, remaining)))) break;
           }
+#if defined(BAOCODE_CAPTURE_FOREGROUND_SHARED_DISCOVERY)
+          if (stopped() || !source_current()) break;
+#endif
           ComPtr<IUIAutomationElement> final_focus;
           auto* final_record = diagnostics ? &diagnostics->final_focus_attempts[check] : nullptr;
           start_diagnostic(final_record);
@@ -540,6 +578,9 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
               automation->GetFocusedElement(&final_focus));
           finish_diagnostic(final_record, final_result);
           if (stopped() || GetForegroundWindow() != foreground) break;
+#if defined(BAOCODE_CAPTURE_FOREGROUND_SHARED_DISCOVERY)
+          if (!source_current()) break;
+#endif
           bool transient_pane = false;
           if (SUCCEEDED(final_result) && final_focus) {
             int final_process = 0;

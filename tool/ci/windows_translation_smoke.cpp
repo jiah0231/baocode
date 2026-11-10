@@ -157,6 +157,27 @@ int wmain(int argc, wchar_t** argv) {
     if (CanContinueAfterForegroundConnection(hr, false, true, false, 954, 1500))
       return Fail("Root continuation accepted success/null, denial or unrelated failure");
   }
+  using translation_retry::DiscoveryCompleted;
+  using translation_retry::FocusDiscoveryLimit;
+  if (FocusDiscoveryLimit(false) != 4 || FocusDiscoveryLimit(true) != 3 ||
+      DiscoveryCompleted(0, true) != 1 || DiscoveryCompleted(3, true) != 4 ||
+      DiscoveryCompleted(4, false) != 4 ||
+      !CanRetry(true, DiscoveryCompleted(1, true), 547, 1500) ||
+      CanRetry(true, DiscoveryCompleted(1, true), 1140, 1500) ||
+      !CanRetry(true, DiscoveryCompleted(1, true), 1139, 1500) ||
+      CanRetry(true, DiscoveryCompleted(3, true), 100, 1500) ||
+      CanRetry(true, DiscoveryCompleted(4, false), 100, 1500) ||
+      CanRetry(true, DiscoveryCompleted(1, true), 547, 1500, true) ||
+      CanRetry(false, DiscoveryCompleted(1, true), 547, 1500) ||
+      CanRetry(true, DiscoveryCompleted(1, true), 1500, 1500) ||
+      translation_retry::Delay(DiscoveryCompleted(1, true)) != 160)
+    return Fail("Shared root/focus discovery changed total calls, category, delay or deadline reserve");
+  for (const bool root_called : {false, true}) {
+    unsigned total = root_called ? 1u : 0u;
+    for (unsigned focus = 0; focus < FocusDiscoveryLimit(root_called); ++focus) ++total;
+    if (total != translation_retry::kMaxAttempts)
+      return Fail("Root connection granted an extra discovery allowance");
+  }
   using translation_retry::IsInitialChromiumPane;
   if (!IsInitialChromiumPane(false, true, true, true, true, true, true) ||
       IsInitialChromiumPane(true, true, true, true, true, true, true) ||
