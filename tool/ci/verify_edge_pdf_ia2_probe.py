@@ -100,6 +100,25 @@ def check(header: str, script: str | None = None) -> list[str]:
     ]:
         has(token, label)
 
+    branch_start = src.find('if(!SnapshotNativeFocus(source,validateFocus,&beforeQuery)||!SameNativeFocusChain(originalChain,beforeQuery)){')
+    branch_end = src.find('ComPtr<IAccessibleText>nativeText=QueryText(accessible,100);', branch_start)
+    failure_branch = src[branch_start:branch_end] if branch_start >= 0 and branch_end > branch_start else ''
+    require(bool(failure_branch), 'locate unstable-chain metadata-only branch')
+    require('if(validateFocus()&&SafeAccessible(accessible.Get(),source)){' in failure_branch,
+            'unstable-chain metadata revalidates focus and original terminal')
+    require('LogNativeChainEquality(originalChain,beforeQuery);' in failure_branch,
+            'unstable-chain per-node equality is logged')
+    require('QueryText(accessible,101);' in failure_branch,
+            'unstable-chain query remains metadata-only')
+    require('uia->CompareElements(metadataMapped.Get(),focus.Get(),&metadataEqualsBoundFocus)' in failure_branch,
+            'unstable-chain mapping compares exact original focus')
+    require(failure_branch.endswith('puts("IA2_NATIVE_UNSTABLE_CHAIN_METADATA_ONLY|selection_reads=0|unconditional_return");return;}'),
+            'unstable-chain branch returns unconditionally before any read admission')
+    for forbidden_read in ('ReadSelected(', 'ReadOffsets(', 'get_nSelections(', 'get_selection(',
+                           'get_text(', 'get_characterExtents(', 'validateMappedNativeRole(', 'validateNativeCandidate('):
+        require(forbidden_read not in failure_branch,
+                'unstable-chain metadata branch forbids: ' + forbidden_read)
+
     read = src.find('text->get_text(start,end,&selected)')
     pre = src.find('beforeStart!=start||beforeEnd!=end')
     post = src.find('afterStart==start&&afterEnd==end')
@@ -135,6 +154,11 @@ def self_test(header: str, script: str | None) -> int:
     if baseline:
         raise AssertionError('Baseline failed: ' + '; '.join(baseline))
     mutations = {
+        'unstable_chain_fallthrough': ('puts("IA2_NATIVE_UNSTABLE_CHAIN_METADATA_ONLY|selection_reads=0|unconditional_return");\n    return;', 'puts("IA2_NATIVE_UNSTABLE_CHAIN_METADATA_ONLY|selection_reads=0|unconditional_return");'),
+        'unstable_chain_selection_read': ('QueryText(accessible, 101);', 'QueryText(accessible, 101); ReadOffsets();'),
+        'unstable_chain_character_read': ('QueryText(accessible, 101);', 'QueryText(accessible, 101); get_characterExtents();'),
+        'unstable_chain_reuse_admission': ('QueryText(accessible, 101);', 'QueryText(accessible, 101); validateMappedNativeRole();'),
+        'unstable_chain_skip_scope': ('if (validateFocus() && SafeAccessible(accessible.Get(), source)) {', 'if (true) {'),
         'pane_unfocused': ('role != ROLE_SYSTEM_PANE || !(state & STATE_SYSTEM_FOCUSED) ||', 'role != ROLE_SYSTEM_PANE || false ||'),
         'pane_not_readonly': ('!(state & STATE_SYSTEM_READONLY)', 'false'),
         'pane_wrong_mapping_target': ('uia->CompareElements(mapped.Get(), focus.Get(), &equalsBoundFocus)', 'uia->CompareElements(mapped.Get(), root.Get(), &equalsBoundFocus)'),

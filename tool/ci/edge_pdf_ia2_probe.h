@@ -236,6 +236,26 @@ inline bool SameNativeFocusChain(const NativeFocusChain& before,
   return true;
 }
 
+inline void LogNativeChainEquality(const NativeFocusChain& before,
+                                   const NativeFocusChain& after) {
+  printf("IA2_CHAIN_EQUALITY|beforeCount=%zu|afterCount=%zu\n",
+      before.objects.size(), after.objects.size());
+  const size_t count = before.objects.size() > after.objects.size()
+      ? before.objects.size() : after.objects.size();
+  for (size_t index = 0; index < count; ++index) {
+    const bool beforePresent = index < before.objects.size();
+    const bool afterPresent = index < after.objects.size();
+    const bool identityEqual = beforePresent && afterPresent &&
+        SameAccessible(before.objects[index].Get(), after.objects[index].Get());
+    const bool roleEqual = index < before.roles.size() && index < after.roles.size() &&
+        before.roles[index] == after.roles[index];
+    const bool stateEqual = index < before.states.size() && index < after.states.size() &&
+        before.states[index] == after.states[index];
+    printf("IA2_CHAIN_NODE_EQUALITY|index=%zu|beforePresent=%d|afterPresent=%d|identityEqual=%d|roleEqual=%d|stateEqual=%d\n",
+        index, beforePresent, afterPresent, identityEqual, roleEqual, stateEqual);
+  }
+}
+
 inline void Run(IUIAutomation* uia, HWND source,
                 const std::function<void()>& validateNativeIdentity) {
   puts("IA2_DIAGNOSTIC_BEGIN|bounded_focus_only|not_product_fallback|no_proxy_registration");
@@ -377,7 +397,31 @@ inline void Run(IUIAutomation* uia, HWND source,
   NativeFocusChain beforeQuery;
   if (!SnapshotNativeFocus(source, validateFocus, &beforeQuery) ||
       !SameNativeFocusChain(originalChain, beforeQuery)) {
-    puts("IA2_REJECT|native_chain_changed_before_interface_metadata"); return;
+    puts("IA2_REJECT|native_chain_changed_before_interface_metadata");
+    LogNativeChainEquality(originalChain, beforeQuery);
+    // Observe interface/mapping capability only. A failed chain can NEVER
+    // reach selection APIs, even if all the following metadata looks valid.
+    if (validateFocus() && SafeAccessible(accessible.Get(), source)) {
+      QueryText(accessible, 101);
+      if (!validateFocus() || !SafeAccessible(accessible.Get(), source)) {
+        puts("IA2_UNSTABLE_CHAIN_METADATA_STOP|source_or_state_changed|selection_reads=0");
+        return;
+      }
+      ComPtr<IUIAutomationElement> metadataMapped;
+      const HRESULT metadataMappingHr = uia->ElementFromIAccessible(
+          accessible.Get(), CHILDID_SELF, &metadataMapped);
+      Hr("unstable_chain_metadata_ElementFromIAccessible_SELF", metadataMappingHr, 101);
+      BOOL metadataEqualsBoundFocus = FALSE;
+      HRESULT metadataCompareHr = E_FAIL;
+      if (metadataMappingHr == S_OK && metadataMapped)
+        metadataCompareHr = uia->CompareElements(metadataMapped.Get(), focus.Get(),
+                                                 &metadataEqualsBoundFocus);
+      Hr("unstable_chain_metadata_CompareElements_exact_focus", metadataCompareHr, 101);
+      printf("IA2_UNSTABLE_CHAIN_MAPPING_METADATA|present=%d|equalsBoundFocus=%d|focusStillValid=%d\n",
+          metadataMapped != nullptr, metadataEqualsBoundFocus, validateFocus());
+    } else puts("IA2_UNSTABLE_CHAIN_METADATA_SKIPPED|original_terminal_or_focus_unsafe");
+    puts("IA2_NATIVE_UNSTABLE_CHAIN_METADATA_ONLY|selection_reads=0|unconditional_return");
+    return;
   }
   // QI/QueryService are metadata-only even when the terminal role is not
   // accepted for selected-text access. No selection API is called here.
