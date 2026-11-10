@@ -5,7 +5,7 @@ param(
   [string]$Output = (Join-Path $PSScriptRoot 'artifacts'),
   [int]$FromX=0, [int]$FromY=0, [int]$ToX=0, [int]$ToY=0,
   [int]$Zoom=100, [int]$ScrollY=450, [int]$ExpectedDpi=0,
-  [switch]$Warm, [switch]$CalibrateOnly
+  [switch]$Warm, [switch]$CalibrateOnly, [switch]$IA2
 )
 $ErrorActionPreference='Stop'
 if ($env:GITHUB_ACTIONS -cne 'true' -or $env:OS -cne 'Windows_NT' -or $env:BAOCODE_DISPOSABLE_UI_TEST -cne '1') { throw 'Requires explicitly enabled disposable Windows GitHub Actions desktop' }
@@ -45,7 +45,27 @@ public static class BaoCodePdfProbeCleanup {
 
 try {
   Push-Location $run; $pushed=$true
-  & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /wd4100 /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX /DBAOCODE_TRANSLATION_ACTION_DIAGNOSTICS "/I$include" $source $impl /Fe:edge_pdf_probe.exe /link user32.lib advapi32.lib gdi32.lib dwmapi.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
+  $extraCompile=@()
+  if ($IA2) {
+    $vendor=Join-Path $PSScriptRoot 'ia2_vendor'
+    $pins=@{
+      'AccessibleText.idl'='0f86b12a904044a7f9f0bc103cc25181bdec18b962c07a9fca13fd2b53ffb0a3'
+      'IA2CommonTypes.idl'='84451f99df2a73a3e9e6548c5a079745c92c35ab51642081911ee53064cd3a94'
+    }
+    foreach($name in $pins.Keys) {
+      # Normalize only Windows checkout line endings; verify all source content.
+      $idlText=[System.IO.File]::ReadAllText((Join-Path $vendor $name)).Replace("`r`n","`n")
+      $hasher=[System.Security.Cryptography.SHA256]::Create()
+      try { $actual=[System.BitConverter]::ToString($hasher.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($idlText))).Replace('-','').ToLowerInvariant() } finally { $hasher.Dispose() }
+      if ($actual -ne $pins[$name]) { throw "Official IA2 IDL pin mismatch: $name" }
+    }
+    & midl.exe /nologo /env x64 "/I$vendor" /out $run /h IA2CommonTypes.h (Join-Path $vendor 'IA2CommonTypes.idl')
+    if ($LASTEXITCODE -ne 0) { throw 'Pinned official IA2 common types generation failed' }
+    & midl.exe /nologo /env x64 "/I$vendor" /out $run /h ia2_text_generated.h /iid ia2_text_i.c (Join-Path $vendor 'AccessibleText.idl')
+    if ($LASTEXITCODE -ne 0) { throw 'Pinned official IA2 IDL header generation failed' }
+    $extraCompile=@('/DBAOCODE_PUBLIC_PDF_IA2_DIAGNOSTIC',"/I$run")
+  }
+  & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /wd4100 /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX /DBAOCODE_TRANSLATION_ACTION_DIAGNOSTICS "/I$include" @extraCompile $source $impl /Fe:edge_pdf_probe.exe /link user32.lib advapi32.lib gdi32.lib dwmapi.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib oleacc.lib
   if ($LASTEXITCODE -ne 0) { throw 'Probe compilation failed' }
   # Unique fresh profile, app window containing ONLY the fixed local public PDF.
   # No force-renderer-accessibility, debugging port, CDP, extension, clipboard or OCR.
@@ -70,7 +90,7 @@ try {
     ownerPid=$owner.ProcessId; profile=$profile; uri=$uri; zoomRequested=$Zoom; scrollRequested=$ScrollY;
     coordinates='physical pixels relative to GetWindowRect top-left, NOT document points';
     from=@($FromX,$FromY); to=@($ToX,$ToY); warm=$Warm.IsPresent; calibrationOnly=$CalibrateOnly.IsPresent;
-    expectedDpi=$ExpectedDpi; note='PDF fragment zoom/scroll is a request, verify screenshot. Not cold-start acceptance evidence. PrintWindow may render blank GPU content.'
+    expectedDpi=$ExpectedDpi; ia2Diagnostic=$IA2.IsPresent; note='PDF fragment zoom/scroll is a request, verify screenshot. Not cold-start acceptance evidence. PrintWindow may render blank GPU content.'
   } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath ($prefix+'-manifest.json') -Encoding utf8
   $args=@($owner.ProcessId,$FromX,$FromY,$ToX,$ToY,"`"$prefix`"",$mode,$ExpectedDpi,"`"$edge`"")
   $probe=Start-Process -FilePath (Join-Path $run 'edge_pdf_probe.exe') -ArgumentList $args -PassThru -RedirectStandardOutput ($prefix+'-stdout.log') -RedirectStandardError ($prefix+'-stderr.log')

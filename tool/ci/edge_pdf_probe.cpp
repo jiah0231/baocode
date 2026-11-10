@@ -12,6 +12,9 @@
 #include <mutex>
 #include <atomic>
 #include <vector>
+#if defined(BAOCODE_PUBLIC_PDF_IA2_DIAGNOSTIC)
+#include "edge_pdf_ia2_probe.h"
+#endif
 using Microsoft::WRL::ComPtr;
 namespace {
   HWND browser=nullptr;
@@ -143,7 +146,7 @@ namespace {
     for(UINT i=0;t&&i<SysStringLen(t);++i)printf("\\u%04X",static_cast<unsigned>(t[i]));
     puts("");
   }
-  int Selected(ComPtr<IUIAutomation> uia,bool read) {
+  int Selected(ComPtr<IUIAutomation> uia,bool read,int documentLimit=8) {
     Scoped();
     ComPtr<IUIAutomationElement> root;
     Check(SUCCEEDED(uia->ElementFromHandle(browser,&root)),"UIA root unavailable");
@@ -172,14 +175,14 @@ namespace {
       if(FAILED(candidate->get_CurrentControlType(&candidateType)))continue;
       if(candidateType==UIA_DocumentControlTypeId) {
         ++documentCount;
-        if(documentCount<=8)targets.push_back(n);
+        if(documentCount<=documentLimit)targets.push_back(n);
       } else if(SUCCEEDED(candidate->get_CurrentHasKeyboardFocus(&hasFocus))&&hasFocus) {
         ++focusedNonDocumentCount;
         if(focusedNonDocumentCount==1)targets.push_back(n);
       }
     }
-    printf("UIA_TARGETS|availableTextPatternElements=%d|documentElements=%d|focusedNonDocumentElements=%d|processedTargets=%zu|maxDocuments=8|maxFocusedNonDocument=1\n",
-        count,documentCount,focusedNonDocumentCount,targets.size());
+    printf("UIA_TARGETS|availableTextPatternElements=%d|documentElements=%d|focusedNonDocumentElements=%d|processedTargets=%zu|maxDocuments=%d|maxFocusedNonDocument=1\n",
+        count,documentCount,focusedNonDocumentCount,targets.size(),documentLimit);
     for(int n:targets) {
       Scoped();
       ComPtr<IUIAutomationElement> e;
@@ -391,7 +394,18 @@ int wmain(int argc,wchar_t** argv) {
     else {
       puts("CLICK_SKIPPED|icon_hidden|raw_UIA_still_recorded");
     }
+#if defined(BAOCODE_PUBLIC_PDF_IA2_DIAGNOSTIC)
+    // Both comparisons follow production icon/click evidence. Limit each
+    // snapshot to one Document and one focused non-Document TextPattern.
+    puts("RAW_UIA_PHASE|BEFORE_IA2");
+    Selected(uia,true,1);
+    edge_pdf_ia2::Run(uia.Get(), browser, [] { Scoped(); });
+    puts("RAW_UIA_PHASE|AFTER_IA2");
+    phraseMatched=false;
+    int selected=Selected(uia,true,1);
+#else
     int selected=Selected(uia,true);
+#endif
     printf("RESULT|selectedRanges=%d|iconVisible=%d|expectedPhraseMatch=%d|diagnostic_only\n",selected,visible,phraseMatched);
     action.reset();
     DestroyWindow(dispatch);
