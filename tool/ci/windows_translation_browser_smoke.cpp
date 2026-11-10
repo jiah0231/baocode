@@ -280,6 +280,11 @@ int wmain(int argc, wchar_t** argv) {
   if (argc != 3) return 2;
   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
   titleToken = argv[1];
+#if defined(BAOCODE_CAPTURE_FOREGROUND_CONNECTION_EXPERIMENT)
+  std::puts("DEFAULT_EDGE_CAPTURE_VARIANT|foreground_connection|deadlineMs=1500");
+#else
+  std::puts("DEFAULT_EDGE_CAPTURE_VARIANT|baseline|deadlineMs=1500");
+#endif
   int result = 0;
   try {
     for (int i = 0; i < 200 && !browser; ++i) { EnumWindows(FindBrowser, 0); Sleep(100); }
@@ -329,6 +334,7 @@ int wmain(int argc, wchar_t** argv) {
       };
       print_attempt("com_initialize", 1, diagnostics.com_initialize);
       print_attempt("automation_create", 1, diagnostics.automation_create);
+      print_attempt("foreground_connection", 1, diagnostics.foreground_connection);
       for (unsigned i = 0; i < translation_retry::kMaxAttempts; ++i)
         print_attempt("initial_focus", i + 1, diagnostics.focus_attempts[i]);
       for (unsigned i = 0; i < 3; ++i)

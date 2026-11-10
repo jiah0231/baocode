@@ -1,7 +1,8 @@
 # Default Edge browser selection, disposable runner only. No accounts or remote pages.
 param(
   [string]$OutputDirectory = 'build/translation-browser-previews',
-  [switch]$SkipPostFailureUiaDiagnostics
+  [switch]$SkipPostFailureUiaDiagnostics,
+  [switch]$ForegroundConnectionExperiment
 )
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or !$env:RUNNER_TEMP -or $env:OS -ne 'Windows_NT' -or $env:BAOCODE_DISPOSABLE_UI_TEST -ne '1') {
@@ -39,6 +40,10 @@ try {
   if ($SkipPostFailureUiaDiagnostics) {
     $diagnosticFlags = @('/DBAOCODE_SKIP_POST_FAILURE_UIA_DIAGNOSTICS=1')
     Write-Host 'Post-failure UIA diagnostics disabled explicitly; exact capture assertions remain enabled.'
+  }
+  if ($ForegroundConnectionExperiment) {
+    $diagnosticFlags += @('/DBAOCODE_DISPOSABLE_UI_TEST_BUILD=1', '/DBAOCODE_CAPTURE_FOREGROUND_CONNECTION_EXPERIMENT=1')
+    Write-Host 'Diagnostic foreground connection enabled inside the original capture deadline; exact assertions remain enabled.'
   }
   & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX @diagnosticFlags $source /Fe:browser_smoke.exe /link user32.lib advapi32.lib gdi32.lib dwmapi.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
   if ($LASTEXITCODE -ne 0) { throw 'Browser selection harness compilation failed' }

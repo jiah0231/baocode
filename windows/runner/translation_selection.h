@@ -26,7 +26,7 @@ struct CaptureDiagnostics {
   HRESULT last_failure = S_OK;
   unsigned attempts = 0;
   unsigned final_attempts = 0;
-  FocusAttemptDiagnostics com_initialize, automation_create;
+  FocusAttemptDiagnostics com_initialize, automation_create, foreground_connection;
   FocusAttemptDiagnostics focus_attempts[translation_retry::kMaxAttempts];
   FocusAttemptDiagnostics final_focus_attempts[3];
   DWORD console_host_integrity = 0, console_client_integrity = 0;
@@ -226,11 +226,59 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
         return SUCCEEDED(set_connection_timeout(std::min<DWORD>(150, remaining))) &&
             !stopped() && SUCCEEDED(set_transaction_timeout(remaining)) && !stopped();
       };
+#if defined(BAOCODE_CAPTURE_FOREGROUND_CONNECTION_EXPERIMENT)
+#if !defined(BAOCODE_DISPOSABLE_UI_TEST_BUILD)
+#error Foreground connection experiment requires a disposable native test build.
+#endif
+      // Diagnostic experiment, never a pre-request provider warm-up. Connect
+      // only to the verified foreground HWND inside this request's deadline.
+      // The root is retained as a connection, NEVER as a selection target.
+      // No root properties, patterns, text, children or descendants are read.
+      ComPtr<IUIAutomationElement> foreground_connection;
+      const bool foreground_connection_permitted = [&] {
+        DWORD source_pid = 0;
+        const DWORD source_thread = GetWindowThreadProcessId(foreground, &source_pid);
+        const auto source_current = [&] {
+          DWORD current_pid = 0;
+          const DWORD current_thread = GetWindowThreadProcessId(foreground, &current_pid);
+          return source_thread && current_thread == source_thread &&
+              source_pid == process && current_pid == process &&
+              GetForegroundWindow() == foreground &&
+              GetAncestor(foreground, GA_ROOT) == foreground;
+        };
+        if (stopped()) return false;
+        if (!source_current()) { out.status = "focusChanged"; return false; }
+        wchar_t source_class[64] = {};
+        if (!GetClassNameW(foreground, source_class, 64) ||
+            _wcsicmp(source_class, L"Chrome_WidgetWin_1") != 0) return true;
+        if (!bounded) return false;
+        const ULONGLONG now = GetTickCount64();
+        if (now >= deadline) return false;
+        const DWORD remaining = static_cast<DWORD>(deadline - now);
+        if (FAILED(set_connection_timeout(std::min<DWORD>(300, remaining))) ||
+            stopped() || !source_current() ||
+            FAILED(set_transaction_timeout(std::min<DWORD>(500, remaining))) ||
+            stopped() || !source_current()) return false;
+        auto* connection_record = diagnostics ? &diagnostics->foreground_connection : nullptr;
+        start_diagnostic(connection_record);
+        const HRESULT connected = observe("ForegroundConnection.ElementFromHandle",
+            automation->ElementFromHandle(foreground, &foreground_connection));
+        finish_diagnostic(connection_record, connected);
+        if (stopped()) return false;
+        if (!source_current()) { out.status = "focusChanged"; return false; }
+        // A failed connection grants no permission for another discovery path.
+        return SUCCEEDED(connected) && foreground_connection != nullptr;
+      }();
+#endif
       // Chromium may expose a focused Document before its accessibility text
       // pattern is ready, or time out before returning any element. Reacquire
       // only that initial timeout; once bound, retry the same security-checked
       // identity. Never scan descendants or change focus.
-      for (unsigned attempt = 0; attempt < translation_retry::kMaxAttempts && !stopped(); ++attempt) {
+      for (unsigned attempt = 0; attempt < translation_retry::kMaxAttempts && !stopped()
+#if defined(BAOCODE_CAPTURE_FOREGROUND_CONNECTION_EXPERIMENT)
+          && foreground_connection_permitted
+#endif
+          ; ++attempt) {
         if (diagnostics) diagnostics->attempts = attempt + 1;
         bool retryable = false;
         out = Selection{};

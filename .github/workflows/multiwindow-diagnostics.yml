@@ -1,19 +1,20 @@
-# Diagnostics only. Original deadlines, assertions and failure outcomes remain intact.
-name: Windows cold UIA diagnostics
+# Same-request focused-window experiment; original strict gates remain intact.
+name: Windows cold UIA entry comparison
 on:
   push:
     branches: ['validation/windows-new-window-diagnostics']
 permissions:
   contents: read
 jobs:
-  cold_capture:
+  compare:
     if: github.repository == 'jiah0231/baocode'
     runs-on: windows-2025
-    timeout-minutes: 15
+    timeout-minutes: 12
     strategy:
       fail-fast: false
       matrix:
-        context: [fresh, after_release_native_checks]
+        mode: [baseline, foreground_handle]
+        replica: [1, 2, 3]
     env:
       BAOCODE_DISPOSABLE_UI_TEST: '1'
     steps:
@@ -21,36 +22,29 @@ jobs:
         with:
           persist-credentials: false
       - uses: ilammy/msvc-dev-cmd@v1
-      - name: Match preceding release native checks
-        if: matrix.context == 'after_release_native_checks'
-        shell: pwsh
-        run: |
-          ./tool/ci/windows_translation_smoke.ps1
-          ./tool/ci/windows_translation_clipboard_smoke.ps1
-          ./tool/ci/windows_translation_action_smoke.ps1
-      - name: Measure ten unchanged cold browser requests
-        if: ${{ !cancelled() }}
+      - name: Capture before any other UIA consumer in this runner
         shell: pwsh
         run: |
           $failures = 0
-          1..10 | ForEach-Object {
+          1..3 | ForEach-Object {
             $case = $_
-            Write-Host "COLD_CASE_BEGIN|context=${{ matrix.context }}|case=$case"
+            Write-Host "ENTRY_CASE_BEGIN|mode=${{ matrix.mode }}|replica=${{ matrix.replica }}|case=$case"
             try {
-              ./tool/ci/windows_translation_browser_smoke.ps1 -OutputDirectory "build/cold-uia/case-$case" -SkipPostFailureUiaDiagnostics
-              Write-Host "COLD_CASE_END|case=$case|result=success"
+              $probe = '${{ matrix.mode }}' -eq 'foreground_handle'
+              ./tool/ci/windows_translation_browser_smoke.ps1 -OutputDirectory "build/entry/case-$case" -SkipPostFailureUiaDiagnostics -ForegroundConnectionExperiment:$probe
+              Write-Host "ENTRY_CASE_END|case=$case|result=success"
             } catch {
               $failures++
-              Write-Host "COLD_CASE_END|case=$case|result=failure|reason=$_"
+              Write-Host "ENTRY_CASE_END|case=$case|result=failure|reason=$_"
             }
           }
-          Write-Host "COLD_MATRIX_SUMMARY|context=${{ matrix.context }}|total=10|failures=$failures"
-          if ($failures -ne 0) { throw "$failures strict cold captures failed; no failure converted to success" }
-      - name: Preserve isolated synthetic mismatch screenshots
+          Write-Host "ENTRY_MATRIX_SUMMARY|mode=${{ matrix.mode }}|replica=${{ matrix.replica }}|total=3|failures=$failures"
+          if ($failures -ne 0) { throw "$failures strict captures failed; no failure converted to success" }
+      - name: Preserve synthetic mismatch evidence
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v6
         with:
-          name: cold-uia-${{ matrix.context }}-${{ github.sha }}
+          name: entry-${{ matrix.mode }}-${{ matrix.replica }}-${{ github.sha }}
           retention-days: 3
           if-no-files-found: ignore
-          path: build/cold-uia/**/*.png
+          path: build/entry/**/*.png
