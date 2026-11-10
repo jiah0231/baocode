@@ -232,6 +232,7 @@ bool VerifyPointerPlacement(const char* selection, POINT pointer, UINT dpi) {
       panel.left, panel.top, panel.right, panel.bottom, passed ? "PASS" : "FAIL");
   return passed;
 }
+#if !defined(BAOCODE_SKIP_POST_FAILURE_UIA_DIAGNOSTICS)
 void FocusDiagnostics() {
   const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   if (FAILED(initialized)) return;
@@ -273,6 +274,7 @@ void FocusDiagnostics() {
   }
   CoUninitialize();
 }
+#endif
 }
 int wmain(int argc, wchar_t** argv) {
   if (argc != 3) return 2;
@@ -316,6 +318,21 @@ int wmain(int argc, wchar_t** argv) {
       const NativeFocusSnapshot after = ReadNativeFocus();
       PrintNativeFocus(line ? "repeat" : "cold", "before", before);
       PrintNativeFocus(line ? "repeat" : "cold", "after", after);
+      const auto print_attempt = [&](const char* phase, unsigned attempt,
+          const translation_selection::FocusAttemptDiagnostics& record) {
+        if (!record.completed) return;
+        std::printf("DEFAULT_EDGE_PROVIDER_ATTEMPT|%s|phase=%s|attempt=%u|startMs=%llu|endMs=%llu|elapsedMs=%llu|startBudgetMs=%llu|remainingMs=%llu|connectionMs=%lu|transactionMs=%lu|HRESULT=0x%08lX\n",
+            line ? "repeat" : "cold", phase, attempt, record.started_ms,
+            record.started_ms + record.elapsed_ms, record.elapsed_ms,
+            record.starting_remaining_ms, record.remaining_ms, record.connection_ms,
+            record.transaction_ms, static_cast<unsigned long>(record.result));
+      };
+      print_attempt("com_initialize", 1, diagnostics.com_initialize);
+      print_attempt("automation_create", 1, diagnostics.automation_create);
+      for (unsigned i = 0; i < translation_retry::kMaxAttempts; ++i)
+        print_attempt("initial_focus", i + 1, diagnostics.focus_attempts[i]);
+      for (unsigned i = 0; i < 3; ++i)
+        print_attempt("final_focus", i + 1, diagnostics.final_focus_attempts[i]);
       std::printf("DEFAULT_EDGE_CAPTURE_DIAGNOSTICS|%s|stage=%s|HRESULT=0x%08lX|attempts=%u|finalAttempts=%u|elapsedMs=%llu\n",
         line ? "repeat" : "cold", diagnostics.last_failure_stage,
         static_cast<unsigned long>(diagnostics.last_failure), diagnostics.attempts,
@@ -388,7 +405,11 @@ int wmain(int argc, wchar_t** argv) {
           GetDpiForWindow(browser), frame.left, frame.top, frame.right, frame.bottom,
           content.left, content.top, content.right, content.bottom);
         SyntheticScreenshot(std::wstring(argv[2]) + (line ? L"\\repeat-mismatch.bmp" : L"\\cold-mismatch.bmp"));
+#if !defined(BAOCODE_SKIP_POST_FAILURE_UIA_DIAGNOSTICS)
         FocusDiagnostics();
+#else
+        std::puts("DEFAULT_EDGE_POST_FAILURE_UIA|skipped=explicit_diagnostic_build");
+#endif
       }
       Check(GetClipboardSequenceNumber() == sequence, "Browser capture changed clipboard");
     }

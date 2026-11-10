@@ -1,5 +1,3 @@
-// ignore_for_file: avoid_print
-// Temporary non-publishing phase diagnostics.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -167,7 +165,6 @@ Future<void> main(List<String> args) async {
   await input.cancel();
 }
 """);
-    print('LOCK_PHASE spawning child');
     final process = await Process.start(_dartExecutable(), [
       '--disable-dart-dev',
       script.path,
@@ -178,9 +175,7 @@ Future<void> main(List<String> args) async {
     final output = StreamIterator(
       process.stdout.transform(utf8.decoder).transform(const LineSplitter()),
     );
-    print('LOCK_PHASE waiting for locked');
     expect(await output.moveNext(), isTrue);
-    print('LOCK_PHASE child locked');
     expect(output.current, 'locked');
     final clock = Stopwatch()..start();
     files.append('2026-11-01', ['after lock']);
@@ -188,19 +183,11 @@ Future<void> main(List<String> args) async {
     // the child's five-second failsafe. No throughput/fps claim is made.
     await Future<void>.delayed(const Duration(milliseconds: 25));
     expect(clock.elapsed, lessThan(const Duration(seconds: 4)));
-    print('LOCK_PHASE event loop responded in ${clock.elapsedMilliseconds}ms');
     process.stdin.writeln('release');
     await process.stdin.flush();
-    print('LOCK_PHASE release sent');
     await files.drain();
-    print('LOCK_PHASE writes drained');
-    final code = await process.exitCode;
-    print('LOCK_PHASE exitCode=$code');
-    final stderr = await errors;
-    print('LOCK_PHASE stderr EOF');
-    expect(code, 0, reason: stderr);
+    expect(await process.exitCode, 0, reason: await errors);
     await output.cancel();
-    print('LOCK_PHASE stdout cancelled');
     expect(await File(path).readAsLines(), ['after lock']);
   });
 }

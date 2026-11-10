@@ -1,61 +1,56 @@
-# Non-publishing checks for the Windows taskbar task and shared-engine windows.
-name: Windows lock fixture diagnostics
+# Diagnostics only. Original deadlines, assertions and failure outcomes remain intact.
+name: Windows cold UIA diagnostics
 on:
   push:
     branches: ['validation/windows-new-window-diagnostics']
-  workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: multiwindow-${{ github.ref }}
-  cancel-in-progress: true
 jobs:
-  windows:
+  cold_capture:
     if: github.repository == 'jiah0231/baocode'
     runs-on: windows-2025
-    timeout-minutes: 30
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        context: [fresh, after_release_native_checks]
     env:
-      BAOCODE_CUSTOM_UPDATE_KEY: ${{ vars.BAOCODE_CUSTOM_UPDATE_KEY }}
+      BAOCODE_DISPOSABLE_UI_TEST: '1'
     steps:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - uses: ilammy/msvc-dev-cmd@v1
-      - name: Restore original bundled assets
+      - name: Match preceding release native checks
+        if: matrix.context == 'after_release_native_checks'
         shell: pwsh
         run: |
-          python tool/ci/reassemble_preview_assets.py
-          if ($LASTEXITCODE -ne 0) { throw 'Preview reconstruction failed' }
-          python tool/ci/reassemble_maple_font.py
-          if ($LASTEXITCODE -ne 0) { throw 'Font reconstruction failed' }
-          git diff --exit-code HEAD --
-          if ($LASTEXITCODE -ne 0) { throw 'Asset reconstruction changed tracked source' }
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: '3.47.5'
-          cache: true
-      - id: iroh
-        uses: ./.github/actions/bao-iroh-prebuilt
-      - if: steps.iroh.outputs.hit != 'true'
-        uses: ./.github/actions/setup-rust
-      - name: Resolve packages and localization
+          ./tool/ci/windows_translation_smoke.ps1
+          ./tool/ci/windows_translation_clipboard_smoke.ps1
+          ./tool/ci/windows_translation_action_smoke.ps1
+      - name: Measure ten unchanged cold browser requests
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
-          flutter pub get
-          if ($LASTEXITCODE -ne 0) { throw 'Package resolution failed' }
-          flutter gen-l10n
-          if ($LASTEXITCODE -ne 0) { throw 'Localization failed' }
-          git diff --exit-code HEAD --
-          if ($LASTEXITCODE -ne 0) { throw 'Generated source differs' }
-      - run: flutter analyze --no-pub --fatal-infos
-      - run: dart format --output=none --set-exit-if-changed lib/window/app_windows.dart lib/window/code_args.dart test/window/app_windows_test.dart test/window/code_args_test.dart test/window/multi_window_test.dart test/window/window_chat_state_test.dart test/workspace/window_agent_draft_test.dart lib/workspace/workspace.dart lib/workbench.dart lib/workspace/open_in_editor_button.dart lib/workspace/new_chat_folder_bar.dart lib/workspace/window_header/window_header.dart lib/sidebar/sidebar.dart
-      - name: Repeat unchanged usage-lock fixture with stage diagnostics
-        shell: pwsh
-        run: |
-          1..3 | ForEach-Object {
-            flutter test --no-pub --reporter expanded test/usage/usage_storage_queue_test.dart
-            if ($LASTEXITCODE -ne 0) { throw 'Focused usage fixture failed' }
+          $failures = 0
+          1..10 | ForEach-Object {
+            $case = $_
+            Write-Host "COLD_CASE_BEGIN|context=${{ matrix.context }}|case=$case"
+            try {
+              ./tool/ci/windows_translation_browser_smoke.ps1 -OutputDirectory "build/cold-uia/case-$case" -SkipPostFailureUiaDiagnostics
+              Write-Host "COLD_CASE_END|case=$case|result=success"
+            } catch {
+              $failures++
+              Write-Host "COLD_CASE_END|case=$case|result=failure|reason=$_"
+            }
           }
-      - name: Repeat exact preserved Codex and performance suite
-        run: flutter test --no-pub --reporter expanded test/kernel test/usage test/models/proxy test/models/codex_test.dart test/codex_fork_test.dart test/chat/streamed_words_test.dart
+          Write-Host "COLD_MATRIX_SUMMARY|context=${{ matrix.context }}|total=10|failures=$failures"
+          if ($failures -ne 0) { throw "$failures strict cold captures failed; no failure converted to success" }
+      - name: Preserve isolated synthetic mismatch screenshots
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: cold-uia-${{ matrix.context }}-${{ github.sha }}
+          retention-days: 3
+          if-no-files-found: ignore
+          path: build/cold-uia/**/*.png

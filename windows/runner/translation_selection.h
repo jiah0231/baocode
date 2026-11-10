@@ -14,11 +14,21 @@
 
 namespace translation_selection {
 // Optional test diagnostics contain only operation names/HRESULTs, never text.
+struct FocusAttemptDiagnostics {
+  ULONGLONG started_ms = 0, elapsed_ms = 0, remaining_ms = 0;
+  ULONGLONG starting_remaining_ms = 0;
+  DWORD connection_ms = 0, transaction_ms = 0;
+  HRESULT result = S_OK;
+  bool completed = false;
+};
 struct CaptureDiagnostics {
   const char* last_failure_stage = "none";
   HRESULT last_failure = S_OK;
   unsigned attempts = 0;
   unsigned final_attempts = 0;
+  FocusAttemptDiagnostics com_initialize, automation_create;
+  FocusAttemptDiagnostics focus_attempts[translation_retry::kMaxAttempts];
+  FocusAttemptDiagnostics final_focus_attempts[3];
   DWORD console_host_integrity = 0, console_client_integrity = 0;
   SelectionTargetDiagnostics target;
   const char* bounds_stage = "notRequested";
@@ -121,6 +131,24 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
                          ULONGLONG deadline = 0,
                          CaptureDiagnostics* diagnostics = nullptr) {
   if (diagnostics) *diagnostics = CaptureDiagnostics{};
+  const ULONGLONG diagnostic_started = diagnostics ? GetTickCount64() : 0;
+  DWORD diagnostic_connection_ms = 0, diagnostic_transaction_ms = 0;
+  const auto start_diagnostic = [&](FocusAttemptDiagnostics* record) {
+    if (!record) return;
+    const ULONGLONG now = GetTickCount64();
+    record->started_ms = now - diagnostic_started;
+    record->starting_remaining_ms = now < deadline ? deadline - now : 0;
+    record->connection_ms = diagnostic_connection_ms;
+    record->transaction_ms = diagnostic_transaction_ms;
+  };
+  const auto finish_diagnostic = [&](FocusAttemptDiagnostics* record, HRESULT hr) {
+    if (!record) return;
+    const ULONGLONG now = GetTickCount64();
+    record->elapsed_ms = now - diagnostic_started - record->started_ms;
+    record->remaining_ms = now < deadline ? deadline - now : 0;
+    record->result = hr;
+    record->completed = true;
+  };
   const auto observe = [&](const char* stage, HRESULT hr) {
     if (diagnostics && FAILED(hr)) {
       diagnostics->last_failure_stage = stage;
@@ -142,18 +170,34 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
     return out;
   }
   if (GetForegroundWindow() != foreground) { out.status = "focusChanged"; return out; }
+  auto* initialize_record = diagnostics ? &diagnostics->com_initialize : nullptr;
+  start_diagnostic(initialize_record);
   const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+  finish_diagnostic(initialize_record, initialized);
   if (FAILED(initialized)) return out;
   {
     using Microsoft::WRL::ComPtr;
     ComPtr<IUIAutomation> automation;
-    if (SUCCEEDED(CoCreateInstance(CLSID_CUIAutomation8, nullptr,
-                                  CLSCTX_INPROC_SERVER,
-                                  IID_PPV_ARGS(&automation)))) {
+    auto* create_record = diagnostics ? &diagnostics->automation_create : nullptr;
+    start_diagnostic(create_record);
+    const HRESULT created = CoCreateInstance(CLSID_CUIAutomation8, nullptr,
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&automation));
+    finish_diagnostic(create_record, created);
+    if (SUCCEEDED(created)) {
       ComPtr<IUIAutomation2> bounded;
+      const auto set_connection_timeout = [&](DWORD timeout) {
+        const HRESULT hr = bounded->put_ConnectionTimeout(timeout);
+        if (diagnostics && SUCCEEDED(hr)) diagnostic_connection_ms = timeout;
+        return hr;
+      };
+      const auto set_transaction_timeout = [&](DWORD timeout) {
+        const HRESULT hr = bounded->put_TransactionTimeout(timeout);
+        if (diagnostics && SUCCEEDED(hr)) diagnostic_transaction_ms = timeout;
+        return hr;
+      };
       if (SUCCEEDED(automation.As(&bounded))) {
-        bounded->put_ConnectionTimeout(300);
-        bounded->put_TransactionTimeout(500);
+        set_connection_timeout(300);
+        set_transaction_timeout(500);
       }
       ComPtr<IUIAutomationElement> original_element;
       bool require_text_control = false;
@@ -179,8 +223,8 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
         if (stopped() || now >= deadline || GetForegroundWindow() != foreground) return false;
         if (!bounded) return false;
         const DWORD remaining = static_cast<DWORD>(std::min<ULONGLONG>(200, deadline - now));
-        return SUCCEEDED(bounded->put_ConnectionTimeout(std::min<DWORD>(150, remaining))) &&
-            !stopped() && SUCCEEDED(bounded->put_TransactionTimeout(remaining)) && !stopped();
+        return SUCCEEDED(set_connection_timeout(std::min<DWORD>(150, remaining))) &&
+            !stopped() && SUCCEEDED(set_transaction_timeout(remaining)) && !stopped();
       };
       // Chromium may expose a focused Document before its accessibility text
       // pattern is ready, or time out before returning any element. Reacquire
@@ -201,11 +245,14 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
           // exceed this request's remaining lifetime. Bound later transactions.
           const DWORD connection = original_element ? 150 : 300;
           const DWORD transaction = original_element ? 200 : 500;
-          if (FAILED(bounded->put_ConnectionTimeout(std::min(connection, remaining))) ||
-              FAILED(bounded->put_TransactionTimeout(std::min(transaction, remaining)))) break;
+          if (FAILED(set_connection_timeout(std::min(connection, remaining))) ||
+              FAILED(set_transaction_timeout(std::min(transaction, remaining)))) break;
         }
         ComPtr<IUIAutomationElement> focused;
+        auto* focus_record = diagnostics ? &diagnostics->focus_attempts[attempt] : nullptr;
+        start_diagnostic(focus_record);
         const HRESULT focus_result = observe("GetFocusedElement", automation->GetFocusedElement(&focused));
+        finish_diagnostic(focus_record, focus_result);
         if (stopped()) break;
         if (GetForegroundWindow() != foreground) { out.status = "focusChanged"; break; }
         retryable = translation_retry::CanRetryInitialFocus(
@@ -219,8 +266,8 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
             const ULONGLONG now = GetTickCount64();
             if (now >= deadline) break;
             const DWORD remaining = static_cast<DWORD>(deadline - now);
-            if (FAILED(bounded->put_ConnectionTimeout(std::min<DWORD>(150, remaining))) ||
-                FAILED(bounded->put_TransactionTimeout(std::min<DWORD>(200, remaining)))) break;
+            if (FAILED(set_connection_timeout(std::min<DWORD>(150, remaining))) ||
+                FAILED(set_transaction_timeout(std::min<DWORD>(200, remaining)))) break;
           }
           int focused_process = 0;
           BOOL password = TRUE;
@@ -389,12 +436,15 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
             const ULONGLONG now = GetTickCount64();
             if (now >= deadline) break;
             const DWORD remaining = static_cast<DWORD>(deadline - now);
-            if (FAILED(bounded->put_ConnectionTimeout(std::min<DWORD>(150, remaining))) ||
-                FAILED(bounded->put_TransactionTimeout(std::min<DWORD>(200, remaining)))) break;
+            if (FAILED(set_connection_timeout(std::min<DWORD>(150, remaining))) ||
+                FAILED(set_transaction_timeout(std::min<DWORD>(200, remaining)))) break;
           }
           ComPtr<IUIAutomationElement> final_focus;
+          auto* final_record = diagnostics ? &diagnostics->final_focus_attempts[check] : nullptr;
+          start_diagnostic(final_record);
           const HRESULT final_result = observe("FinalFocus.GetFocusedElement",
               automation->GetFocusedElement(&final_focus));
+          finish_diagnostic(final_record, final_result);
           if (stopped() || GetForegroundWindow() != foreground) break;
           bool transient_pane = false;
           if (SUCCEEDED(final_result) && final_focus) {
