@@ -14,7 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         mode: [baseline, foreground_handle]
-        replica: [1, 2, 3]
+        replica: [1, 2, 3, 4, 5, 6]
     env:
       BAOCODE_DISPOSABLE_UI_TEST: '1'
     steps:
