@@ -49,6 +49,14 @@ class Transcript {
   /// Bumped on every change, to cache projections.
   int version = 0;
 
+  /// Changes that can alter a row's kind, order or folding. Text deltas do
+  /// not: views can refresh those rows without scanning the old conversation.
+  int structureVersion = 0;
+
+  /// Rows whose text changed since [structureVersion], accumulated so a
+  /// throttled view cannot miss an earlier delta. Cleared on structural edits.
+  final Set<int> textChangedRows = {};
+
   /// How many items were put before the others ([HistoryPrepended]) in all:
   /// what the indexes of those there were moved by.
   int prepended = 0;
@@ -231,6 +239,17 @@ class Transcript {
       // The session's, not the conversation's (see ChatSession.takeRenamed).
       case KernelInfoChanged() || SessionRenamed():
         return false;
+    }
+    if (event case TextDelta(:final id)) {
+      textChangedRows.add(indexOf(id)!);
+    } else if (event is! OutputReported &&
+        event is! ActivityReported &&
+        event is! UsageReported &&
+        event is! TasksReported &&
+        event is! GoalReported &&
+        event is! StatsReported) {
+      structureVersion++;
+      textChangedRows.clear();
     }
     version++;
     return true;

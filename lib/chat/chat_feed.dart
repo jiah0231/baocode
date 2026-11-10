@@ -34,6 +34,15 @@ abstract interface class ChatFeed implements Listenable {
   VoidCallback? stopAt(int index);
 }
 
+/// Optional change information from a feed that owns its edits. The revision
+/// must change for every edit except text-only replacements and status updates.
+/// Changed text rows accumulate until that revision changes, not until read:
+/// several windows and throttled frames can observe the feed independently.
+abstract interface class ChatFeedTextChanges {
+  Object get structureRevision;
+  Iterable<int> get textChangedRows;
+}
+
 /// The conversation of a subagent in [session], found by [path]: the ids of
 /// the subagents leading to it, outermost first. What it was asked comes
 /// first, as a message to it; its report last, as its answer. While it

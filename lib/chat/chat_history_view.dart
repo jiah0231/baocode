@@ -161,7 +161,41 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   /// Whether a turn was under way, as last seen: to tell when it ends.
   bool _wasLive = false;
 
+  Object? _foldRevision;
+  int _foldCount = 0;
+  bool _foldLive = false;
+  int _minimapRevision = 0;
+  int _minimapBuiltRevision = 0;
+  int _minimapFrom = 0;
+
+  void _minimapChanged([int from = 0]) {
+    _minimapFrom = _minimapRevision == _minimapBuiltRevision
+        ? from
+        : math.min(_minimapFrom, from);
+    _minimapRevision++;
+  }
+
   void _refold() {
+    final changes = _feed is ChatFeedTextChanges
+        ? _feed as ChatFeedTextChanges
+        : null;
+    final revision = changes == null
+        ? null
+        : (_feed, changes.structureRevision);
+    final count = _feed.itemCount;
+    if (revision != null &&
+        revision == _foldRevision &&
+        count == _foldCount &&
+        _feed.isStreaming == _foldLive) {
+      final first = _folds.refreshText(changes!.textChangedRows, _feed.itemAt);
+      // The synthetic status row can change with no transcript text delta.
+      _minimapChanged(math.min(first, math.max(0, count - 1)));
+      return;
+    }
+    _foldRevision = revision;
+    _foldCount = count;
+    _foldLive = _feed.isStreaming;
+    _minimapChanged();
     _folds = StepFolds.of(
       _feed.itemCount,
       _feed.itemAt,
@@ -186,7 +220,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   /// moment before it folds away.
   late final Steadiness _steady = Steadiness(
     onChange: () {
-      if (mounted) setState(() {});
+      if (mounted) setState(() => _minimapChanged(_liveStart ?? 0));
     },
   );
 
@@ -203,7 +237,10 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     for (var index = fold.start; index < fold.end; index++) {
       _animateItem(index);
     }
-    setState(() => _foldOpen[fold.key] = !_isFoldOpen(fold));
+    setState(() {
+      _foldOpen[fold.key] = !_isFoldOpen(fold);
+      _minimapChanged();
+    });
   }
 
   /// What row [index] shows. Of a run under way the user has not opened
@@ -728,6 +765,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
         for (final fold in folds) {
           _foldOpen[fold.key] = true;
         }
+        _minimapChanged();
       });
     } else if (_listController.isAttached) {
       // In view, its marks bring the match into view themselves.
@@ -1357,7 +1395,10 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     }
     // Back at the bottom: the turn read meanwhile folds.
     if (_atBottom && _unfoldedTurns.isNotEmpty) {
-      setState(_unfoldedTurns.clear);
+      setState(() {
+        _unfoldedTurns.clear();
+        _minimapChanged();
+      });
     }
     _syncEdgeFades();
     _scheduleStickyUpdate();
@@ -1706,9 +1747,15 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
         });
       }
     }
-    if (sent) _unfoldedTurns.clear();
+    if (sent && _unfoldedTurns.isNotEmpty) {
+      _unfoldedTurns.clear();
+      _minimapChanged();
+    }
     if (ended && !_atBottom) {
-      if (_lastTurnWork() case final fold?) _unfoldedTurns.add(fold.start);
+      if (_lastTurnWork() case final fold?) {
+        _unfoldedTurns.add(fold.start);
+        _minimapChanged();
+      }
     }
     final editing = _editingIndex;
     if (startedStreaming) _closingIndex = null;
@@ -2742,6 +2789,7 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
       foldImages([for (var i = 0; i < _feed.itemCount; i++) _feed.itemAt(i)]);
 
   Widget _buildHistory(BuildContext context) {
+    _minimapBuiltRevision = _minimapRevision;
     final outerBars = ScrollbarTheme.of(context);
     return Shortcuts(
       shortcuts: _selectionShortcuts,
@@ -2922,6 +2970,8 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
                       key: ObjectKey(_feed),
                       rowCount: _feed.itemCount,
                       rowAt: _minimapRow,
+                      revision: _minimapRevision,
+                      changedFrom: _minimapFrom,
                       span: _spanInView,
                       moved: Listenable.merge([
                         _scrollController,
