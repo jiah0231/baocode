@@ -361,13 +361,19 @@ class Session {
   bool StopChecked() {
     if(stopped_) return valid_;
     stopped_=true; bool ok=true;
+    ULONG disable_status=ERROR_SUCCESS,stop_status=ERROR_SUCCESS,close_status=ERROR_SUCCESS;
+    DWORD consumer_wait=WAIT_OBJECT_0,consumer_second_wait=WAIT_OBJECT_0;
+    DWORD watchdog_wait=WAIT_OBJECT_0,watchdog_exit=0,watchdog_exit_error=ERROR_SUCCESS;
+    bool consumer_joined=false;
     if(enabled_) {
       const ULONG e=EnableTraceEx2(session_,&provider_,EVENT_CONTROL_CODE_DISABLE_PROVIDER,0,0,0,1000,nullptr);
+      disable_status=e;
       if(e!=ERROR_SUCCESS && e!=ERROR_WMI_INSTANCE_NOT_FOUND) ok=false;
       enabled_=false;
     }
     if(owned_) {
       const ULONG e=ControlTraceW(session_,properties_.name,&properties_.p,EVENT_TRACE_CONTROL_STOP);
+      stop_status=e;
       if(e==ERROR_SUCCESS) owned_=false;
       else {
         ok=false;
@@ -379,20 +385,26 @@ class Session {
     if(collection_elapsed>5000) ok=false;
     if(!owned_) SetEvent(stop_event_.value);
     if(consumer_started_) {
-      bool done=WaitForSingleObject(state_->done.value,2000)==WAIT_OBJECT_0;
+      consumer_wait=WaitForSingleObject(state_->done.value,2000);
+      bool done=consumer_wait==WAIT_OBJECT_0;
       if(!done) {
         ok=false;
-        CloseTrace(consumer_);consumer_=INVALID_PROCESSTRACE_HANDLE;
-        done=WaitForSingleObject(state_->done.value,500)==WAIT_OBJECT_0;
+        close_status=CloseTrace(consumer_);consumer_=INVALID_PROCESSTRACE_HANDLE;
+        consumer_second_wait=WaitForSingleObject(state_->done.value,500);
+        done=consumer_second_wait==WAIT_OBJECT_0;
       }
-      if(done && consumer_thread_.joinable()) consumer_thread_.join();
+      if(done && consumer_thread_.joinable()) { consumer_thread_.join();consumer_joined=true; }
       else if(consumer_thread_.joinable()) consumer_thread_.detach(); // Captured State remains alive.
       if(state_->process_result.load()!=ERROR_SUCCESS) ok=false;
     }
-    if(consumer_!=INVALID_PROCESSTRACE_HANDLE) { CloseTrace(consumer_);consumer_=INVALID_PROCESSTRACE_HANDLE; }
+    if(consumer_!=INVALID_PROCESSTRACE_HANDLE) { close_status=CloseTrace(consumer_);consumer_=INVALID_PROCESSTRACE_HANDLE; }
     if(watchdog_.value) {
-      if(WaitForSingleObject(watchdog_.value,1500)!=WAIT_OBJECT_0) ok=false;
-      else { DWORD exit=1;if(!GetExitCodeProcess(watchdog_.value,&exit) || exit!=0) ok=false; }
+      watchdog_wait=WaitForSingleObject(watchdog_.value,1500);
+      if(watchdog_wait!=WAIT_OBJECT_0) ok=false;
+      else {
+        if(!GetExitCodeProcess(watchdog_.value,&watchdog_exit)) { watchdog_exit_error=GetLastError();ok=false; }
+        else if(watchdog_exit!=0) ok=false;
+      }
     }
     // Verify absence without enumerating/stopping any other session. If a stop
     // failed, the independent watchdog and outer exact-ID cleanup remain armed.
@@ -401,6 +413,10 @@ class Session {
     if(remains!=ERROR_WMI_INSTANCE_NOT_FOUND) ok=false;
     else owned_=false;
     if(properties_.p.EventsLost || properties_.p.LogBuffersLost || properties_.p.RealTimeBuffersLost || state_->failure.load()) ok=false;
+    std::printf("UIA_TRACE_STOP_STATUS|probe=%d|disable=%lu|stop=%lu|consumerWait=%lu|consumerSecondWait=%lu|consumerJoined=%d|processTrace=%lu|closeTrace=%lu|watchdogWait=%lu|watchdogExit=%lu|watchdogExitError=%lu|query=%lu|withinLifetime=%d\n",
+        state_->probe?1:0,disable_status,stop_status,consumer_wait,consumer_second_wait,consumer_joined?1:0,
+        state_->process_result.load(),close_status,watchdog_wait,watchdog_exit,watchdog_exit_error,remains,
+        collection_elapsed<=5000?1:0);
     std::printf("UIA_TRACE_SESSION_END|probe=%d|eventsLost=%lu|logBuffersLost=%lu|realtimeBuffersLost=%lu|validationFailure=%u|collectionMs=%llu|sessionPlusTeardownMs=%llu|sessionAbsent=%d|valid=%d\n",
         state_->probe?1:0,properties_.p.EventsLost,properties_.p.LogBuffersLost,properties_.p.RealTimeBuffersLost,
         state_->failure.load(),collection_elapsed,started_ ? GetTickCount64()-started_ : 0,
@@ -489,14 +505,43 @@ void VerifyFilters(const GUID& session) {
 }
 }  // namespace
 
+struct BrowserIdentity::Impl {
+  DWORD pid=0;ULONGLONG created=0;std::wstring exact_path;Handle process;
+  Impl(const wchar_t* expected_pid,const wchar_t* expected_created,const wchar_t* path)
+      : pid(ToUlong(expected_pid)),created(ToU64(expected_created)),exact_path(path) {
+    Require(Disposable() && !exact_path.empty(),"Missing exact launched browser identity");
+    process.value=OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE,FALSE,pid);
+    Require(process.value && Current(),"Launched browser PID, creation time or exact executable differs");
+    std::printf("UIA_TRACE_BROWSER_IDENTITY|pid=%lu|creationFileTime=%llu|exactPathVerified=1|heldHandle=1\n",pid,created);
+  }
+  bool Current() const {
+    if(!process.value || WaitForSingleObject(process.value,0)!=WAIT_TIMEOUT || GetProcessId(process.value)!=pid) return false;
+    FILETIME creation{},exit{},kernel{},user{};
+    if(!GetProcessTimes(process.value,&creation,&exit,&kernel,&user)) return false;
+    const ULONGLONG actual=(static_cast<ULONGLONG>(creation.dwHighDateTime)<<32)|creation.dwLowDateTime;
+    wchar_t image[32768]{};DWORD length=32768;
+    return actual==created && QueryFullProcessImageNameW(process.value,0,image,&length) &&
+        _wcsicmp(image,exact_path.c_str())==0;
+  }
+};
+BrowserIdentity::BrowserIdentity(const wchar_t* pid,const wchar_t* created,const wchar_t* path)
+    : impl_(std::make_unique<Impl>(pid,created,path)) {}
+BrowserIdentity::~BrowserIdentity() = default;
+bool BrowserIdentity::Matches(HWND source) const {
+  DWORD pid=0;
+  return source && GetWindowThreadProcessId(source,&pid) && pid==impl_->pid && impl_->Current();
+}
+
 struct CaptureTrace::Impl {
   HWND source=nullptr;DWORD edge=0,thread=0; Handle process;FILETIME created{};
   std::unique_ptr<Session> session; bool finished=false;
-  std::wstring receipt_path;GUID session_id{};
-  Impl(HWND window,const wchar_t* receipt,const wchar_t* identity) : source(window),receipt_path(receipt),session_id(ParseGuid(identity)) {
+  std::wstring receipt_path;GUID session_id{};const BrowserIdentity& launched;
+  Impl(HWND window,const wchar_t* receipt,const wchar_t* identity,const BrowserIdentity& expected)
+      : source(window),receipt_path(receipt),session_id(ParseGuid(identity)),launched(expected) {
     Require(Disposable(),"Scoped trace requires explicit disposable CI environment");
     const ULONGLONG setup=GetTickCount64();
     VerifyReceipt(receipt,session_id); const Audit audit=AuditSchema();
+    Require(launched.Matches(source),"Source is not the exact launched Edge instance");
     thread=GetWindowThreadProcessId(source,&edge);
     Require(thread && edge && edge!=GetCurrentProcessId() && GetForegroundWindow()==source &&
         GetAncestor(source,GA_ROOT)==source,"Invalid verified source for scoped trace");
@@ -512,7 +557,8 @@ struct CaptureTrace::Impl {
   }
   bool SourceCurrent() {
     DWORD pid=0; const DWORD tid=GetWindowThreadProcessId(source,&pid);
-    return pid==edge && tid==thread && GetForegroundWindow()==source && WaitForSingleObject(process.value,0)==WAIT_TIMEOUT;
+    return launched.Matches(source) && pid==edge && tid==thread && GetForegroundWindow()==source &&
+        WaitForSingleObject(process.value,0)==WAIT_TIMEOUT;
   }
   bool Finish() {
     if(finished) return false; finished=true;
@@ -565,7 +611,8 @@ struct CaptureTrace::Impl {
     return true;
   }
 };
-CaptureTrace::CaptureTrace(HWND source,const wchar_t* receipt,const wchar_t* session) : impl_(std::make_unique<Impl>(source,receipt,session)) {}
+CaptureTrace::CaptureTrace(HWND source,const wchar_t* receipt,const wchar_t* session,const BrowserIdentity& browser)
+    : impl_(std::make_unique<Impl>(source,receipt,session,browser)) {}
 CaptureTrace::~CaptureTrace() = default;
 void CaptureTrace::MarkCaptureStart() {
   Require(impl_->SourceCurrent(),"Source changed before scoped capture");impl_->session->data().capture_start.store(Qpc());

@@ -53,7 +53,13 @@ count must equal 1. Any explicit count/length flags are rejected.
 
 One EnableTraceEx2 call supplies both collection-side PID and event-ID inclusion
 filters. PIDs are only the harness and the already-verified Edge browser; no
-executable-name wildcard or process-tree expansion is used. The filter selftest
+executable-name wildcard or process-tree expansion is used. PowerShell holds the
+freshly launched Edge process handle and passes its PID, creation FILETIME and
+exact installed Edge path. The harness holds its own process handle and verifies
+all three before manipulating the fixture. Trace and control perform the same
+binding. CaptureTrace revalidates before enabling and at capture boundaries;
+process exit, reuse, path mismatch or launch handoff fails closed. There is no
+replacement-process, title-only or child-process fallback. The filter selftest
 first establishes all four PID/event combinations, then requires only the
 allowed intersection to reach the unfiltered callback. Extra callbacks are
 failures, not silently discarded software-filtering successes. TraceLogging is

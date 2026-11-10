@@ -343,8 +343,9 @@ int wmain(int argc, wchar_t** argv) {
 #if defined(BAOCODE_SCOPED_UIA_TIMING_TRACE)
   const auto tool_mode = uia_numeric_trace::ToolMode(argc, argv);
   if (tool_mode.has_value()) return *tool_mode;
-  const bool scoped_timing_trace = argc == 6 && std::wcscmp(argv[3], L"--scoped-timing-trace") == 0;
-  if (argc != 3 && !scoped_timing_trace) return 2;
+  const bool scoped_timing_trace = argc == 9 && std::wcscmp(argv[3], L"--scoped-timing-trace") == 0;
+  const bool scoped_timing_control = argc == 9 && std::wcscmp(argv[3], L"--scoped-timing-control") == 0;
+  if (argc != 3 && !scoped_timing_trace && !scoped_timing_control) return 2;
 #else
   if (argc != 3) return 2;
 #endif
@@ -369,9 +370,19 @@ int wmain(int argc, wchar_t** argv) {
   std::puts("DEFAULT_EDGE_CAPTURE_VARIANT|baseline|deadlineMs=1500");
 #endif
   int result = 0;
+#if defined(BAOCODE_SCOPED_UIA_TIMING_TRACE)
+  std::unique_ptr<uia_numeric_trace::BrowserIdentity> launched_browser;
+#endif
   try {
+#if defined(BAOCODE_SCOPED_UIA_TIMING_TRACE)
+    if(scoped_timing_trace || scoped_timing_control)
+      launched_browser=std::make_unique<uia_numeric_trace::BrowserIdentity>(argv[6],argv[7],argv[8]);
+#endif
     for (int i = 0; i < 200 && !browser; ++i) { EnumWindows(FindBrowser, 0); Sleep(100); }
     Check(browser != nullptr, "Isolated default Edge fixture window did not load");
+#if defined(BAOCODE_SCOPED_UIA_TIMING_TRACE)
+    if(launched_browser) Check(launched_browser->Matches(browser), "Fixture is not the exact launched Edge process instance");
+#endif
     DWORD pid = 0; GetWindowThreadProcessId(browser, &pid);
     HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
     Check(process != nullptr, "Cannot verify browser executable");
@@ -395,6 +406,9 @@ int wmain(int argc, wchar_t** argv) {
     preparation.Prepare();  // Native fixture ready; NO DragLine/UIA capture yet.
 #endif
     for (int line = 0; line < 2; ++line) {
+#if defined(BAOCODE_SCOPED_UIA_TIMING_TRACE)
+      if(launched_browser) Check(launched_browser->Matches(browser), "Launched Edge identity changed before gesture");
+#endif
       DragLine(line);
       Check(GetForegroundWindow() == browser, "Drag changed browser foreground");
       // First call is intentionally cold: no prior UIA traversal, screen-reader
@@ -412,7 +426,7 @@ int wmain(int argc, wchar_t** argv) {
       std::unique_ptr<uia_numeric_trace::CaptureTrace> timing_trace;
       if (scoped_timing_trace && line == 0) {
         Check(before.source_gui_ok && before.foreground_gui_ok, "Cannot verify native source before scoped trace");
-        timing_trace = std::make_unique<uia_numeric_trace::CaptureTrace>(browser, argv[4], argv[5]);
+        timing_trace = std::make_unique<uia_numeric_trace::CaptureTrace>(browser, argv[4], argv[5], *launched_browser);
         const auto ready = ReadNativeFocus();
         Check(ready.source_gui_ok && ready.foreground_gui_ok &&
             !ready.source_gui.hwndCapture && !ready.foreground_gui.hwndCapture,
@@ -422,6 +436,7 @@ int wmain(int argc, wchar_t** argv) {
       POINT capture_pointer{}, after_pointer{};
       const bool have_pointer = GetCursorPos(&capture_pointer) != 0;
 #if defined(BAOCODE_SCOPED_UIA_TIMING_TRACE)
+      if(launched_browser) Check(launched_browser->Matches(browser), "Launched Edge identity changed before Capture");
       if (timing_trace) timing_trace->MarkCaptureStart();
 #endif
       const ULONGLONG capture_started = GetTickCount64();
@@ -434,6 +449,7 @@ int wmain(int argc, wchar_t** argv) {
 #endif
 #if defined(BAOCODE_SCOPED_UIA_TIMING_TRACE)
       if (timing_trace) timing_trace->MarkCaptureEnd();
+      if(launched_browser) Check(launched_browser->Matches(browser), "Launched Edge identity changed during Capture");
 #endif
       const ULONGLONG capture_finished = GetTickCount64();
       const ULONGLONG capture_elapsed = capture_finished - capture_started;
@@ -564,6 +580,12 @@ int wmain(int argc, wchar_t** argv) {
     Check(allPassed, "Default Edge UIA selection failed (see cold/repeat diagnostics); no accessibility override or Document Ctrl+C fallback used");
     std::puts("PASS: default Edge real mouse selections, production Capture, exact fresh source, supplied bounds or verified pointer placement, source/focus/pointer/clipboard unchanged");
   } catch (const std::exception& error) { std::fprintf(stderr, "FAIL: %s\n", error.what()); result = 1; }
+#if defined(BAOCODE_SCOPED_UIA_TIMING_TRACE)
+  if(scoped_timing_trace || scoped_timing_control) {
+    // A title match that failed launch binding is never ours to close.
+    if(browser && launched_browser && launched_browser->Matches(browser)) PostMessageW(browser, WM_CLOSE, 0, 0);
+  } else
+#endif
   if (browser) PostMessageW(browser, WM_CLOSE, 0, 0);
   return result;
 }

@@ -128,8 +128,15 @@ try {
   if ($ScopedTimingTraceControl) {
     Write-Host "SCOPED_TIMING_CONTROL|samePreflight=1|uiaSessionStarted=0|extraWait=0"
   }
-  if ($ScopedTimingTrace) {
-    $testArguments += @('--scoped-timing-trace', "`"$traceReceipt`"", $traceSessionId)
+  if ($ScopedTimingTrace -or $ScopedTimingTraceControl) {
+    # Pin the exact returned process instance before reading identity. No name,
+    # title, descendant or replacement-process fallback is accepted.
+    $null = $browser.Handle
+    if ($browser.HasExited) { throw 'Launched Edge exited before identity binding' }
+    $edgeCreated = $browser.StartTime.ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture)
+    $edgeExactPath = [IO.Path]::GetFullPath($edge)
+    $traceMode = if ($ScopedTimingTrace) { '--scoped-timing-trace' } else { '--scoped-timing-control' }
+    $testArguments += @($traceMode, "`"$traceReceipt`"", $traceSessionId, $browser.Id, $edgeCreated, "`"$edgeExactPath`"")
   }
   $test = Start-Process -FilePath (Join-Path $root 'browser_smoke.exe') -ArgumentList $testArguments -PassThru -NoNewWindow
   if (!$test.WaitForExit(60000)) { throw 'Default Edge selection smoke timed out' }
