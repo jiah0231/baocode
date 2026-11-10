@@ -11,6 +11,7 @@
 #include <initializer_list>
 #include <mutex>
 #include <atomic>
+#include <vector>
 using Microsoft::WRL::ComPtr;
 namespace {
   HWND browser=nullptr;
@@ -157,12 +158,39 @@ namespace {
     if(FAILED(hr)||!elements)return 0;
     int count=0,found=0;
     elements->get_Length(&count);
-    Check(count<=2000,"Unexpected huge isolated document tree");
+    Check(count>=0&&count<=2000,"Unexpected huge isolated document tree");
+    // Enumerate metadata only. Many PDF text children inherit the same pattern
+    // and would return hundreds of duplicate selected-text reads.
+    std::vector<int> targets;
+    int documentCount=0, focusedNonDocumentCount=0;
     for(int n=0;n<count;++n) {
+      Scoped();
+      ComPtr<IUIAutomationElement> candidate;
+      if(FAILED(elements->GetElement(n,&candidate))||!candidate)continue;
+      CONTROLTYPEID candidateType=0;
+      BOOL hasFocus=FALSE;
+      if(FAILED(candidate->get_CurrentControlType(&candidateType)))continue;
+      if(candidateType==UIA_DocumentControlTypeId) {
+        ++documentCount;
+        if(documentCount<=8)targets.push_back(n);
+      } else if(SUCCEEDED(candidate->get_CurrentHasKeyboardFocus(&hasFocus))&&hasFocus) {
+        ++focusedNonDocumentCount;
+        if(focusedNonDocumentCount==1)targets.push_back(n);
+      }
+    }
+    printf("UIA_TARGETS|availableTextPatternElements=%d|documentElements=%d|focusedNonDocumentElements=%d|processedTargets=%zu|maxDocuments=8|maxFocusedNonDocument=1\n",
+        count,documentCount,focusedNonDocumentCount,targets.size());
+    for(int n:targets) {
       Scoped();
       ComPtr<IUIAutomationElement> e;
       elements->GetElement(n,&e);
       if(!e)continue;
+      // Recheck current target metadata immediately before pattern access.
+      CONTROLTYPEID targetType=0;
+      BOOL targetFocused=FALSE;
+      if(FAILED(e->get_CurrentControlType(&targetType)))continue;
+      if(targetType!=UIA_DocumentControlTypeId &&
+          (FAILED(e->get_CurrentHasKeyboardFocus(&targetFocused))||!targetFocused))continue;
       BOOL password=TRUE;
       e->get_CurrentIsPassword(&password);
       if(password)continue;
