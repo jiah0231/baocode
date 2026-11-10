@@ -7,6 +7,7 @@
 #include <vector>
 #include "translation_selection.h"
 #include "translation_gesture_geometry.h"
+#include "translation_mouse_hook.h"
 
 // A metadata-only mouse selection affordance. Text capture is exclusively the
 // caller's explicit-click callback. All public methods run on the UI thread.
@@ -31,7 +32,8 @@ class TranslationSelectionAction {
   TranslationSelectionAction& operator=(const TranslationSelectionAction&) = delete;
  private:
   struct Worker;
-  static LRESULT CALLBACK MouseHook(int code, WPARAM wparam, LPARAM lparam);
+  void MouseEvent(const translation_mouse::Hook::Event& event);
+  void PublishButton();
   static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
   void Tick();
   void Request();
@@ -45,7 +47,7 @@ class TranslationSelectionAction {
   HWND dispatcher_ = nullptr;
   HWND button_ = nullptr;
   HWND source_ = nullptr;
-  HHOOK hook_ = nullptr;
+  std::unique_ptr<translation_mouse::Hook> hook_;
   UINT_PTR timer_ = 0;
   bool worker_available_ = true;
   bool enabled_ = false, dark_ = false, down_ = false, candidate_ = false;

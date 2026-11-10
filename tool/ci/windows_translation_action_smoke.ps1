@@ -2,6 +2,7 @@ $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:BAOCODE_DISPOSABLE_UI_TEST -ne '1') {
   throw 'Selection action smoke may only run on an explicitly enabled disposable GitHub Actions desktop.'
 }
+& (Join-Path $PSScriptRoot 'windows_translation_mouse_hook_smoke.ps1')
 $source = Join-Path $PSScriptRoot 'windows_translation_action_smoke.cpp'
 $implementation = Join-Path $PSScriptRoot '../../windows/runner/translation_selection_action.cpp'
 # Discovery remains metadata-only. The one explicit ClickJob reader is checked

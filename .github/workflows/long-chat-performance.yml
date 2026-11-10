@@ -1,0 +1,45 @@
+# Isolated validation only: no signing, publication, model calls or user desktop.
+name: Long chat performance validation
+on:
+  push:
+    branches: ['validation/long-chat-perf-20261111']
+permissions:
+  contents: read
+concurrency:
+  group: long-chat-performance-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    if: github.repository == 'jiah0231/baocode'
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Test mailbox with Release assertions enabled
+        shell: pwsh
+        run: |
+          cl.exe /nologo /std:c++17 /EHsc /O2 /DNDEBUG /W4 /WX tool/ci/translation_mouse_mailbox_test.cpp /Fe:mailbox_test.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Mailbox Release compilation failed' }
+          ./mailbox_test.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Mailbox Release regression failed' }
+      - name: Verify metadata-only passive discovery
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          python tool/ci/verify_translation_action_privacy.py --self-test windows/runner/translation_selection_action.cpp
+          if ($LASTEXITCODE -ne 0) { throw 'Selection privacy guard failed' }
+      - name: Test real hook latency with blocked UI and bounded input flood
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+        run: ./tool/ci/windows_translation_mouse_hook_smoke.ps1
+      - name: Test pill clicks and bound selection privacy regressions
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+        run: ./tool/ci/windows_translation_action_smoke.ps1
