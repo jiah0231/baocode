@@ -65,6 +65,16 @@ allowed intersection to reach the unfiltered callback. Extra callbacks are
 failures, not silently discarded software-filtering successes. TraceLogging is
 not used: Windows can ignore event-ID filters for TraceLogging providers.
 
+Both private-probe phases explicitly flush their still-live session and await
+callback delivery of the already-allowed parent-PID/event-1 zero-payload record.
+Producer completion alone is not consumer readiness. Delivery must occur while
+the consumer is active and without validation failure, within the original
+five-second session limit (at most two seconds of event-driven waiting). This
+is not a settling sleep, additional provider, or accepted ProcessTrace error.
+The full four-combination/intersection counts and zero-loss/zero-error teardown
+checks still run after Stop. No delivery, early consumer exit or timeout fails
+closed. This handshake runs only in preflight, before Edge is launched.
+
 Callbacks reject unknown versions/descriptors/lengths/extended data before
 copying payload values. ETW cannot filter by version: unknown-version bytes may
 briefly enter operating-system buffers, but they are not parsed, copied to the

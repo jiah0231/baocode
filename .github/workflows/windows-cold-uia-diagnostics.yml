@@ -1,20 +1,19 @@
-# Matched observation only: no production fix, no broadened provider capture.
-name: Observe bounded cold UIA timing
+# Guard verification only. No UIA tracing or Edge launch is allowed here.
+name: Verify scoped timing consumer synchronization
 on:
   push:
     branches: ['validation/windows-new-window-diagnostics']
 permissions:
   contents: read
 jobs:
-  compare:
+  selftest:
     if: github.repository == 'jiah0231/baocode'
     runs-on: windows-2025
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        replica: [1, 2, 3, 4, 5, 6, 7, 8]
-        mode: [control, trace]
+        replica: [1, 2, 3]
     env:
       BAOCODE_DISPOSABLE_UI_TEST: '1'
     steps:
@@ -22,23 +21,19 @@ jobs:
         with:
           persist-credentials: false
       - uses: ilammy/msvc-dev-cmd@v1
-      - name: Verify filters then observe the first cold capture
+      - name: Verify private probe filters and reviewed numeric schema only
         shell: pwsh
         run: |
-          Write-Host "TIMING_CASE_BEGIN|mode=${{ matrix.mode }}|replica=${{ matrix.replica }}|samePreflight=1|extraWait=0"
-          $control = '${{ matrix.mode }}' -eq 'control'
-          $trace = '${{ matrix.mode }}' -eq 'trace'
-          ./tool/ci/windows_translation_browser_smoke.ps1 -OutputDirectory 'build/timing' -SkipPostFailureUiaDiagnostics -ScopedTimingTraceControl:$control -ScopedTimingTrace:$trace
-          Write-Host "TIMING_CASE_END|mode=${{ matrix.mode }}|replica=${{ matrix.replica }}|result=success"
-      - name: Verify native protections after cold observation
-        if: ${{ !cancelled() && matrix.replica == 1 }}
-        shell: pwsh
-        run: ./tool/ci/windows_translation_smoke.ps1
-      - name: Preserve synthetic mismatch evidence
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v6
-        with:
-          name: timing-${{ matrix.mode }}-${{ matrix.replica }}-${{ github.sha }}
-          retention-days: 3
-          if-no-files-found: ignore
-          path: build/timing/*.png
+          $failures = 0
+          1..5 | ForEach-Object {
+            Write-Host "PROBE_REPEAT_BEGIN|replica=${{ matrix.replica }}|case=$_"
+            try {
+              ./tool/ci/windows_translation_browser_smoke.ps1 -ScopedTimingTraceSelfTest -SkipPostFailureUiaDiagnostics
+              Write-Host "PROBE_REPEAT_END|case=$_|result=success"
+            } catch {
+              $failures++
+              Write-Host "PROBE_REPEAT_END|result=failure|reason=$_"
+            }
+          }
+          Write-Host "PROBE_REPEAT_SUMMARY|replica=${{ matrix.replica }}|total=5|failures=$failures"
+          if ($failures -ne 0) { throw "$failures private probe checks failed; failures remain failures" }

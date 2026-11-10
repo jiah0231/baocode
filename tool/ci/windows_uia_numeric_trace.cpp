@@ -255,9 +255,10 @@ struct State {
   std::atomic<LONGLONG> capture_start{0},capture_end{0};
   std::atomic<ULONG> process_result{ERROR_SUCCESS};
   unsigned non_pair=0,infrastructure=0,cross_machine=0;
-  Handle failed,done;
-  State(const GUID& session) : failed(NewEvent(EventName(session,L"-failed"))), done(CreateEventW(nullptr,TRUE,FALSE,nullptr)) {
-    Require(done.value!=nullptr,"Cannot create consumer completion event");
+  Handle failed,done,probe_delivery;
+  State(const GUID& session) : failed(NewEvent(EventName(session,L"-failed"))), done(CreateEventW(nullptr,TRUE,FALSE,nullptr)),
+      probe_delivery(CreateEventW(nullptr,TRUE,FALSE,nullptr)) {
+    Require(done.value && probe_delivery.value,"Cannot create consumer synchronization events");
   }
   void Fail(unsigned code) { unsigned zero=0; failure.compare_exchange_strong(zero,code); SetEvent(failed.value); }
 };
@@ -299,6 +300,9 @@ VOID WINAPI OnEvent(EVENT_RECORD* record) {
   }
   if(s->count==kCapacity) { s->Fail(8); return; }
   s->events[s->count++]=e;
+  // Unlike producer EventWrite completion, this proves ProcessTrace actually
+  // delivered an allowed zero-payload record before the session is stopped.
+  if(s->probe && e.pid==s->pids[0] && e.id==1) SetEvent(s->probe_delivery.value);
 }
 class Session {
  public:
@@ -350,6 +354,26 @@ class Session {
   }
   ~Session() { Stop(); }
   State& data() { return *state_; }
+  void AwaitProbeDelivery() {
+    Require(state_->probe && owned_ && enabled_ && !stopped_,"Delivery handshake is private-probe-only");
+    const ULONGLONG started=GetTickCount64();
+    Properties flush(id_);
+    // Realtime buffers need not have been delivered merely because both
+    // producers returned. Flush while the session is still live; never stop it
+    // to obtain the evidence that its consumer has started.
+    const ULONG flushed=FlushTraceW(session_,properties_.name,&flush.p);
+    const ULONGLONG elapsed=GetTickCount64()-started_;
+    const DWORD budget=elapsed<5000 ? static_cast<DWORD>(std::min<ULONGLONG>(2000,5000-elapsed)) : 0;
+    const HANDLE signals[]={state_->probe_delivery.value,state_->done.value,state_->failed.value};
+    const DWORD waited=(flushed==ERROR_SUCCESS && budget) ? WaitForMultipleObjects(3,signals,FALSE,budget) : WAIT_FAILED;
+    const bool active=WaitForSingleObject(state_->done.value,0)==WAIT_TIMEOUT;
+    const bool valid=flushed==ERROR_SUCCESS && waited==WAIT_OBJECT_0 && active &&
+        !state_->failure.load() && GetTickCount64()-started_<5000;
+    std::printf("UIA_PROBE_CONSUMER_READY|flush=%lu|wait=%lu|budgetMs=%lu|elapsedMs=%llu|consumerActive=%d|processTrace=%lu|validationFailure=%u|valid=%d\n",
+        flushed,waited,budget,GetTickCount64()-started,active?1:0,state_->process_result.load(),
+        state_->failure.load(),valid?1:0);
+    Require(valid,"No validated private event delivered by active consumer before stop");
+  }
   bool Stop() noexcept {
     try { return StopChecked(); }
     catch(...) {
@@ -482,6 +506,7 @@ void VerifyFilters(const GUID& session) {
       Session trace(session,provider,pids,ids,true);
       parent.Emit();SetEvent(go.value);
       Require(WaitForSingleObject(done.value,3000)==WAIT_OBJECT_0,"Private probe did not acknowledge all write attempts");
+      trace.AwaitProbeDelivery();
       Require(trace.Stop(),"Private probe filtering session failed or lost events");
       const auto& data=trace.data(); unsigned counts[2][2]{};
       for(size_t i=0;i<data.count;++i) {
