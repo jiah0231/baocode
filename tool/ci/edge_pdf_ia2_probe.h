@@ -200,9 +200,13 @@ inline bool SnapshotNativeFocus(HWND source,
     if (hr != S_OK) { VariantClear(&next); return false; }
     if (next.vt == VT_I4 && next.lVal == CHILDID_SELF) {
       VariantClear(&next);
-      if (!NativeFocusedDocument(role, state)) {
-        puts("IA2_REJECT|native_terminal_not_focused_readonly_document_text"); return false;
+      if (!(state & STATE_SYSTEM_FOCUSED)) {
+        puts("IA2_REJECT|native_terminal_not_focused"); return false;
       }
+      // Safe unsupported roles may expose interface metadata only. Selection
+      // reads are separately gated below, including the exact Pane mapping.
+      printf("IA2_NATIVE_TERMINAL|role=%ld|state=0x%08lX|self=1|chainObjects=%zu\n",
+          role, static_cast<unsigned long>(state), result->objects.size());
       return validateFocus() && SafeAccessible(node.Get(), source);
     }
     if (next.vt != VT_DISPATCH || !next.pdispVal) {
@@ -370,16 +374,52 @@ inline void Run(IUIAutomation* uia, HWND source,
     puts("IA2_UNAVAILABLE|native_focus_bridge_or_safety_gate"); return;
   }
   const auto accessible = originalChain.objects.back();
-  ComPtr<IAccessibleText> nativeText = QueryText(accessible, 100);
-  if (!nativeText) {
-    puts("IA2_UNAVAILABLE|verified_native_focus_interface_missing|proxy_may_be_unavailable"); return;
+  NativeFocusChain beforeQuery;
+  if (!SnapshotNativeFocus(source, validateFocus, &beforeQuery) ||
+      !SameNativeFocusChain(originalChain, beforeQuery)) {
+    puts("IA2_REJECT|native_chain_changed_before_interface_metadata"); return;
   }
+  // QI/QueryService are metadata-only even when the terminal role is not
+  // accepted for selected-text access. No selection API is called here.
+  ComPtr<IAccessibleText> nativeText = QueryText(accessible, 100);
+  auto validateMappedNativeRole = [&]() {
+    const long role = originalChain.roles.back();
+    const long state = originalChain.states.back();
+    if (NativeFocusedDocument(role, state)) return true;
+    if (role != ROLE_SYSTEM_PANE || !(state & STATE_SYSTEM_FOCUSED) ||
+        !(state & STATE_SYSTEM_READONLY)) {
+      printf("IA2_NATIVE_ROLE_METADATA_ONLY|role=%ld|state=0x%08lX\n",
+          role, static_cast<unsigned long>(state));
+      return false;
+    }
+    // Fixed public-PDF Pane exception: exact mapped UIA focus, never merely
+    // the same HWND/PID or an ancestor of the focused object.
+    if (!validateFocus()) return false;
+    ComPtr<IUIAutomationElement> mapped;
+    const HRESULT mappingHr = uia->ElementFromIAccessible(accessible.Get(), CHILDID_SELF, &mapped);
+    Hr("ElementFromIAccessible_terminal_self", mappingHr, 100);
+    BOOL equalsBoundFocus = FALSE;
+    HRESULT compareHr = E_FAIL;
+    if (mappingHr == S_OK && mapped)
+      compareHr = uia->CompareElements(mapped.Get(), focus.Get(), &equalsBoundFocus);
+    Hr("CompareElements_mapped_exact_bound_focus", compareHr, 100);
+    printf("IA2_NATIVE_UIA_MAPPING|present=%d|equalsBoundFocus=%d|readonlyPane=1\n",
+        mapped != nullptr, equalsBoundFocus);
+    return mappingHr == S_OK && mapped && compareHr == S_OK && equalsBoundFocus &&
+        SafeElement(mapped.Get(), focusPid, true) && validateFocus();
+  };
   auto validateNativeCandidate = [&]() {
     NativeFocusChain currentChain;
     return validateFocus() && SnapshotNativeFocus(source, validateFocus, &currentChain) &&
         SameNativeFocusChain(originalChain, currentChain) &&
-        SafeAccessible(accessible.Get(), source);
+        SafeAccessible(accessible.Get(), source) && validateMappedNativeRole();
   };
+  if (!validateNativeCandidate()) {
+    puts("IA2_NATIVE_METADATA_ONLY|selection_reads=0|role_mapping_or_identity_rejected"); return;
+  }
+  if (!nativeText) {
+    puts("IA2_UNAVAILABLE|verified_native_focus_interface_missing|proxy_may_be_unavailable"); return;
+  }
   ReadSelected(nativeText, validateNativeCandidate, 100, &consumed);
 }
 }  // namespace edge_pdf_ia2

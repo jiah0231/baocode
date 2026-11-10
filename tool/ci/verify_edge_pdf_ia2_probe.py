@@ -78,7 +78,8 @@ def check(header: str, script: str | None = None) -> list[str]:
         ('depth < 8', 'bounded native focus-only walk'),
         ('next.vt == VT_I4 && next.lVal == CHILDID_SELF', 'native terminal must be self'),
         ('next.vt != VT_DISPATCH || !next.pdispVal', 'native nonself child IDs rejected'),
-        ('state & STATE_SYSTEM_FOCUSED', 'native final object must be focused'),
+        ('return (state & STATE_SYSTEM_FOCUSED) && (role == ROLE_SYSTEM_DOCUMENT || (role == ROLE_SYSTEM_TEXT && (state & STATE_SYSTEM_READONLY)))', 'native Document/Text role helper requires focused/read-only state'),
+        ('if (!(state & STATE_SYSTEM_FOCUSED))', 'native final chain object must be focused'),
         ('role == ROLE_SYSTEM_TEXT && (state & STATE_SYSTEM_READONLY)', 'native text role must be readonly'),
         ('before.roles != after.roles', 'native chain roles stable'),
         ('before.states != after.states', 'native chain state values stable'),
@@ -89,6 +90,13 @@ def check(header: str, script: str | None = None) -> list[str]:
         ('SafeElement(parent.Get(), focusPid, false)', 'group document path uses fixed source PID and safety'),
         ('type != focusTypes[index]', 'group document path control types stable'),
         ('validateFocusPath()', 'full focused UIA path remains stable'),
+        ('role != ROLE_SYSTEM_PANE || !(state & STATE_SYSTEM_FOCUSED) || !(state & STATE_SYSTEM_READONLY)', 'Pane exception requires focused readonly state'),
+        ('uia->ElementFromIAccessible(accessible.Get(), CHILDID_SELF, &mapped)', 'Pane mapped from exact terminal self'),
+        ('uia->CompareElements(mapped.Get(), focus.Get(), &equalsBoundFocus)', 'Pane requires exact bound focused UIA element'),
+        ('mappingHr == S_OK && mapped && compareHr == S_OK && equalsBoundFocus && SafeElement(mapped.Get(), focusPid, true) && validateFocus()', 'Pane mapping succeeds and focus/password/PID revalidated'),
+        ('SafeAccessible(accessible.Get(), source) && validateMappedNativeRole()', 'every native candidate validation remaps Pane'),
+        ('if (!validateNativeCandidate()) { puts("IA2_NATIVE_METADATA_ONLY|selection_reads=0|role_mapping_or_identity_rejected"); return; }', 'rejected mapping cannot enter selection getter'),
+        ('SameNativeFocusChain(originalChain, beforeQuery)', 'interface metadata requires stable native chain'),
     ]:
         has(token, label)
 
@@ -127,6 +135,13 @@ def self_test(header: str, script: str | None) -> int:
     if baseline:
         raise AssertionError('Baseline failed: ' + '; '.join(baseline))
     mutations = {
+        'pane_unfocused': ('role != ROLE_SYSTEM_PANE || !(state & STATE_SYSTEM_FOCUSED) ||', 'role != ROLE_SYSTEM_PANE || false ||'),
+        'pane_not_readonly': ('!(state & STATE_SYSTEM_READONLY)', 'false'),
+        'pane_wrong_mapping_target': ('uia->CompareElements(mapped.Get(), focus.Get(), &equalsBoundFocus)', 'uia->CompareElements(mapped.Get(), root.Get(), &equalsBoundFocus)'),
+        'pane_ignore_mapping_failure': ('mappingHr == S_OK && mapped && compareHr == S_OK && equalsBoundFocus', 'true'),
+        'pane_ignore_mapped_password': ('SafeElement(mapped.Get(), focusPid, true) && validateFocus()', 'validateFocus()'),
+        'pane_skip_remapping': ('SafeAccessible(accessible.Get(), source) && validateMappedNativeRole()', 'SafeAccessible(accessible.Get(), source)'),
+        'pane_ignore_read_gate': ('if (!validateNativeCandidate()) {', 'if (false) {'),
         'reuse_read_allowance': ('if (*consumed) return true', 'if (false) return true'),
         'native_nonself_terminal': ('next.lVal == CHILDID_SELF', 'next.lVal >= 0'),
         'native_unfocused_terminal': ('state & STATE_SYSTEM_FOCUSED', 'true'),
