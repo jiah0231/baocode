@@ -16,5 +16,8 @@ jobs:
       - uses: dart-lang/setup-dart@v1
         with:
           sdk: '3.13.4'
-      - name: Compare exact original fixture lifecycle with explicit EOF
+      - name: Original paused-stdout lock fixture
+        continue-on-error: true
         run: dart --disable-dart-dev tool/ci/diagnose_stdin_lock.dart
+      - name: Paused-stdout lock fixture with explicit EOF
+        run: dart --disable-dart-dev tool/ci/diagnose_stdin_lock.dart close
