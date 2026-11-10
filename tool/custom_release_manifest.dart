@@ -28,6 +28,7 @@ Future<void> main(List<String> args) async {
   if (version != currentAppVersion || declared != '$version') {
     throw StateError('Manifest version must match both app version files');
   }
+  final notes = readCustomReleaseNotes(root, version);
   UpdateManifest? previous;
   if (args.length == 4) {
     previous = UpdateManifest.parse(
@@ -86,10 +87,7 @@ Future<void> main(List<String> args) async {
   final manifest = {
     'version': '$version',
     'pubDate': DateTime.now().toUtc().toIso8601String(),
-    'notes': {
-      'zh': '焕新划词入口：轻巧圆角翻译图标，适配深浅主题，增加悬停反馈和屏幕边缘避让。区分取词失败原因，并提供快捷键或粘贴指引。保留选区与隐私保护；确认重启后安装。',
-      'en': 'Refreshes the selection entry with a compact rounded translation icon, light/dark themes, hover feedback and screen-edge avoidance. Explains capture failures and shortcut/paste options. Retains selection and privacy protections. Install after confirming a restart.',
-    },
+    'notes': notes,
     'platforms': {
       platform: UpdateAsset(
         url: url,
@@ -138,4 +136,20 @@ void verifyPreviousCustomRelease(
       'New release must be newer than the custom stable channel',
     );
   }
+}
+
+/// Notes belong to the exact release, never a hard-coded previous feature.
+Map<String, String> readCustomReleaseNotes(Directory root, AppVersion version) {
+  final file = File('${root.path}/release-notes/custom-$version.notes.json');
+  final json = jsonDecode(file.readAsStringSync());
+  if (json is! Map<String, dynamic>) {
+    throw StateError('Custom release notes must be a language map');
+  }
+  return {
+    for (final language in ['zh', 'en'])
+      language: switch (json[language]) {
+        final String notes when notes.trim().isNotEmpty => notes.trim(),
+        _ => throw StateError('Missing $language notes for $version'),
+      },
+  };
 }

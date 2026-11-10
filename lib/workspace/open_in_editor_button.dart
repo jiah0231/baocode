@@ -21,6 +21,20 @@ import 'workspace.dart';
 /// is (without opening it, and remembered), or copies the path. In the
 /// colors of the IDE's [BackToChatButton], its counterpart there, and as
 /// wide: the layout switches between them without a jump.
+/// A native window's editor route. Shared workspace data does not choose
+/// another window merely because a button below it opens a project.
+class OpenInIdeScope extends InheritedWidget {
+  const OpenInIdeScope({super.key, required this.open, required super.child});
+
+  final void Function(Project project, AgentThread? thread)? open;
+
+  static void Function(Project, AgentThread?)? of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<OpenInIdeScope>()?.open;
+
+  @override
+  bool updateShouldNotify(OpenInIdeScope oldWidget) => open != oldWidget.open;
+}
+
 class OpenInEditorButton extends StatelessWidget {
   const OpenInEditorButton({
     super.key,
@@ -41,7 +55,7 @@ class OpenInEditorButton extends StatelessWidget {
   static Future<bool> Function(Editor editor, String path) launch =
       openInEditor;
 
-  void _open(Editor editor) {
+  void _open(BuildContext context, Editor editor) {
     // A remote project's files are not this machine's: only the IDE's own
     // opens them.
     if (editor == Editor.fastIde || project.host != null) {
@@ -49,7 +63,9 @@ class OpenInEditorButton extends StatelessWidget {
       final thread =
           agent ??
           (workspace.current?.project == project ? workspace.current : null);
-      if (thread != null) {
+      if (OpenInIdeScope.of(context) case final open?) {
+        open(project, thread);
+      } else if (thread != null) {
         workspace.openInIde(thread);
       } else {
         workspace
@@ -115,7 +131,7 @@ class OpenInEditorButton extends StatelessWidget {
                           ChatKeys.chatLayout,
                         )
                       : open,
-                  onTap: () => _open(editor),
+                  onTap: () => _open(context, editor),
                   padding: const EdgeInsets.only(left: 8, right: 6),
                   borderRadius: const BorderRadius.horizontal(
                     left: Radius.circular(3),

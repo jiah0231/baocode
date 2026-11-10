@@ -250,8 +250,30 @@ jobs:
           test/usage_panel_test.dart
           test/usage/usage_calls_list_test.dart
           test/window
+          test/workspace/window_agent_draft_test.dart
           packages/bao_agent/test/engine/edges_test.dart
           packages/bao_agent/test/engine/turns_test.dart
+      - name: Test upstream v1.9.2 application regressions
+        run: >-
+          flutter test --no-pub --reporter expanded --timeout 2m
+          packages/bao_agent/test/engine/tools_test.dart
+          packages/bao_agent/test/units/utils_test.dart
+          test/chat/change_tree_test.dart
+          test/chat/history_scroll_test.dart
+          test/chat_grid_test.dart
+          test/kernel_test.dart
+          test/models/magpie_test.dart
+          test/models/models_test.dart
+          test/models/proxy/model_proxy_test.dart
+          test/models/proxy/opencode_routing_test.dart
+          test/platform/open_requests_test.dart
+          test/remote/remote_binaries_test.dart
+          test/remote/remote_server_test.dart
+          test/remote/ssh_launcher_test.dart
+          test/settings/models_page_test.dart
+          test/steps_test.dart
+          test/workspace_test.dart
+          test/workspace/window_pane_restore_test.dart
       - uses: actions/setup-node@v4
         with:
           node-version: '24.12.0'

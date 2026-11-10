@@ -25,6 +25,48 @@ public static class BaoCodeMultiwindow {
   }
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr GetProp(IntPtr hwnd, string name);
   [DllImport("user32.dll", SetLastError = true)] public static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+  [DllImport("user32.dll", SetLastError = true)] private static extern uint SendInput(uint count, INPUT[] inputs, int size);
+  [StructLayout(LayoutKind.Sequential)] private struct INPUT { public uint type; public INPUT_DATA data; }
+  [StructLayout(LayoutKind.Explicit)] private struct INPUT_DATA {
+    [FieldOffset(0)] public KEYBDINPUT keyboard;
+    [FieldOffset(0)] public MOUSEINPUT mouse;
+  }
+  [StructLayout(LayoutKind.Sequential)] private struct KEYBDINPUT {
+    public ushort vk, scan; public uint flags, time; public UIntPtr extra;
+  }
+  [StructLayout(LayoutKind.Sequential)] private struct MOUSEINPUT {
+    public int x, y; public uint data, flags, time; public UIntPtr extra;
+  }
+  private static void Key(IntPtr window, ushort key, bool up, bool unicode = false) {
+    if (GetForegroundWindow() != window) throw new Exception("Refusing input outside the owned foreground window");
+    var input = new INPUT { type = 1 };
+    input.data.keyboard = new KEYBDINPUT {
+      vk = unicode ? (ushort)0 : key, scan = unicode ? key : (ushort)0,
+      flags = (up ? 2u : 0u) | (unicode ? 4u : 0u)
+    };
+    if (SendInput(1, new[] { input }, Marshal.SizeOf(typeof(INPUT))) != 1) throw new Exception("Synthetic key input failed");
+  }
+  // Release only keys this helper pressed, even if foreground was lost mid-gesture.
+  private static void Release(ushort key) {
+    var input = new INPUT { type = 1 };
+    input.data.keyboard = new KEYBDINPUT { vk = key, flags = 2 };
+    if (SendInput(1, new[] { input }, Marshal.SizeOf(typeof(INPUT))) != 1) throw new Exception("Synthetic key release failed");
+  }
+  private static void Chord(IntPtr window, params ushort[] keys) {
+    int pressed = 0;
+    try {
+      foreach (var key in keys) { Key(window, key, false); pressed++; }
+    } finally {
+      for (int index = pressed - 1; index >= 0; index--) Release(keys[index]);
+    }
+  }
+  public static void ChatEditor(IntPtr window) { Chord(window, 0x11, 0x12, 0x49); }
+  public static void NewChat(IntPtr window) { Chord(window, 0x11, 0x4e); }
+  public static void Type(IntPtr window, string text) {
+    foreach (var character in text) { Key(window, character, false, true); Key(window, character, true, true); }
+  }
   public static IntPtr[] Windows(int process, bool visibleOnly) {
     var windows = new List<IntPtr>();
     EnumWindows((hwnd, data) => {
@@ -98,6 +140,42 @@ function Close-OwnedWindow($app, [IntPtr]$window) {
   if (![BaoCodeMultiwindow]::PostMessage($window, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)) {
     throw 'Could not post WM_CLOSE to owned window'
   }
+}
+function Focus-OwnedWindow($app, [IntPtr]$window) {
+  if (@([BaoCodeMultiwindow]::Windows($app.Id, $true)) -notcontains $window) {
+    throw 'Refusing input to an unowned window'
+  }
+  $deadline = [DateTime]::UtcNow.AddSeconds(5)
+  do {
+    [BaoCodeMultiwindow]::SetForegroundWindow($window) | Out-Null
+    Start-Sleep -Milliseconds 100
+    if ([BaoCodeMultiwindow]::GetForegroundWindow() -eq $window) { return }
+  } while ([DateTime]::UtcNow -lt $deadline)
+  throw 'Owned window did not receive foreground for the navigation test'
+}
+function Read-ChatState([int]$count) {
+  $file = Join-Path $env:BAOCODE_DATA_DIR 'state/windows.json'
+  $deadline = [DateTime]::UtcNow.AddSeconds(12)
+  do {
+    if (Test-Path -LiteralPath $file) {
+      $state = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
+      if (@($state.windows | Where-Object { $_.chatMode }).Count -eq $count) { return $state }
+    }
+    Start-Sleep -Milliseconds 150
+  } while ([DateTime]::UtcNow -lt $deadline)
+  throw "Expected $count windows in their own chat mode"
+}
+function Assert-Draft([string]$key, [string]$text) {
+  $file = Join-Path $env:BAOCODE_DATA_DIR 'state/drafts.json'
+  $deadline = [DateTime]::UtcNow.AddSeconds(12)
+  do {
+    if (Test-Path -LiteralPath $file) {
+      $drafts = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json -AsHashtable
+      if ($drafts[$key].text -like "*$text*") { return }
+    }
+    Start-Sleep -Milliseconds 150
+  } while ([DateTime]::UtcNow -lt $deadline)
+  throw "The isolated $key draft was not retained"
 }
 try {
   $env:BAOCODE_DATA_DIR = Join-Path $root 'data'
@@ -173,6 +251,66 @@ try {
   if (!$app.WaitForExit(30000)) { throw 'Warm-default app did not quit after its last window closed' }
   if ($app.ExitCode -ne 0) { throw "Warm-default app crashed: $($app.ExitCode)" }
   Write-Host 'PASS: ordinary default launch, warm promotion, repeated windows, hide main, forward again, clean exit'
+
+  # The user's exact regression: return from B's IDE to B's own chat, never A.
+  $env:BAOCODE_DATA_DIR = Join-Path $root 'chat-navigation'
+  $user = Join-Path $env:BAOCODE_DATA_DIR 'User'
+  New-Item -ItemType Directory -Force $user | Out-Null
+  @{
+    'tray.enabled' = $false
+    'window.confirmBeforeClose' = 'never'
+    'terminal.integrated.confirmOnExit' = 'never'
+    'models.providers' = @()
+    'update.mode' = 'none'
+  } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $user 'settings.json') -Encoding utf8
+  $app = Start-NewWindow
+  Wait-WindowCount $app 1
+  $a = @([BaoCodeMultiwindow]::Windows($app.Id, $true))[0]
+  Forward-NewWindow $app 2
+  $b = @([BaoCodeMultiwindow]::Windows($app.Id, $true) | Where-Object { $_ -ne $a })[0]
+  Focus-OwnedWindow $app $a
+  [BaoCodeMultiwindow]::ChatEditor($a)
+  $state = Read-ChatState 1
+  if ([BaoCodeMultiwindow]::GetForegroundWindow() -ne $a) { throw 'A returned into another native window' }
+  $aKey = $state.windows[0].conversation.draftKey
+  if (!$aKey.StartsWith('window:')) { throw 'A did not receive an independent draft identity' }
+  Start-Sleep -Milliseconds 600
+  [BaoCodeMultiwindow]::Type($a, 'synthetic draft only A')
+  Assert-Draft $aKey 'synthetic draft only A'
+  Focus-OwnedWindow $app $b
+  [BaoCodeMultiwindow]::ChatEditor($b)
+  $state = Read-ChatState 2
+  if ([BaoCodeMultiwindow]::GetForegroundWindow() -ne $b) { throw 'B returned into A or the main chat' }
+  $bKey = $state.windows[0].conversation.draftKey
+  if (!$bKey.StartsWith('window:') -or $aKey -eq $bKey) { throw 'A and B share a new-chat draft identity' }
+  Start-Sleep -Milliseconds 600
+  [BaoCodeMultiwindow]::Type($b, 'synthetic draft only B')
+  Assert-Draft $bKey 'synthetic draft only B'
+  Assert-Draft $aKey 'synthetic draft only A'
+  [BaoCodeMultiwindow]::NewChat($b)
+  Start-Sleep -Milliseconds 700
+  $state = Read-ChatState 2
+  $freshKey = $state.windows[0].conversation.draftKey
+  if ($freshKey -eq $bKey -or $freshKey -eq $aKey) { throw 'New Chat reused another unsent conversation' }
+  Assert-Draft $bKey 'synthetic draft only B'
+  [BaoCodeMultiwindow]::ChatEditor($b)
+  $null = Read-ChatState 1
+  if ([BaoCodeMultiwindow]::GetForegroundWindow() -ne $b) { throw 'B opened its editor in another native window' }
+  Start-Sleep -Milliseconds 600
+  [BaoCodeMultiwindow]::ChatEditor($b)
+  $state = Read-ChatState 2
+  if ($state.windows[0].conversation.draftKey -ne $freshKey) { throw 'B lost its own selected chat on return' }
+  Wait-WindowCount $app 2
+  Assert-HiddenReceiver $app
+  Assert-Draft $aKey 'synthetic draft only A'
+  Assert-Draft $bKey 'synthetic draft only B'
+  Close-OwnedWindow $app $a
+  Wait-WindowCount $app 1
+  Close-OwnedWindow $app $b
+  if (!$app.WaitForExit(30000) -or $app.ExitCode -ne 0) { throw 'Chat navigation scenario did not exit cleanly' }
+  Assert-Draft $aKey 'synthetic draft only A'
+  Assert-Draft $bKey 'synthetic draft only B'
+  Write-Host 'PASS: A/B return in place, independent drafts, local New Chat, editor/chat round-trip, preserved drafts after close'
 
 } catch {
   Write-Host "ISOLATED_DATA $env:BAOCODE_DATA_DIR"

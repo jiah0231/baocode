@@ -49,9 +49,30 @@ jobs:
           git diff --exit-code HEAD --
           if ($LASTEXITCODE -ne 0) { throw 'Generated source differs' }
       - run: flutter analyze --no-pub --fatal-infos
-      - run: dart format --output=none --set-exit-if-changed lib/window/app_windows.dart lib/window/code_args.dart test/window/app_windows_test.dart test/window/code_args_test.dart test/window/multi_window_test.dart
+      - run: dart format --output=none --set-exit-if-changed lib/window/app_windows.dart lib/window/code_args.dart test/window/app_windows_test.dart test/window/code_args_test.dart test/window/multi_window_test.dart test/window/window_chat_state_test.dart test/workspace/window_agent_draft_test.dart lib/workspace/workspace.dart lib/workbench.dart lib/workspace/open_in_editor_button.dart lib/workspace/new_chat_folder_bar.dart lib/workspace/window_header/window_header.dart lib/sidebar/sidebar.dart
       - name: Test window and launch regressions
-        run: flutter test --no-pub --reporter expanded --timeout 2m test/window test/platform/open_requests_test.dart test/keybindings/window_keybindings_test.dart test/update/version_test.dart
+        run: flutter test --no-pub --reporter expanded --timeout 2m test/window test/workspace/window_agent_draft_test.dart test/platform/open_requests_test.dart test/keybindings/window_keybindings_test.dart test/update/version_test.dart test/update/custom_release_manifest_test.dart
+      - name: Test upstream v1.9.2 application regressions
+        run: >-
+          flutter test --no-pub --reporter expanded --timeout 2m
+          packages/bao_agent/test/engine/tools_test.dart
+          packages/bao_agent/test/units/utils_test.dart
+          test/chat/change_tree_test.dart
+          test/chat/history_scroll_test.dart
+          test/chat_grid_test.dart
+          test/kernel_test.dart
+          test/models/magpie_test.dart
+          test/models/models_test.dart
+          test/models/proxy/model_proxy_test.dart
+          test/models/proxy/opencode_routing_test.dart
+          test/platform/open_requests_test.dart
+          test/remote/remote_binaries_test.dart
+          test/remote/remote_server_test.dart
+          test/remote/ssh_launcher_test.dart
+          test/settings/models_page_test.dart
+          test/steps_test.dart
+          test/workspace_test.dart
+          test/workspace/window_pane_restore_test.dart
       - name: Build actual Windows release app
         id: build
         shell: pwsh
