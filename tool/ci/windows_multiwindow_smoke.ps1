@@ -266,6 +266,14 @@ try {
     'models.providers' = @()
     'update.mode' = 'none'
   } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $user 'settings.json') -Encoding utf8
+  # The input scenario models an existing user's windows, not first-run setup.
+  # An empty provider list otherwise opens the real model welcome modal and
+  # intentionally prevents typing into the composer behind it. Keep providers
+  # empty (no external requests), but mark that onboarding as already seen.
+  $stateDirectory = Join-Path $env:BAOCODE_DATA_DIR 'state'
+  New-Item -ItemType Directory -Force $stateDirectory | Out-Null
+  @{ 'models.welcomed' = $true } | ConvertTo-Json |
+    Set-Content -LiteralPath (Join-Path $stateDirectory 'storage.json') -Encoding utf8
   $app = Start-NewWindow
   Wait-WindowCount $app 1
   $a = @([BaoCodeMultiwindow]::Windows($app.Id, $true))[0]
@@ -348,7 +356,7 @@ try {
     } else { Write-Host "OWNED_SCREENSHOT omitted: foreground $foreground is not owned" }
   } catch { Write-Host "OWNED_DIAGNOSTIC unavailable: $_" }
   Get-ChildItem -LiteralPath $root -File -Recurse | Where-Object {
-    $_.Name -in @('settings.json', 'windows.json', 'drafts.json', 'events.log', 'errors.log')
+    $_.Name -in @('settings.json', 'windows.json', 'drafts.json', 'storage.json', 'events.log', 'errors.log')
   } | ForEach-Object {
     Write-Host "DIAGNOSTIC_FILE $($_.FullName)"
     Get-Content -LiteralPath $_.FullName -Tail 100
