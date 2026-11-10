@@ -53,6 +53,7 @@ std::optional<RECT> SelectionBounds(HWND source,
     bool& require_text_control, translation_selection::SelectionTarget& selection_target,
     translation_selection::ConsoleBinding& console_binding,
     const std::function<bool()>& stopped, ULONGLONG deadline,
+    const translation_gesture::Gesture& gesture,
     ComPtr<IUIAutomation2>* transaction_control = nullptr,
     ComPtr<IUIAutomationTextRange>* validated_range = nullptr,
     std::optional<RECT>* selected_area = nullptr) {
@@ -194,6 +195,7 @@ std::optional<RECT> SelectionBounds(HWND source,
   VARTYPE type = VT_EMPTY;
   LONG lo = 0, hi = -1;
   RECT window{};
+  translation_gesture::BoundsMatch gesture_match(gesture);
   if (SUCCEEDED(hr) && rectangles && SafeArrayGetDim(rectangles) == 1 &&
       SUCCEEDED(SafeArrayGetVartype(rectangles, &type)) && type == VT_R8 &&
       SUCCEEDED(SafeArrayGetLBound(rectangles, 1, &lo)) &&
@@ -207,6 +209,10 @@ std::optional<RECT> SelectionBounds(HWND source,
         if (!checked) continue;
         RECT rect{checked->left, checked->top, checked->right, checked->bottom}, clipped{};
         if (IntersectRect(&clipped, &rect, &window) && MonitorFromRect(&clipped, MONITOR_DEFAULTTONULL)) {
+          ACTION_TRACE("ACTION_BOUNDS|rect=%ld,%ld,%ld,%ld|source=%ld,%ld,%ld,%ld\n",
+              clipped.left, clipped.top, clipped.right, clipped.bottom,
+              window.left, window.top, window.right, window.bottom);
+          gesture_match.Add({clipped.left, clipped.top, clipped.right, clipped.bottom});
           result = clipped;  // Last visible selected line, not the mouse cursor.
           if (selected_area) {
             if (*selected_area) { RECT combined{}; UnionRect(&combined, &**selected_area, &clipped); *selected_area = combined; }
@@ -218,6 +224,16 @@ std::optional<RECT> SelectionBounds(HWND source,
     }
   }
   if (rectangles) SafeArrayDestroy(rectangles);
+  // A provider can return a self-consistent range for neighboring text. Check
+  // its visible lines against the actual selection gesture before displaying
+  // an entry or allowing GetText. Do not "correct" offsets or read other ranges.
+  if (result && !gesture_match.Matches()) {
+    ACTION_STAGE("gestureBoundsMismatch");
+    ACTION_TRACE("ACTION_GEOMETRY_REJECT|from=%d,%d|to=%d,%d|tolerance=%d\n",
+        gesture.start.x, gesture.start.y, gesture.end.x, gesture.end.y, gesture.tolerance);
+    if (selected_area) selected_area->reset();
+    return std::nullopt;
+  }
   if (!result && (hr == E_FAIL || hr == UIA_E_NOTSUPPORTED)) retryable = text_control;
   ACTION_STAGE("finalFocus");
   ComPtr<IUIAutomationElement> final_focus;
@@ -244,7 +260,8 @@ translation_selection::Selection CaptureBoundSelection(HWND source,
     const ComPtr<IUIAutomationTextRange>& expected_range,
     translation_selection::SelectionTarget& target,
     translation_selection::ConsoleBinding& console,
-    const std::function<bool()>& stopped, ULONGLONG deadline) {
+    const std::function<bool()>& stopped, ULONGLONG deadline,
+    const translation_gesture::Gesture& gesture) {
   translation_selection::Selection result;
   result.status = "focusChanged";
   if (!expected_element || !expected_range || stopped()) return result;
@@ -256,7 +273,7 @@ translation_selection::Selection CaptureBoundSelection(HWND source,
   ComPtr<IUIAutomation2> bounded;
   ComPtr<IUIAutomationTextRange> current_range;
   const auto bounds = SelectionBounds(source, element, range, retryable, require_text,
-      target, console, stopped, deadline, &bounded, &current_range, &result.area);
+      target, console, stopped, deadline, gesture, &bounded, &current_range, &result.area);
   if (!bounds || stopped() || !bounded || !current_range) return result;
   const auto ready = [&] {
     ULONGLONG now = GetTickCount64();
@@ -287,7 +304,7 @@ translation_selection::Selection CaptureBoundSelection(HWND source,
   // Re-read ONLY selection metadata after GetText. Any mutation/cancel/focus
   // change discards the local text before it can reach a completion callback.
   if (!ready() || !SelectionBounds(source, element, range, retryable, require_text,
-          target, console, stopped, deadline) || stopped()) {
+          target, console, stopped, deadline, gesture) || stopped()) {
     result = translation_selection::Selection{};
     result.status = "focusChanged";
   }
@@ -312,6 +329,7 @@ struct TranslationSelectionAction::Worker {
   unsigned generation = 0, active_generation = 0;
   ULONGLONG deadline = 0;
   std::optional<RECT> result;
+  translation_gesture::Gesture gesture;
 };
 
 TranslationSelectionAction::TranslationSelectionAction(HWND dispatcher,
@@ -331,6 +349,7 @@ TranslationSelectionAction::TranslationSelectionAction(HWND dispatcher,
     translation_selection::SelectionTarget selection_target;
     auto console_binding = std::make_unique<translation_selection::ConsoleBinding>();
     bool require_text_control = false;
+    translation_gesture::Gesture previous_gesture;
     std::unique_lock<std::mutex> lock(worker->mutex);
     while (true) {
       worker->wake.wait(lock, [&] { return worker->stop || worker->pending || worker->click.has_value(); });
@@ -354,7 +373,7 @@ TranslationSelectionAction::TranslationSelectionAction(HWND dispatcher,
         if (SUCCEEDED(initialized) && !stopped() && previous_generation == job.generation &&
             previous_element && previous_range && selection_target.Get()) {
           selected = CaptureBoundSelection(job.source, previous_element, previous_range,
-              selection_target, *console_binding, stopped, job.deadline);
+              selection_target, *console_binding, stopped, job.deadline, previous_gesture);
         }
         if (stopped()) {
           selected = translation_selection::Selection{};
@@ -368,9 +387,11 @@ TranslationSelectionAction::TranslationSelectionAction(HWND dispatcher,
       const HWND source = worker->source;
       const unsigned generation = worker->generation;
       const ULONGLONG deadline = worker->deadline;
+      const auto gesture = worker->gesture;
       worker->pending = false;
       lock.unlock();
       if (generation != previous_generation) {
+        previous_gesture = gesture;
         previous_element.Reset(); previous_range.Reset();
         if (previous_source_process) CloseHandle(previous_source_process);
         previous_source_pid = 0;
@@ -390,7 +411,7 @@ TranslationSelectionAction::TranslationSelectionAction(HWND dispatcher,
       bool retryable = false;
       auto result = SUCCEEDED(initialized)
           ? SelectionBounds(source, previous_element, previous_range, retryable, require_text_control,
-                            selection_target, *console_binding, stopped, deadline) : std::nullopt;
+                            selection_target, *console_binding, stopped, deadline, previous_gesture) : std::nullopt;
       lock.lock();
       worker->result = result;
       worker->retryable = retryable;
@@ -525,6 +546,9 @@ bool TranslationSelectionAction::HandleMessage(UINT message, WPARAM wparam, LPAR
         down_point_.x, down_point_.y, point.x, point.y, static_cast<void*>(GetForegroundWindow()));
     if (down_ && (dragged || doubled)) {
       source_ = GetForegroundWindow();
+      const UINT dpi = GetDpiForWindow(source_);
+      gesture_ = {{down_point_.x, down_point_.y}, {point.x, point.y},
+                  MulDiv(12, dpi ? static_cast<int>(dpi) : 96, 96)};
       candidate_ = true;
       discovery_started_ = GetTickCount64();
       discovery_attempts_ = 0;
@@ -544,6 +568,7 @@ void TranslationSelectionAction::Request() {
   ACTION_TRACE("ACTION_REQUEST|generation=%u|attempt=%u|source=%p|shown=%d\n",
       generation_, discovery_attempts_ + 1, static_cast<void*>(source_), shown_ ? 1 : 0);
   worker_->source = source_;
+  worker_->gesture = gesture_;
   worker_->generation = generation_;
   worker_->active_generation = generation_;
   worker_->busy = true;
@@ -617,6 +642,9 @@ void TranslationSelectionAction::Show(const RECT& bounds) {
   const auto rect = translation_action_visual::Place(
       {bounds.left, bounds.top, bounds.right, bounds.bottom},
       {work.left, work.top, work.right, work.bottom}, scale);
+  ACTION_TRACE("ACTION_PLACEMENT|anchor=%ld,%ld,%ld,%ld|button=%d,%d,%d,%d|dpi=%u\n",
+      bounds.left, bounds.top, bounds.right, bounds.bottom,
+      rect.left, rect.top, rect.right, rect.bottom, dpi);
   const int size = rect.right - rect.left;
   const bool redraw = visual_size_ != size || !IsWindowVisible(button_);
   visual_size_ = size;

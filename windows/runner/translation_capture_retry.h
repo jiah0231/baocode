@@ -4,6 +4,14 @@
 
 namespace translation_retry {
 constexpr unsigned kMaxAttempts = 4;
+// A diagnostic root connection consumes one of the original four discovery
+// calls. It never grants a fresh focus-query allowance.
+constexpr unsigned FocusDiscoveryLimit(bool root_called) {
+  return kMaxAttempts - (root_called ? 1u : 0u);
+}
+constexpr unsigned DiscoveryCompleted(unsigned focus_calls, bool root_called) {
+  return focus_calls + (root_called ? 1u : 0u);
+}
 inline uint64_t Delay(unsigned completed_attempts) {
   return 80 * static_cast<uint64_t>(completed_attempts);
 }
@@ -30,6 +38,16 @@ inline bool CanRetryInitialFocus(uint32_t hresult, bool identity_bound,
                                  uint64_t now, uint64_t deadline, bool canceled = false) {
   return IsFocusTimeout(hresult) && !identity_bound && same_foreground &&
       CanRetry(true, completed_attempts, now, deadline, canceled);
+}
+// Diagnostic root-connection continuation is not a target fallback. It permits
+// entry to original focus discovery after an exact connection timeout, with
+// no accepted identity and the same native HWND/PID/thread. It uses the existing
+// first-retry reserve; it never resets the deadline or retries the root.
+inline bool CanContinueAfterForegroundConnection(uint32_t hresult,
+    bool identity_bound, bool same_native_source, bool already_continued,
+    uint64_t now, uint64_t deadline, bool canceled = false) {
+  return !already_continued && CanRetryInitialFocus(hresult, identity_bound,
+      same_native_source, 1, now, deadline, canceled);
 }
 // A Chromium accessibility root may exist before its actual focused text
 // control. This permits metadata requery only, never accepting that Pane's

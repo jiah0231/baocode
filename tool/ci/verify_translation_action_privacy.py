@@ -51,6 +51,23 @@ def verify(source: str) -> None:
     read_offset = reads[0].start() - opening
     if len(validations) != 2 or not validations[0].start() < read_offset < validations[1].start():
         raise ValueError('Bound read must retain pre/post selection metadata validation')
+    for validation in validations:
+        call_end = body.find(')', validation.end())
+        if not re.search(r'\bgesture\b', body[validation.end():call_end]):
+            raise ValueError('Each bound-click metadata check must retain the original gesture')
+    bounds_definition = re.search(r'\bstd::optional<RECT>\s+SelectionBounds\s*\(', code)
+    bounds_open = code.find('{', bounds_definition.end())
+    bounds_end = block_end(code, bounds_open)
+    bounds_body = code[bounds_open:bounds_end]
+    if not re.search(r'\bgesture_match\.Add\s*\(\s*\{clipped\.left,\s*clipped\.top,\s*clipped\.right,\s*clipped\.bottom\}', bounds_body):
+        raise ValueError('Gesture check must inspect individual clipped selected lines')
+    mismatch = re.search(r'if\s*\(result\s*&&\s*!gesture_match\.Matches\(\)\)\s*\{', bounds_body)
+    if not mismatch:
+        raise ValueError('Missing gesture/range mismatch rejection')
+    mismatch_open = bounds_body.find('{', mismatch.start())
+    mismatch_body = bounds_body[mismatch_open:block_end(bounds_body, mismatch_open)]
+    if not re.search(r'return\s+std::nullopt\s*;', mismatch_body):
+        raise ValueError('Geometry mismatch must fail before returning a readable range')
     branches = list(re.finditer(r'\bif\s*\(\s*worker\s*->\s*click\s*\)\s*\{', code))
     if len(branches) != 1:
         raise ValueError('Expected exactly one explicit ClickJob dispatch scope')
@@ -78,6 +95,10 @@ def self_test(source: str) -> None:
         'non-click dispatch': source.replace('if (worker->click)', 'if (worker->pending)', 1),
         'missing generation gate': source.replace('previous_generation == job.generation', 'true', 1),
         'missing cancel gate': source.replace('job.canceled()', 'false', 1),
+        'removed geometry rejection': source.replace('result && !gesture_match.Matches()', 'false', 1),
+        'removed geometry accumulation': source.replace('gesture_match.Add(', 'OtherCheck(', 1),
+        'replaced pre-read gesture': source.replace('deadline, gesture, &bounded', 'deadline, other_gesture, &bounded', 1),
+        'replaced post-read gesture': source.replace('deadline, gesture) || stopped()', 'deadline, other_gesture) || stopped()', 1),
         'removed post validation': source.replace('!SelectionBounds(source, element, range, retryable, require_text,', '!OtherCheck(source, element, range, retryable, require_text,', 1),
     }
     for operation in ('GetDocumentRange()', 'get_DocumentRange()', 'GetCurrentPropertyValue()',
