@@ -1,55 +1,42 @@
-# Matched-delay client lifetime experiment; no target queries occur before capture.
-name: Windows cold UIA client lifetime comparison
+# Read-only provider metadata inventory. Never starts a trace or reads events.
+name: Inspect Windows UIA event schema
 on:
   push:
     branches: ['validation/windows-new-window-diagnostics']
 permissions:
   contents: read
 jobs:
-  compare:
+  metadata:
     if: github.repository == 'jiah0231/baocode'
     runs-on: windows-2025
-    timeout-minutes: 12
-    strategy:
-      fail-fast: false
-      matrix:
-        replica: [1, 2, 3, 4, 5, 6, 7, 8]
-        mode: [control, precreate]
-    env:
-      BAOCODE_DISPOSABLE_UI_TEST: '1'
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-      - uses: ilammy/msvc-dev-cmd@v1
-      - name: Capture before any other UIA consumer in this runner
+      - name: Enumerate UIA provider metadata without collecting events
         shell: pwsh
         run: |
-          $failures = 0
-          1..3 | ForEach-Object {
-            $case = $_
-            Write-Host "ENTRY_CASE_BEGIN|mode=${{ matrix.mode }}|replica=${{ matrix.replica }}|case=$case"
-            try {
-              $control = '${{ matrix.mode }}' -eq 'control'
-              $precreate = '${{ matrix.mode }}' -eq 'precreate'
-              ./tool/ci/windows_translation_browser_smoke.ps1 -OutputDirectory "build/entry/case-$case" -SkipPostFailureUiaDiagnostics -ClientLifetimeControl:$control -ClientLifetimePrecreate:$precreate
-              Write-Host "ENTRY_CASE_END|case=$case|result=success"
-            } catch {
-              $failures++
-              Write-Host "ENTRY_CASE_END|case=$case|result=failure|reason=$_"
+          $ErrorActionPreference = 'Stop'
+          Write-Host ("OS_BUILD|" + [Environment]::OSVersion.Version)
+          $providers = @(& logman.exe query providers)
+          if ($LASTEXITCODE -ne 0) { throw 'Provider enumeration failed' }
+          $matches = @($providers | Where-Object { $_ -match '(?i)UIAutomation|Accessibility' })
+          Write-Host "UIA_PROVIDER_METADATA_BEGIN"
+          $matches | ForEach-Object { Write-Host $_ }
+          foreach ($line in $matches) {
+            if ($line -match '^\s*(.+?)\s+(\{[0-9a-fA-F-]+\})\s*$') {
+              $name = $Matches[1].Trim()
+              Write-Host "PROVIDER_KEYWORDS_BEGIN|$name"
+              & logman.exe query providers $name
+              Write-Host "PROVIDER_KEYWORDS_END|$name|exit=$LASTEXITCODE"
             }
           }
-          Write-Host "ENTRY_MATRIX_SUMMARY|mode=${{ matrix.mode }}|replica=${{ matrix.replica }}|total=3|failures=$failures"
-          if ($failures -ne 0) { throw "$failures strict captures failed; no failure converted to success" }
-      - name: Verify native policy and protection regressions after cold measurement
-        if: ${{ !cancelled() && matrix.replica == 1 }}
-        shell: pwsh
-        run: ./tool/ci/windows_translation_smoke.ps1
-      - name: Preserve synthetic mismatch evidence
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v6
-        with:
-          name: entry-${{ matrix.mode }}-${{ matrix.replica }}-${{ github.sha }}
-          retention-days: 3
-          if-no-files-found: ignore
-          path: build/entry/**/*.png
+          $publishers = @(& wevtutil.exe ep)
+          if ($LASTEXITCODE -ne 0) { throw 'Publisher enumeration failed' }
+          $names = @($publishers | Where-Object { $_ -match '(?i)UIAutomation|Accessibility' })
+          Write-Host ("PUBLISHER_MATCHES|" + $names.Count)
+          foreach ($name in $names) {
+            Write-Host "PUBLISHER_SCHEMA_BEGIN|$name"
+            & wevtutil.exe gp $name /ge:true /gm:true /f:xml
+            Write-Host "PUBLISHER_SCHEMA_END|$name|exit=$LASTEXITCODE"
+          }
+          Write-Host "READ_ONLY_METADATA_COMPLETE|no_trace_started=1|no_events_read=1"
+          $global:LASTEXITCODE = 0
