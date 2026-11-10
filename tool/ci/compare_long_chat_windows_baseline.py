@@ -44,6 +44,8 @@ NEW_REGRESSION_TESTS = (
     "test/chat/stream_change_tracking_test.dart",
     "test/chat/chat_minimap_incremental_test.dart",
 )
+RECONSTRUCTED_FONT = "assets/fonts/maple/MapleMonoNormal-NF-CN-Regular.ttf"
+FONT_VERIFIER = "tool/ci/reassemble_maple_font.py"
 ARTIFACTS = Path("build/perf/long-chat-ci/windows-baseline")
 # Infrastructure failures are not evidence of a completed testcase baseline.
 INFRASTRUCTURE = re.compile(
@@ -288,10 +290,18 @@ def baseline_blobs(root: Path) -> tuple[dict[str, bytes], list[str]]:
     allowed = SOURCES + RETAINED_NATIVE + NEW_REGRESSION_TESTS
     unexpected = [name for name in changes if name not in allowed and (
         name.startswith(guarded) or name in ("pubspec.yaml", "pubspec.lock", "analysis_options.yaml")
-        or name in SUITES
+        or name in SUITES or name == FONT_VERIFIER
     )]
     untracked = git(root, "ls-files", "--others", "--exclude-standard").decode().splitlines()
-    unexpected += [name for name in untracked if name.startswith(guarded) and name not in NEW_REGRESSION_TESTS]
+    if RECONSTRUCTED_FONT in untracked:
+        verifier = root / FONT_VERIFIER
+        baseline_verifier = git(root, "show", f"{BASE}:{FONT_VERIFIER}")
+        if verifier.read_bytes().replace(b"\r\n", b"\n") != baseline_verifier.replace(b"\r\n", b"\n"):
+            raise InvalidRun("Font verifier differs from pinned baseline")
+        from reassemble_maple_font import verify_font
+        verify_font(root)
+    unexpected += [name for name in untracked if name.startswith(guarded)
+                   and name not in NEW_REGRESSION_TESTS and name != RECONSTRUCTED_FONT]
     if unexpected:
         raise InvalidRun(f"Other production/dependency/selected-test changes from baseline: {unexpected}")
     for name in NEW_REGRESSION_TESTS:

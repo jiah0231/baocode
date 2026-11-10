@@ -178,6 +178,33 @@ class ParserTests(unittest.TestCase):
                     gate.baseline_blobs(self.root)
                 changes.pop()
 
+    def test_only_verified_reconstructed_font_is_exempt(self):
+        verifier = self.root / gate.FONT_VERIFIER
+        verifier.parent.mkdir(parents=True)
+        verifier.write_bytes(b"# unchanged verifier\n")
+        untracked = [gate.RECONSTRUCTED_FONT]
+        def fake_git(root, *args):
+            if args[0] == "ls-files":
+                return "\n".join(untracked).encode()
+            if args[0] == "show":
+                return b"# unchanged verifier\n" if args[1].endswith(gate.FONT_VERIFIER) else b"source"
+            return b""
+        with patch.object(gate, "git", fake_git), patch("reassemble_maple_font.verify_font") as verify:
+            gate.baseline_blobs(self.root)
+            verify.assert_called_once_with(self.root)
+            untracked.append("assets/fonts/maple/other.ttf")
+            with self.assertRaises(gate.InvalidRun):
+                gate.baseline_blobs(self.root)
+            untracked.pop()
+            verify.side_effect = ValueError("font digest mismatch")
+            with self.assertRaisesRegex(ValueError, "digest mismatch"):
+                gate.baseline_blobs(self.root)
+            verify.reset_mock()
+            verifier.write_bytes(b"# changed verifier\n")
+            with self.assertRaisesRegex(gate.InvalidRun, "verifier differs"):
+                gate.baseline_blobs(self.root)
+            verify.assert_not_called()
+
     def test_restore_on_exception_including_binary_bytes(self):
         original = {"a.dart": b"patched\r\n\xff", "b.dart": b"other\n"}
         for name, data in original.items():
