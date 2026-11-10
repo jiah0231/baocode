@@ -1,3 +1,5 @@
+// ignore_for_file: avoid_print
+// Temporary non-publishing phase diagnostics.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
