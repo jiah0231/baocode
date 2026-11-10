@@ -21,12 +21,26 @@ jobs:
           $pdf = Join-Path $env:RUNNER_TEMP '2608.11260.pdf'
           Invoke-WebRequest -Uri 'https://arxiv.org/pdf/2608.11260' -OutFile $pdf
           if ((Get-FileHash $pdf -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'd159155dffad685a388562d1d2a4e0f869a5473be90c6c06381ab68a381451dc') { throw 'Public fixture changed' }
-      - name: Calibrate actual PDF viewport
+      - name: Select public phrase without UIA warmup
         shell: pwsh
         env:
           BAOCODE_DISPOSABLE_UI_TEST: '1'
         run: |
-          ./tool/ci/run_edge_pdf_probe.ps1 -Repository . -Pdf (Join-Path $env:RUNNER_TEMP '2608.11260.pdf') -Output (Join-Path $env:RUNNER_TEMP 'edge-public-pdf-evidence') -Zoom 150 -ScrollY 450 -CalibrateOnly
+          ./tool/ci/run_edge_pdf_probe.ps1 -Repository . -Pdf (Join-Path $env:RUNNER_TEMP '2608.11260.pdf') -Output (Join-Path $env:RUNNER_TEMP 'edge-public-pdf-evidence') -Zoom 150 -ScrollY 450 -ExpectedDpi 96 -FromX 511 -FromY 532 -ToX 621 -ToY 532
+      - name: Select public phrase after labeled UIA warmup
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+        run: |
+          ./tool/ci/run_edge_pdf_probe.ps1 -Repository . -Pdf (Join-Path $env:RUNNER_TEMP '2608.11260.pdf') -Output (Join-Path $env:RUNNER_TEMP 'edge-public-pdf-evidence') -Zoom 150 -ScrollY 450 -ExpectedDpi 96 -FromX 511 -FromY 532 -ToX 621 -ToY 532 -Warm
+      - name: Calibrate alternate zoom viewport
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+        run: |
+          ./tool/ci/run_edge_pdf_probe.ps1 -Repository . -Pdf (Join-Path $env:RUNNER_TEMP '2608.11260.pdf') -Output (Join-Path $env:RUNNER_TEMP 'edge-public-pdf-evidence') -Zoom 125 -ScrollY 450 -ExpectedDpi 96 -CalibrateOnly
       - name: Keep isolated public PDF evidence
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v6
