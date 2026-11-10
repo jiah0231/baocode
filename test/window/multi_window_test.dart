@@ -242,6 +242,18 @@ void main() {
         expect(embeddedChat, findsOneWidget);
         expect(tester.state(embeddedChat), same(embeddedState));
         expect(
+          _inView(
+            window.viewId,
+            find.byWidgetPredicate(
+              (widget) =>
+                  widget is ChatScreen &&
+                  !widget.embedded &&
+                  identical(widget.session, local.session),
+            ),
+          ),
+          findsOneWidget,
+        );
+        expect(
           tester.state<IdeWorkbenchState>(
             _inView(
               window.viewId,
@@ -255,7 +267,14 @@ void main() {
         expect(
           _inView(
             window.viewId,
-            find.byType(ChatScreen, skipOffstage: false),
+            // Other IDE tabs are deliberately retained too. Count the two
+            // surfaces of this conversation, not unrelated cached sessions.
+            find.byWidgetPredicate(
+              (widget) =>
+                  widget is ChatScreen &&
+                  identical(widget.session, local.session),
+              skipOffstage: false,
+            ),
             skipOffstage: false,
           ),
           findsNWidgets(2),

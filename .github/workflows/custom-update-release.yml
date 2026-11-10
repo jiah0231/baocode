@@ -706,6 +706,18 @@ jobs:
             "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/translation-validation.yml/runs?head_sha=$GITHUB_SHA&per_page=100" \
             > "$response"
           python3 tool/ci/verify_translation_release_gate.py "$GITHUB_SHA" "$response"
+      - name: Require independent multiwindow validation of exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tool/ci/test_multiwindow_release_gate.py
+          # Public read-only API; no expanded token permissions or credentials.
+          response="$RUNNER_TEMP/multiwindow-validation.json"
+          curl --fail --silent --show-error --retry 2 \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/multiwindow-validation.yml/runs?head_sha=$GITHUB_SHA&per_page=100" \
+            > "$response"
+          python3 tool/ci/verify_multiwindow_release_gate.py "$GITHUB_SHA" "$response"
       - name: Sign and publish verified build; advertise last
         env:
           SIGNING_SEED: ${{ secrets.BAOCODE_CUSTOM_UPDATE_SIGNING_KEY }}
