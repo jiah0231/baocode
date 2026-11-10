@@ -137,6 +137,10 @@ class AppWindows : public WindowObserver {
   // decides about closing them, the main one too.
   bool started() const { return started_; }
 
+  // Once Dart explicitly shows/hides the main view, native startup fallbacks
+  // must not override it while another view is still drawing its first frame.
+  bool main_visibility_managed() const { return main_visibility_managed_; }
+
   void SetAttention(Attention* attention);
 
   // The windows the tray's menu lists, and its New Window's label.
@@ -222,6 +226,7 @@ class AppWindows : public WindowObserver {
   HWND main_;
   bool maximize_main_on_show_ = false;
   bool started_ = false;
+  bool main_visibility_managed_ = false;
   Attention* attention_ = nullptr;
   std::map<int64_t, std::unique_ptr<IdeWindow>> windows_;
   std::unique_ptr<IdeWindow> stash_;

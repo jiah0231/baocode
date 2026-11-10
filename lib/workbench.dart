@@ -382,21 +382,26 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
   /// Whether this is an agent's window (Explorer's Open with BaoCode): its
   /// conversation alone, [_agentThread]'s.
-  bool get _agentWindow => widget.window?.isAgent ?? false;
-  AgentThread? get _agentThread => _agentWindow ? widget.window!.thread : null;
+  bool get _localChatWindow =>
+      (widget.window?.isAgent ?? false) ||
+      (_ideWindow && (widget.window?.chatMode ?? false));
+  AgentThread? get _agentThread =>
+      _localChatWindow ? widget.window!.thread : null;
 
   /// Whether this is the app's main window, the chat's: what the app does
   /// once (its notifications, the system's requests, the File menu) is
   /// done here.
-  bool get _main => !_ideWindow && !_agentWindow;
+  bool get _main => !_ideWindow && !_localChatWindow;
 
   int get _viewId => widget.window?.viewId ?? 0;
 
   /// Whether the IDE shows: always in its own window; without them, as the
   /// workspace's layout says.
   bool get _showsIde =>
-      _ideWindow ||
-      (!_multi && !_agentWindow && _workspace.layout == WorkspaceLayout.ide);
+      (_ideWindow && !_localChatWindow) ||
+      (!_multi &&
+          !_localChatWindow &&
+          _workspace.layout == WorkspaceLayout.ide);
 
   WindowSettings get _windowSettings =>
       WindowSettings.parse(widget.settings?.files?.settings.values ?? const {});
@@ -678,7 +683,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     if (inIde) {
       _openIdeFolder(made.path);
     } else {
-      unawaited(_workspace.openFolder(made.path));
+      unawaited(_openChatFolder(made.path));
     }
   }
 
@@ -967,7 +972,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     // An agent's window has its agent alone (and the sidebar to pick
     // another: see _buildContent), and the search palette for the window's
     // commands.
-    if (_agentWindow) {
+    if (_localChatWindow) {
       return {
         'workbench.action.toggleSidebarVisibility': _toggle,
         openSettingsCommandId: () => unawaited(openSettings()),
@@ -981,7 +986,17 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         if (BrowserBridge.instance.supported)
           browserWelcomeCommandId: _showBrowserWelcome,
         modelWelcomeCommandId: _showModelWelcome,
+        ChatCommandIds.newChat: _newAgent,
+        ChatCommandIds.nextAgent: () => _openAgentBy(1),
+        ChatCommandIds.previousAgent: () => _openAgentBy(-1),
+        for (final (index, thread)
+            in _agentsInOrder().take(ChatCommandIds.agentIndexes).indexed)
+          '${ChatCommandIds.openAgentAtIndex}${index + 1}': () =>
+              _openAgent(thread),
+        ChatCommandIds.searchAgents: _searchAgents,
         ChatCommandIds.search: () => unawaited(_openPalette()),
+        if (_agentThread case final thread?)
+          ChatCommandIds.openIde: () => _openThreadIde(thread),
         ..._sidePanelCommands(),
         ..._terminalCommands(),
         ..._windowCommands(),
@@ -1156,6 +1171,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       ),
       WindowCommandIds.switchWindow: () => windows.switchWindow(window),
       WindowCommandIds.showChat: () {
+        if (window.isIde) return _backToChat();
         if (windows.multi || window.isAgent) return windows.showChat();
         windows.focus(window);
         _workspace.layout = WorkspaceLayout.chat;
@@ -1279,9 +1295,9 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
                 if (!mounted) return false;
                 final target = agent.submit(prompt);
                 if (target == null) return false;
-                if (_agentWindow) {
-                  // Preserve an unsent source draft in its own window.
-                  _windows?.showAgent(target);
+                if (_localChatWindow) {
+                  // Keep the result and the source draft in this window.
+                  _showInWindow(target);
                 } else if (_showsIde) {
                   if (_ideFolder != agent.project.path) {
                     _openIdeFolder(agent.project.path);
@@ -1351,7 +1367,11 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   void _openAgent(AgentThread thread) {
     _closeDrawer();
     _closeCustomize();
-    if (!identical(thread, _workspace.current)) _workspace.select(thread);
+    if (_localChatWindow) {
+      _showInWindow(thread);
+    } else if (!identical(thread, _workspace.current)) {
+      _workspace.select(thread);
+    }
     _focusChat(thread);
   }
 
@@ -1372,7 +1392,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     final threads = _agentsInOrder();
     if (threads.isEmpty) return;
     final at = threads.indexWhere(
-      (thread) => identical(thread, _workspace.current),
+      (thread) => identical(thread, _agentThread ?? _workspace.current),
     );
     final next = at < 0
         ? (step > 0 ? 0 : threads.length - 1)
@@ -1423,7 +1443,13 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   void _newAgent() {
     _closeDrawer();
     _closeCustomize();
-    _focusChat(_workspace.create());
+    if (_agentThread case final previous? when _localChatWindow) {
+      final thread = _workspace.newWindowAgent(previous.project.path);
+      _showInWindow(thread);
+      _focusChat(thread);
+    } else {
+      _focusChat(_workspace.create());
+    }
   }
 
   /// The search palette, on its agents.
@@ -1545,7 +1571,9 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
           for (final thread
               in _workspace.threads.toList()
                 ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt)))
-            if (_workspace.listsInSidebar(thread) && !thread.untouched) thread,
+            if (_workspace.listsInSidebar(thread) &&
+                (!thread.untouched || _workspace.hasWindowDraft(thread)))
+              thread,
         ],
         conversations: widget.conversations,
         files: files,
@@ -1553,17 +1581,21 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         recentActions: List.of(_recentActions),
         settings: _paletteSettings(),
         filter: filter,
-        onOpenAgent: _agentWindow ? _showInWindow : _openAgent,
+        onOpenAgent: _localChatWindow ? _showInWindow : _openAgent,
         // A hit in what was said: found in the conversation, once shown.
         onFindInAgent: (thread, query) {
-          _agentWindow ? _showInWindow(thread) : _openAgent(thread);
+          _localChatWindow ? _showInWindow(thread) : _openAgent(thread);
           _findInChat(thread, query);
         },
         onOpenFile: (path) {
-          if (_windows case final windows? when _multi || _agentWindow) {
-            unawaited(
-              windows.showFolder(project?.path, files: [CodeTarget(path)]),
-            );
+          if (_windows case final windows? when _multi || _localChatWindow) {
+            if (_ideWindow) {
+              unawaited(openFiles([CodeTarget(path)]));
+            } else {
+              unawaited(
+                windows.showFolder(project?.path, files: [CodeTarget(path)]),
+              );
+            }
             return;
           }
           if (project != null) _openIdeFolder(project.path);
@@ -1924,8 +1956,8 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
   /// The chat the checklist is in, in front.
   void _showTipsChat() {
-    if (_windows case final windows? when _multi || _agentWindow) {
-      if (_ideWindow || _agentWindow) windows.showChat();
+    if (_windows case final windows? when _multi || _localChatWindow) {
+      if (_ideWindow || _localChatWindow) windows.showChat();
     } else if (_workspace.layout == WorkspaceLayout.ide) {
       _workspace.layout = WorkspaceLayout.chat;
     }
@@ -2278,6 +2310,45 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
           ],
         ];
       });
+
+  void _backToChat() {
+    if (_ideWindow) {
+      _windows!.showChatIn(widget.window!);
+      if (_agentThread case final thread?) _focusChat(thread);
+    } else {
+      _workspace.layout = WorkspaceLayout.chat;
+    }
+  }
+
+  void _openThreadIde(AgentThread thread) {
+    if (!_ideWindow) {
+      _workspace.openInIde(thread);
+      return;
+    }
+    _openProjectIde(thread.project, thread);
+  }
+
+  void _openProjectIde(Project project, AgentThread? thread) {
+    unawaited(() async {
+      final window = widget.window!;
+      await _windows!.replaceFolder(window, project.path);
+      if (!mounted) return;
+      if (window.folder != project.path) {
+        // The existing one-project/one-IDE rule may select another view.
+        // It must receive the requested conversation, not its previous tab.
+        final existing = _windows!.windowFor(project.path);
+        if (existing != null && thread != null) {
+          await _windows!.showFolder(project.path, thread: thread);
+        }
+        return;
+      }
+      _windows!.showIdeIn(window);
+      if (thread != null) {
+        _openIdeChat(project.path, thread);
+        _afterBuild(() => _ide?.showChat());
+      }
+    }());
+  }
 
   /// Shows [folder] in the IDE. With windows of its own: in this one, in
   /// place of its folder (its unsaved files asked about first), unless
@@ -2898,85 +2969,102 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   @override
   Widget build(BuildContext context) {
     if (_main) _syncFileMenu(context.l10n);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        _windowWidth = constraints.maxWidth;
-        final narrow = constraints.maxWidth < Workbench.narrowWidth;
-        if (narrow != _narrow) {
-          _narrow = narrow;
-          // Crossing the breakpoint never leaves a drawer over the chat.
-          _drawerOpen = false;
-          _drawerClosing = false;
-        }
-        // The text style (and ink) for what is not inside a panel's own:
-        // the empty workspace, the dragged agent over the window.
-        final content = Material(
-          color: AppColors.windowCanvas,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              // The header too: it opens the current session's project.
-              ListenableBuilder(
-                listenable: _workspace,
-                builder: (context, _) => Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Windows draws its own header over both columns (see
-                    // window_header/); elsewhere the system's is above them.
-                    if (WindowControls.drawsHeader) _buildHeader(),
-                    Expanded(child: _buildContent(narrow)),
-                  ],
-                ),
-              ),
-              ChatDragLayer(drag: _drag),
-              // As the IDE's toasts: above its status bar.
-              Positioned(
-                right: 8,
-                bottom: _showsIde ? 36 : 12,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: math.max(0, constraints.maxWidth - 16),
+    return OpenInIdeScope(
+      open: _ideWindow ? _openProjectIde : null,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          _windowWidth = constraints.maxWidth;
+          final narrow = constraints.maxWidth < Workbench.narrowWidth;
+          if (narrow != _narrow) {
+            _narrow = narrow;
+            // Crossing the breakpoint never leaves a drawer over the chat.
+            _drawerOpen = false;
+            _drawerClosing = false;
+          }
+          // The text style (and ink) for what is not inside a panel's own:
+          // the empty workspace, the dragged agent over the window.
+          final content = Material(
+            color: AppColors.windowCanvas,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                // The header too: it opens the current session's project.
+                ListenableBuilder(
+                  listenable: _workspace,
+                  builder: (context, _) => Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Windows draws its own header over both columns (see
+                      // window_header/); elsewhere the system's is above them.
+                      if (WindowControls.drawsHeader) _buildHeader(),
+                      Expanded(child: _buildContent(narrow)),
+                    ],
                   ),
-                  child: IdeNotificationToasts(notifications: _notifications),
                 ),
-              ),
-            ],
-          ),
-        );
-        // The model picker's Manage Models… opens the settings.
-        return SettingsOpener(
-          open: (section) => unawaited(openSettings(section)),
-          // The side panel explorer's uploads and downloads show their
-          // progress in the window's toasts.
-          child: IdeNotificationsScope(
-            notifications: _notifications,
-            child: content,
-          ),
-        );
-      },
+                ChatDragLayer(drag: _drag),
+                // As the IDE's toasts: above its status bar.
+                Positioned(
+                  right: 8,
+                  bottom: _showsIde ? 36 : 12,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: math.max(0, constraints.maxWidth - 16),
+                    ),
+                    child: IdeNotificationToasts(notifications: _notifications),
+                  ),
+                ),
+              ],
+            ),
+          );
+          // The model picker's Manage Models… opens the settings.
+          return SettingsOpener(
+            open: (section) => unawaited(openSettings(section)),
+            // The side panel explorer's uploads and downloads show their
+            // progress in the window's toasts.
+            child: IdeNotificationsScope(
+              notifications: _notifications,
+              child: content,
+            ),
+          );
+        },
+      ),
     );
   }
 
-  Widget _buildContent(bool narrow) {
-    if (_agentThread case final thread?) {
-      // Gone (deleted), its window goes with it.
-      if (!_workspace.threads.contains(thread)) return const SizedBox.shrink();
-      // With the sidebar, as the chat's window has it: over the
-      // conversation while narrow, beside it once wide. Its toggle is the
-      // header's on Windows, else by the traffic lights while it is hidden.
-      final showToggle = narrow || !_sidebarDocked;
-      final chat = _withSidePanel(
-        _withTerminal(
-          _buildChat(
-            showToggle: showToggle,
-            pane: thread,
-            showsTerminals: _terminals != null,
-          ),
-          thread,
+  Widget _buildWindowChat(bool narrow, AgentThread thread) {
+    // Gone (deleted), its window goes with it.
+    if (!_workspace.threads.contains(thread)) return const SizedBox.shrink();
+    // With the sidebar, as the chat's window has it: over the
+    // conversation while narrow, beside it once wide. Its toggle is the
+    // header's on Windows, else by the traffic lights while it is hidden.
+    final showToggle = narrow || !_sidebarDocked;
+    final chat = _withSidePanel(
+      _withTerminal(
+        _buildChat(
+          showToggle: showToggle,
+          pane: thread,
+          showsTerminals: _terminals != null,
         ),
-        showToggle: showToggle,
+        thread,
+      ),
+      showToggle: showToggle,
+    );
+    return narrow ? _buildNarrow(body: chat) : _buildWide(body: chat);
+  }
+
+  Widget _buildContent(bool narrow) {
+    if (_ideWindow) {
+      final folder = _ideFolder;
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          _buildIde(folder, _ideSpace(folder), shown: !_localChatWindow),
+          if (_agentThread case final thread?) _buildWindowChat(narrow, thread),
+        ],
       );
-      return narrow ? _buildNarrow(body: chat) : _buildWide(body: chat);
+    }
+    if (_agentThread case final thread?) {
+      return _buildWindowChat(narrow, thread);
     }
     final folder = _ideFolder;
     // An IDE window has its folder's alone.
@@ -3035,11 +3123,8 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
                 ? Project.at(space.root)
                 : _workspace.projectAt(path),
             visible: shown,
-            // An IDE window's way back shows the chat's window.
-            onBack: _ideWindow
-                ? _windows!.showChat
-                : () => _workspace.layout = WorkspaceLayout.chat,
-            backLabel: _ideWindow ? context.l10n.cmdShowChatWindow : null,
+            // Return within this native view, keeping its editor mounted.
+            onBack: _backToChat,
             pinned: _pinned,
             onPinnedChanged: _setPinned,
             editorBuilder: widget.ideEditorBuilder,
@@ -3095,8 +3180,9 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
                 ideClaudeCommitMessage(prompt, cancel: cancel, location: path),
             agentEdits: _ideAgentEdits.putIfAbsent(path, IdeAgentEdits.new)
               ..sessions = _agentSessionsIn(path),
-            chat: shown
-                // On the IDE's card for it, its tabs on the window's color.
+            // A native IDE remains mounted behind its window-local chat,
+            // including the embedded composer's state and scroll position.
+            chat: shown || _ideWindow
                 ? _buildIdeChat(path)
                 : const SizedBox.shrink(),
             onAddToChat: _workspace.ideChat(path) == null
@@ -3543,10 +3629,10 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     return WindowHeader(
       workspace: _workspace,
       project: project,
+      agent: agent ?? _workspace.current,
       ide: ide,
       hasFolder: _ideFolder != _noFolder,
-      onBack: _ideWindow ? windows!.showChat : null,
-      backLabel: _ideWindow ? context.l10n.cmdShowChatWindow : null,
+      onBack: _ideWindow ? _backToChat : null,
       onNewWindow: windows == null
           ? null
           : () => unawaited(windows.newWindow()),
@@ -3580,9 +3666,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
           ChatScreen.toggleContextPanel(_chatKey(thread));
         }
       },
-      onCommand: agent == null
-          ? (command) => _chatCommands()[command]?.call()
-          : null,
+      onCommand: (command) => _chatCommands()[command]?.call(),
       onFileCommand: _runMenuCommand,
       autoSave: _autoSaveOn,
       compact: _narrow,
@@ -3600,7 +3684,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// card has its toggles but where the header has the title in place of
   /// the card's row ([_titleInHeader]).
   bool get _toolsInPanes =>
-      !_agentWindow && !_replacingChat && _workspace.grid.length >= 2;
+      !_localChatWindow && !_replacingChat && _workspace.grid.length >= 2;
 
   /// Whether the session's title is in Windows' header (see
   /// [WindowHeader.title]), not a row of the chat's own: the narrow
@@ -3611,14 +3695,19 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       !_showsIde &&
       !_replacingChat &&
       // An agent's window has its one conversation.
-      (_agentWindow ||
+      (_localChatWindow ||
           (_workspace.grid.length <= 1 && _workspace.current != null));
 
   /// The chat of [thread]: a state of its own for each (and kept as it
   /// moves between the wide and narrow layouts), reached by the header.
   /// Each window's own: the same agent may show in two.
-  GlobalKey _chatKey(AgentThread thread) => _chatKeys[thread] ??= GlobalKey();
+  GlobalKey _chatKey(AgentThread thread, {bool? embedded}) {
+    final keys = (embedded ?? _showsIde) ? _embeddedChatKeys : _chatKeys;
+    return keys[thread] ??= GlobalKey();
+  }
+
   final Expando<GlobalKey> _chatKeys = Expando();
+  final Expando<GlobalKey> _embeddedChatKeys = Expando();
 
   void _endDrag() {
     setState(() {
@@ -3718,7 +3807,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
         } else if (inIde) {
           _openIdeFolder(location, held: held);
         } else {
-          unawaited(_workspace.openFolder(location));
+          unawaited(_openChatFolder(location));
         }
       },
     );
@@ -3908,9 +3997,17 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   Future<void> _openFolder() async {
     final path = await WindowControls.pickDirectory();
     if (path == null || !mounted) return;
-    final thread = await _workspace.openFolder(path);
+    await _openChatFolder(path);
+  }
+
+  Future<void> _openChatFolder(String path) async {
+    final thread = _localChatWindow
+        ? _workspace.newWindowAgent(path)
+        : await _workspace.openFolder(path);
+    if (!mounted) return;
+    if (_localChatWindow) _showInWindow(thread);
     _closeDrawer();
-    if (mounted) _watchFirstTurn(thread);
+    _watchFirstTurn(thread);
   }
 
   /// The open agents side by side (see [ChatGridView]), each with its
@@ -5033,7 +5130,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     final chat = ChatKeyScope(
       lookup: embedded ? _ideChatKeyContext : _chatKeyContext,
       child: ChatScreen(
-        key: _chatKey(thread),
+        key: _chatKey(thread, embedded: embedded),
         embedded: embedded,
         session: thread.session,
         title: thread.localizedTitle(context.l10n),
@@ -5118,6 +5215,11 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
             : NewChatFolderBar(
                 workspace: _workspace,
                 thread: thread,
+                onMove: _localChatWindow
+                    ? (path) => _showInWindow(
+                        _workspace.moveWindowAgent(thread, path),
+                      )
+                    : null,
                 openRemote: (onOpen, {host}) =>
                     _openRemoteProject(onOpen: onOpen, host: host),
               ),
@@ -5199,6 +5301,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     _sidePanel.carryOver(was, thread.session);
     // A chat of the conversation before is not shown again: built anew.
     _chatKeys[thread] = GlobalKey();
+    _embeddedChatKeys[thread] = GlobalKey();
     _ideChatWidgets.remove(thread);
   }
 
@@ -5244,7 +5347,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     if (embedded) {
       _openIdeChat(thread.project.path, thread);
     } else {
-      _workspace.select(thread);
+      _openAgent(thread);
     }
   }
 
@@ -5415,6 +5518,12 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     Future<Object?> Function(IdeWorkspace ide) open,
   ) {
     if (_windows case final windows? when _multi) {
+      if (_ideWindow && widget.window!.folder == thread.project.path) {
+        windows.showIdeIn(widget.window!);
+        _openIdeChat(thread.project.path, thread);
+        unawaited(open(_ideSpace(thread.project.path)));
+        return;
+      }
       unawaited(() async {
         final window = await windows.showFolder(
           thread.project.path,
@@ -5445,11 +5554,16 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   BuildContext? get windowContext => mounted ? context : null;
 
   @override
-  IdeWorkspace? get ideSpace => _showsIde ? _ideSpace(_ideFolder) : null;
+  IdeWorkspace? get ideSpace =>
+      _ideWindow || _showsIde ? _ideSpace(_ideFolder) : null;
 
   @override
   Future<void> openFiles(List<CodeTarget> files) async {
-    if (!_showsIde) _workspace.layout = WorkspaceLayout.ide;
+    if (_ideWindow) {
+      _windows!.showIdeIn(widget.window!);
+    } else if (!_showsIde) {
+      _workspace.layout = WorkspaceLayout.ide;
+    }
     setState(() {});
     // Once the IDE shows.
     await WidgetsBinding.instance.endOfFrame;
@@ -5471,7 +5585,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   @override
   void showAgent(AgentThread thread) {
     // An agent's window shows its own alone.
-    if (_agentWindow) return;
+    if (_localChatWindow) return;
     if (_ideWindow) {
       _openIdeChat(_ideFolder, thread);
       _afterBuild(() => _ide?.showChat());

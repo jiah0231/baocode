@@ -14,6 +14,9 @@ import 'package:baocode/window/app_windows.dart';
 import 'package:baocode/window/window_settings.dart';
 import 'package:baocode/workbench.dart';
 import 'package:baocode/workspace/workspace.dart';
+import 'package:baocode/workspace/back_to_chat_button.dart';
+import 'package:baocode/workspace/new_chat_folder_bar.dart';
+import 'package:baocode/workspace/open_in_editor_button.dart';
 
 import 'fake_window_host.dart';
 
@@ -73,12 +76,14 @@ Future<AppWindow> _open(
   return (await opening)!;
 }
 
-Finder _inView(int viewId, Finder finder) => find.descendant(
-  of: find.byWidgetPredicate(
-    (widget) => widget is View && widget.view.viewId == viewId,
-  ),
-  matching: finder,
-);
+Finder _inView(int viewId, Finder finder, {bool skipOffstage = true}) =>
+    find.descendant(
+      of: find.byWidgetPredicate(
+        (widget) => widget is View && widget.view.viewId == viewId,
+      ),
+      matching: finder,
+      skipOffstage: skipOffstage,
+    );
 
 /// The desktop semantics check (test/semantics_tree.dart) keeps one tree
 /// for all views; the windows' own (their accessibility) are left out.
@@ -86,6 +91,292 @@ void _testWindows(String description, WidgetTesterCallback callback) =>
     testWidgets(description, callback, semanticsEnabled: false);
 
 void main() {
+  _testWindows(
+    'closing local chat asks about its hidden IDE and Cancel preserves both',
+    (tester) async {
+      final (windows, host, workspace) = await _pumpApp(tester);
+      final main = workspace.current;
+      final mainGrid = List.of(workspace.grid.panes);
+      final window = await _open(tester, windows, '~/code/baocode');
+      final space = window.delegate!.ideSpace!;
+      final document = space.newUntitled();
+      space.edit(document.path, 'unsaved editor text');
+      await tester.pump();
+      expect(document.dirty, isTrue);
+      final ide = tester.state<IdeWorkbenchState>(
+        _inView(window.viewId, find.byType(IdeWorkbench)),
+      );
+      await tester.tap(
+        _inView(window.viewId, find.byType(BackToChatButton)).first,
+      );
+      await tester.pump();
+      await tester.pump();
+      final local = window.thread!;
+      local.session.draft.save(
+        'unsent local chat',
+        const TextSelection.collapsed(offset: 5),
+        const [],
+      );
+      host.log.clear();
+
+      for (var attempt = 0; attempt < 2; attempt++) {
+        final closing = windows.requestClose(window);
+        await tester.pump();
+        expect(_inView(window.viewId, find.text("Don't Save")), findsOneWidget);
+        expect(_inView(0, find.text('Cancel')), findsNothing);
+        await tester.tap(_inView(window.viewId, find.text('Cancel')));
+        await tester.pump();
+        expect(await closing, isFalse);
+        expect(_inView(window.viewId, find.text('Cancel')), findsNothing);
+        expect(windows.ideWindows, contains(window));
+        expect(host.log, isNot(contains('close ${window.viewId}')));
+        expect(window.chatMode, isTrue);
+        expect(window.thread, same(local));
+        expect(local.session.draft.content, 'unsent local chat');
+        expect(window.delegate!.ideSpace, same(space));
+        expect(space.documents, contains(document));
+        expect(document.text, 'unsaved editor text');
+        expect(document.dirty, isTrue);
+        expect(
+          tester.state<IdeWorkbenchState>(
+            _inView(
+              window.viewId,
+              find.byType(IdeWorkbench, skipOffstage: false),
+              skipOffstage: false,
+            ),
+          ),
+          same(ide),
+        );
+        expect(workspace.current, same(main));
+        expect(workspace.grid.panes, orderedEquals(mainGrid));
+      }
+
+      final closing = windows.requestClose(window);
+      await tester.pump();
+      await tester.tap(_inView(window.viewId, find.text("Don't Save")));
+      for (var i = 0; i < 4; i++) {
+        await tester.pump();
+      }
+      expect(await closing, isTrue);
+      expect(windows.ideWindows, isNot(contains(window)));
+      expect(host.log, contains('close ${window.viewId}'));
+      expect(host.log, isNot(contains('close ${windows.chat.viewId}')));
+      expect(workspace.threads, contains(local));
+      expect(local.session.draft.content, 'unsent local chat');
+      expect(workspace.current, same(main));
+      expect(workspace.grid.panes, orderedEquals(mainGrid));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  _testWindows(
+    'Back to Chat stays in the new window and keeps its IDE mounted',
+    (tester) async {
+      final (windows, host, workspace) = await _pumpApp(tester);
+      final main = workspace.current;
+      final mainGrid = List.of(workspace.grid.panes);
+      final window = await _open(tester, windows, '~/code/baocode');
+      final space = window.delegate!.ideSpace!;
+      final document = space.newUntitled();
+      await tester.pump();
+      final ide = tester.state<IdeWorkbenchState>(
+        _inView(window.viewId, find.byType(IdeWorkbench)),
+      );
+
+      await tester.tap(
+        _inView(window.viewId, find.byType(BackToChatButton)).first,
+      );
+      await tester.pump();
+      await tester.pump();
+      final local = window.thread!;
+      expect(window.chatMode, isTrue);
+      expect(local, isNot(same(main)));
+      expect(host.focused, window.viewId);
+      expect(workspace.current, same(main));
+      expect(workspace.grid.panes, mainGrid);
+      expect(_inView(window.viewId, find.byType(ChatScreen)), findsOneWidget);
+      expect(_inView(window.viewId, find.byType(IdeWorkbench)), findsNothing);
+      expect(
+        tester.state(
+          _inView(
+            window.viewId,
+            find.byType(IdeWorkbench, skipOffstage: false),
+            skipOffstage: false,
+          ),
+        ),
+        same(ide),
+      );
+      expect(window.delegate!.ideSpace, same(space));
+      expect(space.documents, contains(document));
+
+      // The same conversation may exist in the hidden IDE and visible chat:
+      // each surface needs its own widget key, while its data stays shared.
+      workspace.openIdeChat(window.folder!, local);
+      ide.showChat();
+      final embeddedChat = _inView(
+        window.viewId,
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is ChatScreen &&
+              widget.embedded &&
+              identical(widget.session, local.session),
+          skipOffstage: false,
+        ),
+        skipOffstage: false,
+      );
+      State? embeddedState;
+      for (var round = 0; round < 3; round++) {
+        windows.showIdeIn(window);
+        await tester.pump();
+        await tester.pump();
+        expect(embeddedChat, findsOneWidget);
+        embeddedState ??= tester.state(embeddedChat);
+        expect(tester.state(embeddedChat), same(embeddedState));
+        await tester.tap(
+          _inView(window.viewId, find.byType(BackToChatButton)).first,
+        );
+        await tester.pump();
+        await tester.pump();
+        expect(window.thread, same(local));
+        expect(window.delegate!.ideSpace, same(space));
+        expect(embeddedChat, findsOneWidget);
+        expect(tester.state(embeddedChat), same(embeddedState));
+        expect(
+          _inView(
+            window.viewId,
+            find.byWidgetPredicate(
+              (widget) =>
+                  widget is ChatScreen &&
+                  !widget.embedded &&
+                  identical(widget.session, local.session),
+            ),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          tester.state<IdeWorkbenchState>(
+            _inView(
+              window.viewId,
+              find.byType(IdeWorkbench, skipOffstage: false),
+              skipOffstage: false,
+            ),
+          ),
+          same(ide),
+        );
+        expect(space.documents, contains(document));
+        expect(
+          _inView(
+            window.viewId,
+            // Other IDE tabs are deliberately retained too. Count the two
+            // surfaces of this conversation, not unrelated cached sessions.
+            find.byWidgetPredicate(
+              (widget) =>
+                  widget is ChatScreen &&
+                  identical(widget.session, local.session),
+              skipOffstage: false,
+            ),
+            skipOffstage: false,
+          ),
+          findsNWidgets(2),
+        );
+        expect(tester.takeException(), isNull);
+      }
+      expect(workspace.current, same(main));
+    },
+  );
+
+  _testWindows(
+    'local sidebar, project chooser and new chat do not select the main chat',
+    (tester) async {
+      final (windows, host, workspace) = await _pumpApp(tester);
+      final main = workspace.current;
+      final window = await _open(tester, windows, '~/code/baocode');
+      windows.showChatIn(window);
+      await tester.pump();
+      await tester.pump();
+      final initial = window.thread!;
+      initial.session.draft.save(
+        'draft only in B',
+        const TextSelection.collapsed(offset: 5),
+        const [],
+      );
+      final sidebar = tester.widget<Sidebar>(
+        _inView(window.viewId, find.byType(Sidebar)),
+      );
+      final other = workspace.threads.firstWhere(
+        (t) => !identical(t, initial) && !identical(t, main),
+      );
+      sidebar.onSelect!(other);
+      await tester.pump();
+      expect(window.thread, same(other));
+      expect(workspace.current, same(main));
+      expect(initial.session.draft.content, 'draft only in B');
+      sidebar.onNewAgent!(initial.project);
+      await tester.pump();
+      await tester.pump();
+      final fresh = window.thread!;
+      expect(fresh, isNot(same(initial)));
+      expect(fresh.session.draft.content, isNot('draft only in B'));
+      expect(workspace.current, same(main));
+      final folderBar = tester.widget<NewChatFolderBar>(
+        _inView(window.viewId, find.byType(NewChatFolderBar)),
+      );
+      expect(folderBar.onMove, isNotNull);
+      folderBar.onMove!('~/code/cursor-docs');
+      await tester.pump();
+      expect(window.thread!.project.path, '~/code/cursor-docs');
+      expect(workspace.current, same(main));
+      expect(host.focused, window.viewId);
+    },
+  );
+
+  _testWindows(
+    'local chat search and editor button keep the chosen conversation',
+    (tester) async {
+      final (windows, _, workspace) = await _pumpApp(tester);
+      final main = workspace.current;
+      final window = await _open(tester, windows, '~/code/baocode');
+      windows.showChatIn(window);
+      await tester.pump();
+      await tester.pump();
+      final local = window.thread!;
+      final button = tester.widget<OpenInEditorButton>(
+        _inView(window.viewId, find.byType(OpenInEditorButton)).first,
+      );
+      expect(button.agent, same(local));
+      final context = tester.element(
+        _inView(window.viewId, find.byType(OpenInEditorButton)).first,
+      );
+      OpenInIdeScope.of(context)!(local.project, local);
+      for (var i = 0; i < 4; i++) {
+        await tester.pump();
+      }
+      expect(window.chatMode, isFalse);
+      expect(workspace.ideChat(window.folder!), same(local));
+      windows.showChatIn(window);
+      await tester.pump();
+      await tester.pump();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyP);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      final palette = tester.widget<SearchPalette>(
+        _inView(window.viewId, find.byType(SearchPalette)),
+      );
+      final chosen = workspace.threads.firstWhere(
+        (t) => !identical(t, main) && !identical(t, local),
+      );
+      palette.onOpenAgent(chosen);
+      await tester.pump();
+      expect(window.thread, same(chosen));
+      expect(workspace.current, same(main));
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump(const Duration(milliseconds: 200));
+    },
+  );
+
   _testWindows('an IDE window is a view of its own: its workbench the IDE, '
       'the chat\'s window without it', (tester) async {
     final (windows, host, workspace) = await _pumpApp(tester);

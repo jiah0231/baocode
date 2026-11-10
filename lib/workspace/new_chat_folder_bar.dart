@@ -27,12 +27,16 @@ class NewChatFolderBar extends StatelessWidget {
     required this.workspace,
     required this.thread,
     this.openRemote,
+    this.onMove,
   });
 
   final Workspace workspace;
 
   /// The new agent, nothing sent to it yet.
   final AgentThread thread;
+
+  /// A separate native window moves its own draft, not the main selection.
+  final ValueChanged<String>? onMove;
 
   /// Open Remote Project…: walks the user to a folder on an SSH host (on
   /// [host], given one), then gives its location to the function given.
@@ -65,11 +69,17 @@ class NewChatFolderBar extends StatelessWidget {
   static Future<String?> Function() pickDirectory =
       WindowControls.pickDirectory;
 
-  void _moveTo(String path) => workspace.moveNew(thread, path);
+  void _moveTo(String path) {
+    if (onMove case final move?) {
+      move(path);
+    } else {
+      workspace.moveNew(thread, path);
+    }
+  }
 
   Future<void> _pick() async {
     final path = await pickDirectory();
-    if (path != null) workspace.moveNew(thread, path);
+    if (path != null) _moveTo(path);
   }
 
   /// Asks for a new workspace (the folder the agent was to work in, in it

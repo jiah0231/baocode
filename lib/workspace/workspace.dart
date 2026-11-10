@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' show Random;
 
 import 'package:bao_remote/client.dart' show SshServer;
 import 'package:crypto/crypto.dart' show sha256;
@@ -131,10 +132,12 @@ class AgentThread {
     this.archived = false,
     bool unread = false,
     this._restoreDraft = true,
+    this._windowDraftKey,
   }) : _seenSeq = unread ? -1 : 0,
        _wantsTitle = record == null && _title.isEmpty;
 
   final bool _restoreDraft;
+  final String? _windowDraftKey;
 
   /// Its project: replaced by one of the new name when a workspace is
   /// renamed.
@@ -573,6 +576,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     if (complete && !_folders.any(RemoteLocation.isRemote)) {
       _forgetGone(listed);
     }
+    _restoreWindowDraftThreads();
     _loading = false;
     if (!_loaded.isCompleted) _loaded.complete();
     for (final folder in {?_ideFolder, ..._windowFolders}) {
@@ -723,9 +727,13 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     return project;
   }
 
+  final Set<String> _sessionListingStarted = {};
+  final Set<(String, String)> _sessionListingsComplete = {};
+
   /// Lists the sessions the kernels keep in [project]. Not waited for: to
   /// find them, Claude Code's are all read, which may take a while.
   Future<void> _listKept(Project project) async {
+    _sessionListingStarted.add(project.path);
     final before = _threads.length;
     for (final kernel in kernels) {
       final List<SessionRecord> sessions;
@@ -737,11 +745,15 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
         continue;
       }
       if (_disposed) return;
+      _sessionListingsComplete.add((project.path, kernel.id));
       for (final session in sessions) {
         _addKept(kernel, project, session);
       }
     }
-    if (_threads.length != before) notifyListeners();
+    if (!_disposed &&
+        (_threads.length != before || RemoteLocation.isRemote(project.path))) {
+      notifyListeners();
+    }
   }
 
   /// Remote projects whose sessions were not asked for, being off the
@@ -1078,9 +1090,14 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// The agents shown each in a window of its own (Explorer's Open with
   /// BaoCode; see AppWindows.openAgent): what [isShown] counts too.
   Set<AgentThread> _windowAgents = const {};
+  Set<AgentThread> _shownWindowAgents = const {};
 
-  void showAgentWindows(Iterable<AgentThread> threads) {
+  void showAgentWindows(
+    Iterable<AgentThread> threads, {
+    Iterable<AgentThread>? shown,
+  }) {
     _windowAgents = threads.toSet();
+    _shownWindowAgents = (shown ?? _windowAgents).toSet();
     if (_markShownSeen()) notifyListeners();
   }
 
@@ -1088,7 +1105,128 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// window of its own: not in the chat's panes, nor reused (each window
   /// its own agent).
   AgentThread newWindowAgent(String path) {
-    final thread = _newThread(_openProject(path));
+    final thread = _newThread(
+      _openProject(path),
+      windowDraftKey: _newWindowDraftKey(),
+    );
+    notifyListeners();
+    return thread;
+  }
+
+  /// Changes a window's working folder without selecting a main-window pane.
+  /// The source stays intact: another window may still be composing in it.
+  AgentThread moveWindowAgent(AgentThread thread, String path) {
+    if (!_threads.contains(thread) || thread.project.path == path) {
+      return thread;
+    }
+    final source = thread.session.draft;
+    final moved = _newThread(
+      _openProject(path),
+      windowDraftKey: _newWindowDraftKey(),
+      kernel: thread.kernel,
+      settings: {
+        for (final kind in KernelChoiceKind.values)
+          kind.name: ?thread.session.selected(kind),
+      },
+      preserveModel: true,
+    );
+    final draft = moved.session.draft;
+    draft.insertFiles(source.pendingFiles);
+    draft.insertCode(source.pendingCode);
+    if (source.pendingMessage case final pending?) {
+      draft.restore(
+        pending.text,
+        pending.images,
+        sessionMentions: pending.sessionMentions,
+      );
+    }
+    if (source.saved || source.images.isNotEmpty) {
+      draft.save(source.content ?? '', source.selection, source.images);
+    }
+    notifyListeners();
+    return moved;
+  }
+
+  /// An identity only, never the conversation or draft contents. The caller
+  /// restores it after [load], without changing the main window's selection.
+  Map<String, Object?> windowAgentState(AgentThread thread) => {
+    'project': thread.project.path,
+    'sessionId': ?thread.id,
+    'draftKey': ?thread._windowDraftKey,
+    'kernel': thread.kernel.id,
+    'settings': {
+      for (final kind in KernelChoiceKind.values)
+        kind.name: ?thread.session.selected(kind),
+    },
+  };
+
+  /// A remote catalog may still be loading, or unavailable until reconnect.
+  /// Only a successful listing can establish that a saved session is gone.
+  bool windowAgentRestorePending(Map<String, Object?> state) {
+    final path = state['project'];
+    if (path is! String ||
+        !RemoteLocation.isRemote(path) ||
+        state['sessionId'] is! String) {
+      return false;
+    }
+    final matching = kernels.where(
+      (kernel) => state['kernel'] == null || kernel.id == state['kernel'],
+    );
+    if (matching.isEmpty) return false;
+    if (!_sessionListingStarted.contains(path)) {
+      unawaited(_listKept(_project(path)));
+    }
+    return matching.any(
+      (kernel) => !_sessionListingsComplete.contains((path, kernel.id)),
+    );
+  }
+
+  AgentThread? restoreWindowAgent(Map<String, Object?> state) {
+    final path = state['project'];
+    if (path is! String || path.isEmpty) return null;
+    final id = state['sessionId'];
+    if (id is String && id.isNotEmpty) {
+      final kernel = state['kernel'];
+      return _threads
+          .where(
+            (thread) =>
+                thread.project.path == path &&
+                thread.id == id &&
+                (kernel is! String ||
+                    kernel.isEmpty ||
+                    thread.kernel.id == kernel),
+          )
+          .firstOrNull;
+    }
+    final key = state['draftKey'];
+    if (key is! String ||
+        !key.startsWith(_windowDraft) ||
+        key.length == _windowDraft.length) {
+      return null;
+    }
+    final existing = _threads
+        .where(
+          (thread) =>
+              thread.project.path == path && thread._windowDraftKey == key,
+        )
+        .firstOrNull;
+    if (existing != null) return existing;
+    final settings = state['settings'];
+    final thread = _newThread(
+      _openProject(path),
+      windowDraftKey: key,
+      kernel: kernels
+          .where((kernel) => kernel.id == state['kernel'])
+          .firstOrNull,
+      settings: settings is Map
+          ? {
+              for (final entry in settings.entries)
+                if (entry.key is String && entry.value is String)
+                  entry.key as String: entry.value as String,
+            }
+          : null,
+      preserveModel: true,
+    );
     notifyListeners();
     return thread;
   }
@@ -1112,6 +1250,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// unless it shows elsewhere too.
   void closeWindowAgent(AgentThread thread) {
     if (!_threads.contains(thread) || !_isUntouched(thread)) return;
+    if (_windowAgents.contains(thread) || _hasDraft(thread)) return;
     if (_hasPane(thread)) return;
     if (_ideChats.values.any((tabs) => tabs.contains(thread))) return;
     _discard(thread);
@@ -1486,7 +1625,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   bool listsInSidebar(AgentThread thread) =>
       _projects.contains(thread.project) &&
       !isAppFolder(thread.project.path) &&
-      (!_isUntouched(thread) || _hasPane(thread));
+      (!_isUntouched(thread) || _hasPane(thread) || hasWindowDraft(thread));
 
   /// The sidebar's key for the group of [path]'s project.
   static String projectGroup(String path) => 'project:$path';
@@ -2521,7 +2660,9 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     final asides = _forgetGoneAsides(ids);
     final drafts = _drafts.length;
     _drafts.removeWhere(
-      (key, _) => key.startsWith(_newDraft)
+      (key, _) => key.startsWith(_windowDraft)
+          ? false
+          : key.startsWith(_newDraft)
           ? !paths.contains(key.substring(_newDraft.length))
           : !ids.contains(key),
     );
@@ -2548,6 +2689,42 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   final PreferenceStore? _draftStore;
   final Map<String, Map<String, Object?>> _drafts = {};
   static const _newDraft = 'new:';
+  static const _windowDraft = 'window:';
+  static final _draftRandom = Random.secure();
+  static String _newWindowDraftKey() =>
+      '$_windowDraft${List.generate(16, (_) => _draftRandom.nextInt(256).toRadixString(16).padLeft(2, '0')).join()}';
+
+  String _draftKey(AgentThread thread) =>
+      thread.id ?? thread._windowDraftKey ?? '$_newDraft${thread.project.path}';
+
+  /// A separately owned unsent composer which remains reachable in the sidebar.
+  bool hasWindowDraft(AgentThread thread) =>
+      thread._windowDraftKey != null && _hasDraft(thread);
+
+  final Map<String, Map<String, Object?>> _restoredWindowDrafts = {};
+
+  void _restoreWindowDraftThreads() {
+    for (final entry in _drafts.entries) {
+      if (!entry.key.startsWith(_windowDraft)) continue;
+      if (entry.value['window'] case final Map<String, Object?> state) {
+        _restoredWindowDrafts.putIfAbsent(entry.key, () => state);
+      }
+    }
+    for (final entry in _restoredWindowDrafts.entries) {
+      if (_drafts.containsKey(entry.key)) restoreWindowAgent(entry.value);
+    }
+    _restoredWindowDrafts.clear();
+  }
+
+  bool _hasDraft(AgentThread thread) {
+    if (!thread.isOpen) return false;
+    final draft = thread.session.draft;
+    return (draft.content?.trim().isNotEmpty ?? false) ||
+        draft.images.isNotEmpty ||
+        draft.pendingFiles.isNotEmpty ||
+        draft.pendingCode.isNotEmpty ||
+        draft.pendingMessage != null;
+  }
 
   /// Projects whose new agent's draft no agent of this run has taken yet:
   /// the first new agent there does.
@@ -2573,9 +2750,12 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   void _followDraft(AgentThread thread) {
     final draft = thread.session.draft;
     final id = thread.id;
-    final key = id ?? '$_newDraft${thread.project.path}';
+    final key = _draftKey(thread);
+    if (thread._restoreDraft) _draftKeys[thread] = key;
     if (thread._restoreDraft &&
-        (id != null || _newDrafts.remove(thread.project.path))) {
+        (id != null ||
+            thread._windowDraftKey != null ||
+            _newDrafts.remove(thread.project.path))) {
       if (_drafts[key] case final kept?) _decodeDraft(kept, draft);
     }
     draft.onSaved = () {
@@ -2587,19 +2767,29 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
 
   void _draftChanged(AgentThread thread) {
     final draft = thread.session.draft;
-    final key = thread.id ?? '$_newDraft${thread.project.path}';
+    final key = _draftKey(thread);
+    var migrated = false;
     if (_draftKeys[thread] case final was? when was != key) {
-      _drafts.remove(was);
+      migrated = _drafts.remove(was) != null;
     }
     _draftKeys[thread] = key;
     // Its things are no space.
-    final empty = draft.content!.trim().isEmpty;
+    final empty =
+        (draft.content?.trim().isEmpty ?? true) && draft.images.isEmpty;
     if (empty) {
-      if (_drafts.remove(key) == null) return;
+      if (_drafts.remove(key) == null && !migrated) return;
     } else {
-      _drafts[key] = _encodeDraft(draft);
+      _drafts[key] = {
+        ..._encodeDraft(draft),
+        if (thread.id == null && thread._windowDraftKey != null)
+          'window': windowAgentState(thread),
+      };
     }
     _saveDrafts();
+    if (thread._windowDraftKey != null) {
+      _save();
+      notifyListeners();
+    }
   }
 
   void _forgetDraft(String id) {
@@ -2754,6 +2944,13 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     final store = _store;
     if (store == null) return;
     final kept = await store.read();
+    if (kept['windowDrafts'] case final List states) {
+      for (final state in states) {
+        if (state is Map<String, Object?> && state['draftKey'] is String) {
+          _restoredWindowDrafts[state['draftKey']! as String] = state;
+        }
+      }
+    }
     Map<String, String> strings(Object? raw) => {
       if (raw is Map)
         for (final MapEntry(:key, :value) in raw.entries)
@@ -2940,6 +3137,11 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       if (_paneTabs) 'paneTabs': true,
       'settings': _settings,
       'agents': _agentSettings,
+      'windowDrafts': [
+        for (final thread in _threads)
+          if (thread.id == null && hasWindowDraft(thread))
+            windowAgentState(thread),
+      ],
       'ignoredRecommendations': [..._ignoredRecommendations],
       'sidebar': {
         'grouping': ?_sidebarGrouping,
@@ -3103,6 +3305,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   void _sync(AgentThread thread) {
     if (!_threads.contains(thread)) return;
     final session = thread.session;
+    // A kernel may assign its ID after the composer saved or was cleared.
+    if (thread.id != null && _draftKeys[thread] != _draftKey(thread)) {
+      _draftChanged(thread);
+    }
     _noteLimit(thread);
     if (session.isStreaming) {
       thread._quietSince = null;
@@ -3200,7 +3406,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// in the chat's panes while its window shows, or as the chat of one of
   /// theirs. Either way, in a window of its own.
   bool isShown(AgentThread thread) =>
-      _windowAgents.contains(thread) ||
+      _shownWindowAgents.contains(thread) ||
       (ideWindows != null
           ? (_chatWindowShown && _grid.contains(thread)) ||
                 _windowFolders.any(
@@ -3239,16 +3445,24 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
 
   /// The agents shown side by side, the grid's cells, the one focused and
   /// where the lines are; an agent by its session's id, a new one by its
-  /// folder.
+  /// folder. Each pane's other tabs too, by id: those under it ([ChatGrid.
+  /// under]'s order) and all its tabs in their order.
   Map<String, Object?>? get _chatView {
     if (_grid.isEmpty) return null;
     final panes = _grid.panes;
     final focused = _selected;
+    List<List<String>> ids(List<AgentThread> Function(AgentThread) of) => [
+      for (final pane in panes) [for (final thread in of(pane)) ?thread.id],
+    ];
     return {
       'panes': [
         for (final thread in panes) thread.id ?? {'new': thread.project.path},
       ],
       'cells': [for (final pane in _grid.cells) panes.indexOf(pane)],
+      if (panes.any((pane) => _grid.under(pane).isNotEmpty)) ...{
+        'under': ids(_grid.under),
+        'tabs': ids(_grid.tabs),
+      },
       if (focused != null && panes.contains(focused))
         'focused': panes.indexOf(focused),
       'columnRatios': _grid.columnRatios,
@@ -3285,6 +3499,8 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
                     .where(
                       (t) =>
                           t.project == project &&
+                          t._windowDraftKey == null &&
+                          !_windowAgents.contains(t) &&
                           _isUntouched(t) &&
                           !shown.containsValue(t),
                     )
@@ -3305,6 +3521,25 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     }
     if (cells.isEmpty) return;
     _grid.restore([for (final cell in cells.cells) shown[cell]!]);
+    // Each pane's other tabs, those whose agent is gone left out.
+    List<AgentThread> keptTabs(String key, int pane) => [
+      if (kept[key] case final List<Object?> lists)
+        if (lists.elementAtOrNull(pane) case final List<Object?> ids)
+          for (final id in ids.whereType<String>())
+            ?_threads
+                .where(
+                  (t) =>
+                      t.id == id && !t.archived && !isAppFolder(t.project.path),
+                )
+                .firstOrNull,
+    ];
+    for (final MapEntry(key: pane, value: thread) in shown.entries) {
+      _grid.restoreTabs(
+        thread,
+        keptTabs('tabs', pane),
+        keptTabs('under', pane),
+      );
+    }
     if (kept['columnsFirst'] case final bool columnsFirst) {
       _grid.columnsFirst = columnsFirst;
     }
@@ -3529,7 +3764,9 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       throw StateError('No project to create an agent in');
     }
     for (final thread in _threads) {
-      if (thread.project == project && _isUntouched(thread)) {
+      if (thread.project == project &&
+          thread._windowDraftKey == null &&
+          _isUntouched(thread)) {
         select(thread);
         return thread;
       }
@@ -3548,6 +3785,8 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       if (thread.project == project &&
           (requiredKernel == null || thread.kernel.id == requiredKernel) &&
           _isUntouched(thread) &&
+          thread._windowDraftKey == null &&
+          !_windowAgents.contains(thread) &&
           !_hasPane(thread)) {
         return thread;
       }
@@ -3589,6 +3828,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     Map<String, String>? settings,
     bool restoreDraft = true,
     bool preserveModel = false,
+    String? windowDraftKey,
   }) {
     kernel ??=
         switch (agentSetup?.call(project.path)?.kernel) {
@@ -3609,6 +3849,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
       kernel: kernel,
       updatedAt: DateTime.now(),
       restoreDraft: restoreDraft,
+      windowDraftKey: windowDraftKey,
       open: () => ChatSession(
         kernel: kernel,
         kernels: kernels,
@@ -3859,6 +4100,10 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
   /// Takes the untouched [thread] off the list: nothing of it was kept, so
   /// unlike [delete] there is no session to delete.
   void _discard(AgentThread thread) {
+    if (_windowAgents.contains(thread) ||
+        (thread._windowDraftKey != null && _hasDraft(thread))) {
+      return;
+    }
     final listener = _listeners.remove(thread);
     if (listener != null) thread.session.removeListener(listener);
     _snapshots.remove(thread);
@@ -4127,6 +4372,7 @@ class Workspace extends ChangeNotifier implements ColorThemeStorage {
     _turnsRun.remove(thread);
     if (_draftKeys.remove(thread) case final key?) _forgetDraft(key);
     _threads.remove(thread);
+    if (thread._windowDraftKey != null) _save();
     if (leave) _leave(thread);
     // Left: an aside no more (see [deleteAll] for those yet to leave).
     if (leave && id != null && _asides.remove(id) != null && save) _save();

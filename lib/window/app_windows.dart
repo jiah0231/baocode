@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ui' show AppExitResponse, AppExitType;
 
 import 'package:flutter/foundation.dart';
@@ -92,6 +93,13 @@ class AppWindow {
   /// takes its place: see [AppWindows.showInWindow]).
   AgentThread? get thread => _thread;
   AgentThread? _thread;
+  Map<String, Object?>? _pendingConversation;
+  bool _pendingChatMode = false;
+
+  /// An IDE window can return to its own conversation without leaving its
+  /// native view or taking over the main chat's selection.
+  bool get chatMode => isAgent || _chatMode;
+  bool _chatMode = false;
 
   /// The folder an IDE window shows; null for its welcome (and the chat's).
   String? get folder => _folder;
@@ -144,13 +152,15 @@ class AppWindow {
   }
 
   /// Its name, as menus list it.
-  String label(AppLocalizations l10n) => switch ((kind, _folder)) {
-    (AppWindowKind.chat, _) => l10n.windowChatTitle,
-    (AppWindowKind.agent, _) => thread!.localizedTitle(l10n),
-    (AppWindowKind.stash, _) => 'Stash',
-    (_, final folder?) => _folderName(folder),
-    (_, null) => l10n.windowWelcomeTitle,
-  };
+  String label(AppLocalizations l10n) => chatMode && isIde
+      ? (thread?.localizedTitle(l10n) ?? l10n.windowChatTitle)
+      : switch ((kind, _folder)) {
+          (AppWindowKind.chat, _) => l10n.windowChatTitle,
+          (AppWindowKind.agent, _) => thread!.localizedTitle(l10n),
+          (AppWindowKind.stash, _) => 'Stash',
+          (_, final folder?) => _folderName(folder),
+          (_, null) => l10n.windowWelcomeTitle,
+        };
 
   /// The title the system shows: `folder — BaoCode`.
   String title(AppLocalizations l10n) => '${label(l10n)} — BaoCode';
@@ -174,14 +184,28 @@ class AppWindow {
 /// One window kept between runs: an IDE's folder (null: its welcome) and
 /// where it was, or the chat's place among them.
 class _KeptWindow {
-  const _KeptWindow({this.folder, this.frame, this.chat = false});
+  const _KeptWindow({
+    this.folder,
+    this.frame,
+    this.chat = false,
+    this.chatMode = false,
+    this.conversation,
+  });
 
   final String? folder;
   final WindowFrame? frame;
   final bool chat;
+  final bool chatMode;
+  final Map<String, Object?>? conversation;
 
-  Map<String, Object?> toJson() =>
-      chat ? {'chat': true} : {'folder': folder, 'frame': ?frame?.toJson()};
+  Map<String, Object?> toJson() => chat
+      ? {'chat': true}
+      : {
+          'folder': folder,
+          'frame': ?frame?.toJson(),
+          if (chatMode) 'chatMode': true,
+          'conversation': ?conversation,
+        };
 
   static _KeptWindow? fromJson(Object? json) {
     if (json is! Map) return null;
@@ -189,6 +213,11 @@ class _KeptWindow {
     return _KeptWindow(
       folder: json['folder'] as String?,
       frame: WindowFrame.fromJson(json['frame']),
+      chatMode: json['chatMode'] == true,
+      conversation: switch (json['conversation']) {
+        final Map<String, Object?> value => value,
+        _ => null,
+      },
     );
   }
 }
@@ -536,7 +565,21 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
           if (launch.chatShown) _focus(chat);
           continue;
         }
-        await _create(kept.folder, frame: kept.frame?.fit(screens));
+        if (kept.conversation != null && workspace.loading) {
+          await workspace.loaded;
+        }
+        final window = await _create(
+          kept.folder,
+          frame: kept.frame?.fit(screens),
+          conversation: kept.conversation,
+          chatMode: kept.chatMode,
+        );
+        if (window != null &&
+            kept.chatMode &&
+            window.thread == null &&
+            window._pendingConversation == null) {
+          showChatIn(window);
+        }
       }
       final front = _mru.where((w) => w.shown).firstOrNull;
       if (front != null) _focus(front);
@@ -582,6 +625,7 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
         hidden = files.isNotEmpty;
         window = await _create(folder, show: !hidden);
       } else {
+        showIdeIn(window);
         _focus(window);
         if (folder != null) workspace.noteIdeFolder(folder);
       }
@@ -677,6 +721,8 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
     String? folder, {
     WindowFrame? frame,
     bool show = true,
+    Map<String, Object?>? conversation,
+    bool chatMode = false,
   }) async {
     if (folder != null) workspace.noteIdeFolder(folder);
     final l10n = _l10n();
@@ -696,8 +742,20 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
       folder,
       frame: frame,
     );
+    if (conversation != null) {
+      created._thread = workspace.restoreWindowAgent(conversation);
+      if (created.thread == null &&
+          workspace.windowAgentRestorePending(conversation)) {
+        created._pendingConversation = conversation;
+        created._pendingChatMode = chatMode;
+      }
+    }
+    created._chatMode = chatMode && created.thread != null;
     _ide.add(created);
     _mru.insert(0, created);
+    if (created.thread != null || created._pendingConversation != null) {
+      _watchAgents();
+    }
     _changed();
     // Shown once it has something to show.
     await _nextFrame();
@@ -756,6 +814,60 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
   void showChat() {
     if (!_started) return;
     focus(chat);
+  }
+
+  /// Returns to this window's conversation, not the singleton main chat.
+  /// Its first visit gets a fresh draft; later visits retain its selection.
+  void showChatIn(AppWindow window) {
+    if (!_started) return;
+    if (!window.isIde || !_ide.contains(window)) {
+      showChat();
+      return;
+    }
+    window._pendingConversation = null;
+    window._pendingChatMode = false;
+    if (window.thread == null || !workspace.threads.contains(window.thread)) {
+      window._thread = workspace.newWindowAgent(_chatFolder(window));
+    }
+    window._chatMode = true;
+    _watchAgents();
+    _changed();
+    _retitle(window);
+    focus(window);
+  }
+
+  String _chatFolder(AppWindow window) =>
+      window.folder ??
+      window.thread?.project.path ??
+      workspace.current?.project.path ??
+      workspace.sidebarProjects.firstOrNull?.path ??
+      local.homeDirectory ??
+      p.current;
+
+  /// Shows the retained editor in the same view. No chat or editor is closed.
+  void showIdeIn(AppWindow window) {
+    if (!window.isIde) return;
+    if (window._pendingChatMode) {
+      window._pendingChatMode = false;
+      _save();
+    }
+    if (!window._chatMode) return;
+    window._chatMode = false;
+    _changed();
+    _retitle(window);
+    _save();
+  }
+
+  void _retitle(AppWindow window) {
+    final title = window.title(_l10n());
+    _titles[window] = title;
+    unawaited(
+      host.setTitle(
+        window.viewId,
+        title,
+        path: window.chatMode ? null : _localOnly(window.folder),
+      ),
+    );
   }
 
   /// Opens [files]: each in the window whose folder has it, else in [from]
@@ -953,24 +1065,68 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
     workspace.addListener(_agentsChanged);
   }
 
+  bool _checkingAgents = false;
+  final Map<AppWindow, String> _conversationStates = {};
+
   void _agentsChanged() {
-    if (!_started) return;
-    final l10n = _l10n();
-    var retitled = false;
-    for (final window in [..._agents]) {
-      // Deleted (or dropped) meanwhile: its window goes.
-      if (!workspace.threads.contains(window.thread)) {
-        unawaited(_remove(window));
-        continue;
+    if (!_started || _checkingAgents) return;
+    _checkingAgents = true;
+    try {
+      var changed = false;
+      for (final window in _ide) {
+        final pending = window._pendingConversation;
+        if (pending == null) continue;
+        final restored = workspace.restoreWindowAgent(pending);
+        if (restored == null && workspace.windowAgentRestorePending(pending)) {
+          continue;
+        }
+        final chatMode = window._pendingChatMode;
+        window._pendingConversation = null;
+        window._pendingChatMode = false;
+        window._thread = restored;
+        if (chatMode) {
+          window._thread ??= workspace.newWindowAgent(
+            pending['project'] as String,
+          );
+        }
+        window._chatMode = chatMode;
+        changed = true;
       }
-      final title = window.title(l10n);
-      if (_titles[window] == title) continue;
-      _titles[window] = title;
-      unawaited(host.setTitle(window.viewId, title));
-      retitled = true;
+      for (final window in [
+        ..._agents,
+        ..._ide.where((w) => w.thread != null),
+      ]) {
+        if (!workspace.threads.contains(window.thread)) {
+          if (window.isAgent) {
+            unawaited(_remove(window));
+            continue;
+          }
+          // Deleting a conversation never closes its retained IDE/editor.
+          window._thread = workspace.newWindowAgent(_chatFolder(window));
+          changed = true;
+        }
+        final title = window.title(_l10n());
+        if (_titles[window] != title) {
+          _retitle(window);
+          changed = true;
+        }
+        if (window.thread case final thread? when window.isIde) {
+          final state = jsonEncode(workspace.windowAgentState(thread));
+          if (_conversationStates[window] != state) {
+            _conversationStates[window] = state;
+            changed = true;
+          }
+        }
+      }
+      _titles.removeWhere((window, _) => !_mru.contains(window));
+      _conversationStates.removeWhere((window, _) => !_ide.contains(window));
+      if (changed) {
+        _changed();
+        _save();
+      }
+    } finally {
+      _checkingAgents = false;
     }
-    _titles.removeWhere((window, _) => !_agents.contains(window));
-    if (retitled) _syncMenus();
   }
 
   @override
@@ -1020,15 +1176,22 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
     }
     if (folder != null) {
       if (windowFor(folder) case final open?) {
-        if (!identical(open, window)) focus(open);
+        showIdeIn(open);
+        focus(open);
         return;
       }
     }
-    if (folder == null && window.folder == null) return;
+    if (folder == null && window.folder == null) {
+      showIdeIn(window);
+      return;
+    }
     if (!await _confirmUnsaved([window])) return;
     if (folder != null) workspace.noteIdeFolder(folder);
     if (window.delegate case final delegate?) window.detach(delegate);
+    window._pendingConversation = null;
+    window._pendingChatMode = false;
     window._setFolder(folder);
+    window._chatMode = false;
     _focus(window);
     unawaited(
       host.setTitle(
@@ -1249,6 +1412,9 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
 
   @override
   void windowFocused(int viewId) {
+    // Native view setup can report focus before the first frame. The launch
+    // plan, not that provisional focus, decides which windows will show.
+    if (_launch != null) return;
     if (defaultTargetPlatform == TargetPlatform.windows) _reattachTextInput();
     final window = windowOf(viewId);
     if (window == null) return;
@@ -1407,7 +1573,9 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
   /// window, if it has one; in the IDE's window it is a tab of, that tab
   /// shown; else in the chat's window.
   void showAgent(AgentThread thread) {
-    if (_agents.firstWhereOrNull((w) => w.thread == thread) case final own?) {
+    if ([..._agents, ..._ide].firstWhereOrNull((w) => w.thread == thread)
+        case final own?) {
+      if (own.isIde) showChatIn(own);
       focus(own);
       return;
     }
@@ -1433,10 +1601,21 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
   /// goes if nothing was sent to it, as with its window closed.
   void showInWindow(AppWindow window, AgentThread thread) {
     final old = window.thread;
-    if (!window.isAgent || identical(old, thread)) return;
+    if ((!window.isAgent && !window.isIde) || !_mru.contains(window)) return;
+    if (identical(old, thread)) {
+      if (window.isIde && !window.chatMode) showChatIn(window);
+      return;
+    }
+    window._pendingConversation = null;
+    window._pendingChatMode = false;
     window._thread = thread;
-    _agentsChanged();
+    if (window.isIde) window._chatMode = true;
+    _watchAgents();
+    // Publish retained references before releasing the old conversation.
     _changed();
+    _agentsChanged();
+    _retitle(window);
+    _save();
     if (old != null) workspace.closeWindowAgent(old);
   }
 
@@ -1591,10 +1770,21 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
   /// What the workspace counts as shown: the chat's panes while its window
   /// shows, the tabs of the IDE's windows, and the agents' windows'.
   void _syncWorkspace() {
-    workspace.showAgentWindows([for (final window in _agents) ?window.thread]);
+    workspace.showAgentWindows(
+      [
+        for (final window in [..._agents, ..._ide]) ?window.thread,
+      ],
+      shown: [
+        for (final window in [..._agents, ..._ide])
+          if (window.shown && window.chatMode) ?window.thread,
+      ],
+    );
     if (!multi) return;
     workspace.showWindows(
-      folders: [for (final window in _ide) ?window.folder],
+      folders: [
+        for (final window in _ide)
+          if (!window.chatMode) ?window.folder,
+      ],
       chat: chat.shown,
     );
   }
@@ -1620,7 +1810,16 @@ class AppWindows extends ChangeNotifier implements WindowHostEvents {
         for (final window in _mru.where((w) => !w.isAgent))
           (window.isChat
                   ? const _KeptWindow(chat: true)
-                  : _KeptWindow(folder: window.folder, frame: window.frame))
+                  : _KeptWindow(
+                      folder: window.folder,
+                      frame: window.frame,
+                      chatMode: window.chatMode || window._pendingChatMode,
+                      conversation:
+                          window._pendingConversation ??
+                          (window.thread == null
+                              ? null
+                              : workspace.windowAgentState(window.thread!)),
+                    ))
               .toJson(),
       ],
       'chatShown': chat.shown,

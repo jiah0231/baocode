@@ -92,12 +92,15 @@ Future<List<int>> _descendants(int pid) async {
 /// The shell commands are run in: the user's, when it is bash or zsh;
 /// else bash; on Windows, Git's bash where it is installed.
 class Shell {
-  const Shell(this.executable, {this.posix = true});
+  const Shell(this.executable, {this.posix = true, this.windows = false});
 
   final String executable;
 
   /// Whether it takes POSIX shell commands (not cmd.exe).
   final bool posix;
+
+  /// Whether the POSIX shell must report native Windows working paths.
+  final bool windows;
 
   /// The shell for [environment]'s user, on Windows when [windows] (where
   /// this runs, when not given); [exists] says whether a file is there.
@@ -122,7 +125,7 @@ class Shell {
           path.join(local, 'Programs', 'Git', 'bin', 'bash.exe'),
       ];
       for (final candidate in candidates.whereType<String>()) {
-        if (exists(candidate)) return Shell(candidate);
+        if (exists(candidate)) return Shell(candidate, windows: true);
       }
       return Shell(environment['COMSPEC'] ?? 'cmd.exe', posix: false);
     }
@@ -142,9 +145,12 @@ class Shell {
   /// to [cwdFile] (so that a `cd` holds for the next command).
   List<String> arguments(String command, String cwdFile) {
     if (!posix) return ['/d', '/s', '/c', command];
-    const script =
+    // Git Bash reports /c/... paths, which Dart on Windows cannot resolve.
+    final cwd = windows ? r'cygpath -w -- "$(pwd -P)"' : 'pwd -P';
+    final script =
         r'eval "$1" < /dev/null; __bao_status=$?; '
-        r'pwd -P >| "$2" 2>/dev/null; exit $__bao_status';
+        '$cwd'
+        r' >| "$2" 2>/dev/null; exit $__bao_status';
     return ['-c', script, p.basename(executable), command, cwdFile];
   }
 }

@@ -42,6 +42,7 @@ import '../update/update_service.dart';
 import '../workspace/chat_drag.dart';
 import '../workspace/editor_launcher.dart';
 import '../workspace/islands.dart';
+import '../workspace/open_in_editor_button.dart' show OpenInIdeScope;
 import '../workspace/title_bar_double_click.dart';
 import '../workspace/window_controls.dart';
 import '../workspace/workspace.dart';
@@ -551,6 +552,7 @@ class _SidebarState extends State<Sidebar>
       !_workspace.isHidden(thread.project) &&
       _workspace.listsHost(thread.project.host) &&
       (!thread.untouched ||
+          _workspace.hasWindowDraft(thread) ||
           identical(thread, _current) ||
           _workspace.grid.contains(thread));
 
@@ -2105,7 +2107,9 @@ class _SidebarState extends State<Sidebar>
       unawaited(Sidebar.launch(editor, project.path));
       return;
     }
-    if (_current case final thread? when thread.project == project) {
+    if (OpenInIdeScope.of(context) case final open?) {
+      open(project, _current?.project == project ? _current : null);
+    } else if (_current case final thread? when thread.project == project) {
       _workspace.openInIde(thread);
     } else {
       _workspace

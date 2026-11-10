@@ -639,7 +639,7 @@ class ModelProxy {
     upstream.headers
       ..contentType = ContentType.json
       ..set(HttpHeaders.acceptHeader, 'text/event-stream');
-    upstream.add(utf8.encode(jsonEncode(outgoing)));
+    upstream.add(utf8.encode(jsonEncode(_openCodeBody(provider, outgoing))));
     _dropWithClient(response, upstream);
     final answer = await upstream.close();
     if (answer.statusCode >= 400) {
@@ -805,7 +805,9 @@ class ModelProxy {
               ? 'text/event-stream'
               : 'application/json',
         );
-      final (payload, encoded) = await _encodeJson(outgoing);
+      final (payload, encoded) = await _encodeJson(
+        _openCodeBody(provider, outgoing),
+      );
       meter?.trace?.sending(
         method: 'POST',
         url: url,
@@ -906,6 +908,18 @@ class ModelProxy {
     return response.close();
   }
 
+  /// OpenCode rejects an empty tools list. Apply this to both CLIs' routes,
+  /// including Codex's direct Responses path, without changing other providers.
+  static Map<String, Object?> _openCodeBody(
+    ModelProvider provider,
+    Map<String, Object?> body,
+  ) {
+    final tools = body['tools'];
+    return isOpenCode(provider) && tools is List && tools.isEmpty
+        ? ({...body}..remove('tools'))
+        : body;
+  }
+
   /// What is not passed on between Claude Code and an upstream of
   /// Anthropic's API: what goes from one connection only, what is set here
   /// (the key), and the encoding, which the client here undoes.
@@ -956,12 +970,18 @@ class ModelProxy {
     final upstreamRequest = await client.postUrl(url);
     final key = await _whileOpen(_key(provider.id));
     upstreamHeaders(provider, key).forEach(upstreamRequest.headers.set);
+    // OpenCode, told a session, sends it to a backend that refuses the
+    // cache's marks (`cache_control`); the one it is sent to untold refuses
+    // an empty list of tools (Claude Code's side requests).
+    final opencode = isOpenCode(provider);
     request.headers.forEach((name, values) {
       if (!_notPassed.contains(name) &&
-          !UsageHeaders.hintsOnly.contains(name)) {
+          !UsageHeaders.hintsOnly.contains(name) &&
+          !(opencode && openCodeUntold.contains(name))) {
         upstreamRequest.headers.set(name, values);
       }
     });
+    final outgoing = _openCodeBody(provider, body);
     customUpstreamHeaders(
       provider,
       session: sessionId(
@@ -971,7 +991,7 @@ class ModelProxy {
       model: '${body['model'] ?? ''}',
     ).forEach(upstreamRequest.headers.set);
     upstreamRequest.headers.contentType = ContentType.json;
-    final (payload, encoded) = await _encodeJson(body);
+    final (payload, encoded) = await _encodeJson(outgoing);
     meter?.trace?.sending(
       method: 'POST',
       url: url,

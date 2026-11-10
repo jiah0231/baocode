@@ -64,6 +64,7 @@ class WindowHeader extends StatefulWidget {
     this.onFileCommand,
     this.autoSave = false,
     this.project,
+    this.agent,
     this.ideLayout,
     this.ideNavigation,
     this.ide,
@@ -82,6 +83,7 @@ class WindowHeader extends StatefulWidget {
   /// The project the session works in, for opening it in an editor; null
   /// before there is one.
   final Project? project;
+  final AgentThread? agent;
 
   /// Whether the sidebar is shown (the toggle offers the other way).
   final bool sidebarShown;
@@ -452,6 +454,7 @@ class _WindowHeaderState extends State<WindowHeader> {
         child: OpenInEditorButton(
           workspace: widget.workspace,
           project: project,
+          agent: widget.agent,
         ),
       ),
     ],

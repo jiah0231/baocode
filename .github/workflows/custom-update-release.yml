@@ -250,8 +250,30 @@ jobs:
           test/usage_panel_test.dart
           test/usage/usage_calls_list_test.dart
           test/window
+          test/workspace/window_agent_draft_test.dart
           packages/bao_agent/test/engine/edges_test.dart
           packages/bao_agent/test/engine/turns_test.dart
+      - name: Test upstream v1.9.2 application regressions
+        run: >-
+          flutter test --no-pub --reporter expanded --timeout 2m
+          packages/bao_agent/test/engine/tools_test.dart
+          packages/bao_agent/test/units/utils_test.dart
+          test/chat/change_tree_test.dart
+          test/chat/history_scroll_test.dart
+          test/chat_grid_test.dart
+          test/kernel_test.dart
+          test/models/magpie_test.dart
+          test/models/models_test.dart
+          test/models/proxy/model_proxy_test.dart
+          test/models/proxy/opencode_routing_test.dart
+          test/platform/open_requests_test.dart
+          test/remote/remote_binaries_test.dart
+          test/remote/remote_server_test.dart
+          test/remote/ssh_launcher_test.dart
+          test/settings/models_page_test.dart
+          test/steps_test.dart
+          test/workspace_test.dart
+          test/workspace/window_pane_restore_test.dart
       - uses: actions/setup-node@v4
         with:
           node-version: '24.12.0'
@@ -684,6 +706,18 @@ jobs:
             "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/translation-validation.yml/runs?head_sha=$GITHUB_SHA&per_page=100" \
             > "$response"
           python3 tool/ci/verify_translation_release_gate.py "$GITHUB_SHA" "$response"
+      - name: Require independent multiwindow validation of exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tool/ci/test_multiwindow_release_gate.py
+          # Public read-only API; no expanded token permissions or credentials.
+          response="$RUNNER_TEMP/multiwindow-validation.json"
+          curl --fail --silent --show-error --retry 2 \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/multiwindow-validation.yml/runs?head_sha=$GITHUB_SHA&per_page=100" \
+            > "$response"
+          python3 tool/ci/verify_multiwindow_release_gate.py "$GITHUB_SHA" "$response"
       - name: Sign and publish verified build; advertise last
         env:
           SIGNING_SEED: ${{ secrets.BAOCODE_CUSTOM_UPDATE_SIGNING_KEY }}
