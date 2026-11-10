@@ -110,11 +110,14 @@ jobs:
           python tool/ci/compare_long_chat_windows_baseline.py
           if ($LASTEXITCODE -ne 0) { throw 'Windows baseline comparison found new or unclassified failures' }
       - name: Build synthetic Windows profile app
+        id: profile_build
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           flutter build windows --profile -t tool/perf/perf_app.dart
           if ($LASTEXITCODE -ne 0) { throw 'Profile build failed' }
       - name: Measure synthetic long history with and without semantics
+        if: ${{ !cancelled() && steps.profile_build.outcome == 'success' }}
         shell: pwsh
         run: |
           dart run tool/perf/run.dart --no-build --repeat 2 --out build/perf/long-chat-ci chat.long_history a11y.long_history

@@ -87,6 +87,10 @@ def canonical_suite(raw: str, root: Path) -> str:
     # File URLs can prefix Windows drive paths with a slash.
     if re.match(r"^/[A-Za-z]:/", value):
         value = value[1:]
+    # Windows temporary directories can use 8.3 aliases (RUNNER~1). Resolve
+    # both absolute paths before applying the strict repository boundary.
+    if Path(value).is_absolute():
+        value = str(Path(value).resolve()).replace("\\", "/")
     prefix = str(root.resolve()).replace("\\", "/").rstrip("/") + "/"
     if value.casefold().startswith(prefix.casefold()):
         value = value[len(prefix):]

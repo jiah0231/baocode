@@ -144,6 +144,8 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(gate.canonical_suite((root / gate.SUITES[0]).as_uri(), root), gate.SUITES[0])
         with self.assertRaises(gate.InvalidRun):
             gate.canonical_suite("/different/repo/" + gate.SUITES[0], root)
+        with self.assertRaises(gate.InvalidRun):
+            gate.canonical_suite(str(root / ".." / "elsewhere" / gate.SUITES[0]), root)
 
     @unittest.skipUnless(os.name == "nt", "Windows .bat integration test")
     def test_real_windows_batch_path_with_spaces(self):
