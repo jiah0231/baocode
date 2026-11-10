@@ -85,6 +85,14 @@ jobs:
       - name: Verify real native windows and single-instance forwarding
         shell: pwsh
         run: ./tool/ci/windows_multiwindow_smoke.ps1 -Executable build/windows/x64/runner/Release/baocode.exe
+      - name: Keep isolated native failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: multiwindow-failure-evidence-${{ github.sha }}
+          retention-days: 3
+          if-no-files-found: ignore
+          path: ${{ runner.temp }}/baocode-multiwindow-diagnostics/
       - name: Keep test-only release bundle
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         uses: actions/upload-artifact@v6

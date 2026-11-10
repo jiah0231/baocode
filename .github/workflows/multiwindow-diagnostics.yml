@@ -1,11 +1,9 @@
-# Replay an exact-source test bundle. No signing or publishing.
-name: Windows multiwindow diagnostics
+name: Windows lock fixture diagnostics
 on:
   push:
     branches: ['validation/windows-new-window-diagnostics']
 permissions:
   contents: read
-  actions: read
 jobs:
   replay:
     if: github.repository == 'jiah0231/baocode'
@@ -15,33 +13,8 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - name: Verify exact-source artifact identity
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $artifact = gh api repos/${{ github.repository }}/actions/artifacts/13748457614 | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0) { throw 'Artifact lookup failed' }
-          if ($artifact.expired -or $artifact.workflow_run.id -ne 42782916887 -or
-              $artifact.workflow_run.head_sha -ne '8cd5daa862417b823b8ba3c66cd58b717c39505a' -or
-              $artifact.name -ne 'multiwindow-test-bundle-8cd5daa862417b823b8ba3c66cd58b717c39505a' -or
-              $artifact.digest -ne 'sha256:e29bf9ca26833a7d43d492f921384a81b30eb823feff96ca132796e038565cf1') {
-            throw 'Unexpected artifact identity'
-          }
-      - uses: actions/download-artifact@v7
+      - uses: dart-lang/setup-dart@v1
         with:
-          github-token: ${{ github.token }}
-          run-id: 42782916887
-          artifact-ids: 13748457614
-          merge-multiple: true
-          path: build/replay
-      - name: Replay lifecycle and real chat drafts
-        shell: pwsh
-        run: ./tool/ci/windows_multiwindow_smoke.ps1 -Executable build/replay/baocode.exe -DiagnosticsDirectory build/diagnostics
-      - name: Keep synthetic failure evidence
-        if: failure()
-        uses: actions/upload-artifact@v6
-        with:
-          name: multiwindow-diagnostic-evidence-${{ github.sha }}
-          retention-days: 3
-          path: build/diagnostics/
+          sdk: '3.13.4'
+      - name: Compare exact original fixture lifecycle with explicit EOF
+        run: dart --disable-dart-dev tool/ci/diagnose_stdin_lock.dart
