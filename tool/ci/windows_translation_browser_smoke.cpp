@@ -5,6 +5,9 @@
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#if defined(BAOCODE_SCOPED_UIA_TIMING_TRACE)
+#include "windows_uia_numeric_trace.h"
+#endif
 
 namespace {
 HWND browser = nullptr;
@@ -337,9 +340,19 @@ void FocusDiagnostics() {
 #endif
 }
 int wmain(int argc, wchar_t** argv) {
+#if defined(BAOCODE_SCOPED_UIA_TIMING_TRACE)
+  const auto tool_mode = uia_numeric_trace::ToolMode(argc, argv);
+  if (tool_mode.has_value()) return *tool_mode;
+  const bool scoped_timing_trace = argc == 6 && std::wcscmp(argv[3], L"--scoped-timing-trace") == 0;
+  if (argc != 3 && !scoped_timing_trace) return 2;
+#else
   if (argc != 3) return 2;
+#endif
   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
   titleToken = argv[1];
+#if defined(BAOCODE_SCOPED_UIA_TIMING_TRACE)
+  std::printf("DEFAULT_EDGE_SCOPED_TIMING|enabled=%d|firstCaptureOnly=1|productionCaptureUnchanged=1\n", scoped_timing_trace ? 1 : 0);
+#endif
 #if defined(BAOCODE_CAPTURE_CLIENT_PRECREATE)
   std::puts("DEFAULT_EDGE_CAPTURE_VARIANT|client_lifetime_precreated_2s|deadlineMs=1500|rootCalls=0");
 #elif defined(BAOCODE_CAPTURE_TEST_PREPARED_CLIENT)
@@ -388,8 +401,29 @@ int wmain(int argc, wchar_t** argv) {
       // launch, Chromium accessibility flag, CDP, or script-created selection.
       translation_selection::CaptureDiagnostics diagnostics;
       const NativeFocusSnapshot before = ReadNativeFocus();
+      if ((before.source_gui_ok && before.source_gui.hwndCapture) ||
+          (before.foreground_gui_ok && before.foreground_gui.hwndCapture)) {
+        PrintNativeFocus(line ? "repeat" : "cold", "fixture_incomplete", before);
+        std::printf("DEFAULT_EDGE_FIXTURE_STATE|%s|mouseCaptureClear=0|classification=incomplete_mouse_operation|FAIL\n",
+            line ? "repeat" : "cold");
+        Check(false, "Fixture mouse operation has not ended; not a UIA capture result");
+      }
+#if defined(BAOCODE_SCOPED_UIA_TIMING_TRACE)
+      std::unique_ptr<uia_numeric_trace::CaptureTrace> timing_trace;
+      if (scoped_timing_trace && line == 0) {
+        Check(before.source_gui_ok && before.foreground_gui_ok, "Cannot verify native source before scoped trace");
+        timing_trace = std::make_unique<uia_numeric_trace::CaptureTrace>(browser, argv[4], argv[5]);
+        const auto ready = ReadNativeFocus();
+        Check(ready.source_gui_ok && ready.foreground_gui_ok &&
+            !ready.source_gui.hwndCapture && !ready.foreground_gui.hwndCapture,
+            "Fixture mouse operation incomplete immediately before traced capture");
+      }
+#endif
       POINT capture_pointer{}, after_pointer{};
       const bool have_pointer = GetCursorPos(&capture_pointer) != 0;
+#if defined(BAOCODE_SCOPED_UIA_TIMING_TRACE)
+      if (timing_trace) timing_trace->MarkCaptureStart();
+#endif
       const ULONGLONG capture_started = GetTickCount64();
 #if defined(BAOCODE_CAPTURE_TEST_PREPARED_CLIENT)
       Check(GetCurrentThreadId() == preparation.thread, "Prepared client crossed MTA threads");
@@ -397,6 +431,9 @@ int wmain(int argc, wchar_t** argv) {
           browser, true, nullptr, 0, &diagnostics, preparation.client.Get());
 #else
       const auto capture = translation_selection::Capture(browser, true, nullptr, 0, &diagnostics);
+#endif
+#if defined(BAOCODE_SCOPED_UIA_TIMING_TRACE)
+      if (timing_trace) timing_trace->MarkCaptureEnd();
 #endif
       const ULONGLONG capture_finished = GetTickCount64();
       const ULONGLONG capture_elapsed = capture_finished - capture_started;
@@ -415,6 +452,10 @@ int wmain(int argc, wchar_t** argv) {
 #endif
       const bool have_after_pointer = GetCursorPos(&after_pointer) != 0;
       const NativeFocusSnapshot after = ReadNativeFocus();
+#if defined(BAOCODE_SCOPED_UIA_TIMING_TRACE)
+      const bool timing_trace_valid = !timing_trace || timing_trace->Finish();
+      if (!timing_trace_valid) allPassed = false;
+#endif
       PrintNativeFocus(line ? "repeat" : "cold", "before", before);
       PrintNativeFocus(line ? "repeat" : "cold", "after", after);
       const auto print_attempt = [&](const char* phase, unsigned attempt,
@@ -501,6 +542,9 @@ int wmain(int argc, wchar_t** argv) {
       std::printf("DEFAULT_EDGE_CAPTURE|%s|status=%s|units=%zu|bounds=%d|copyProof=%d|placement=%s|%s\n",
         line ? "repeat" : "cold", capture.status.c_str(), capture.text.size(),
         capture.bounds.has_value() ? 1 : 0, capture.copy_proof.has_value() ? 1 : 0, placement, passed ? "PASS" : "FAIL");
+#if defined(BAOCODE_SCOPED_UIA_TIMING_TRACE)
+      Check(timing_trace_valid, "Scoped trace validation/cleanup failed; no further capture or provider diagnostics permitted");
+#endif
       if (!passed) {
         allPassed = false;
         if (!sourcePassed) SyntheticMismatch(capture.text, expected);

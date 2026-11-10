@@ -7,7 +7,10 @@ param(
   [switch]$SharedForegroundDiscoveryExperiment,
   [switch]$SharedForegroundMetadataExperiment,
   [switch]$ClientLifetimeControl,
-  [switch]$ClientLifetimePrecreate
+  [switch]$ClientLifetimePrecreate,
+  [switch]$ScopedTimingTraceSelfTest,
+  [switch]$ScopedTimingTrace,
+  [switch]$ScopedTimingTraceControl
 )
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or !$env:RUNNER_TEMP -or $env:OS -ne 'Windows_NT' -or $env:BAOCODE_DISPOSABLE_UI_TEST -ne '1') {
@@ -16,8 +19,9 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or !$env:RUNNER_TEMP -or $env:OS -ne 'Window
 $selectedModes = @(@($ForegroundConnectionExperiment, $ForegroundConnectionTimeoutContinuation,
   $SharedForegroundDiscoveryExperiment, $SharedForegroundMetadataExperiment) | Where-Object { $_ })
 $clientModes = @(@($ClientLifetimeControl, $ClientLifetimePrecreate) | Where-Object { $_ })
-if (($selectedModes.Count + $clientModes.Count) -gt 1) {
-  throw 'Choose only one diagnostic mode; client lifetime and root connection modes are mutually exclusive.'
+$traceModes = @(@($ScopedTimingTraceSelfTest, $ScopedTimingTrace, $ScopedTimingTraceControl) | Where-Object { $_ })
+if (($selectedModes.Count + $clientModes.Count + $traceModes.Count) -gt 1) {
+  throw 'Choose only one diagnostic mode; scoped tracing, client lifetime and root experiments are mutually exclusive.'
 }
 $output = [IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Force $output | Out-Null
@@ -43,6 +47,11 @@ $source = Join-Path $PSScriptRoot 'windows_translation_browser_smoke.cpp'
 $test = $null
 $browser = $null
 $testSucceeded = $false
+$verification = $null
+$traceReceipt = Join-Path $root 'timing-verification.bin'
+$traceVerifySessionId = if ($traceModes.Count -gt 0) { [guid]::NewGuid().ToString('B') } else { $null }
+$traceSessionId = if ($traceModes.Count -gt 0) { [guid]::NewGuid().ToString('B') } else { $null }
+
 Push-Location $root
 try {
   # For diagnostic comparisons only: avoid a second UIA call between a failed
@@ -75,8 +84,36 @@ try {
   if ($ClientLifetimePrecreate) {
     $diagnosticFlags += '/DBAOCODE_CAPTURE_CLIENT_PRECREATE=1'
   }
-  & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX @diagnosticFlags $source /Fe:browser_smoke.exe /link user32.lib advapi32.lib gdi32.lib dwmapi.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
+  $traceSources = @()
+  $traceLibraries = @()
+  if ($traceModes.Count -gt 0) {
+    $diagnosticFlags += @('/DBAOCODE_DISPOSABLE_UI_TEST_BUILD=1', '/DBAOCODE_SCOPED_UIA_TIMING_TRACE=1')
+    $traceSources = @((Join-Path $PSScriptRoot 'windows_uia_numeric_trace.cpp'))
+    $traceLibraries = @('tdh.lib', 'bcrypt.lib', 'version.lib')
+  }
+  & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX @diagnosticFlags $source @traceSources /Fe:browser_smoke.exe /link user32.lib advapi32.lib gdi32.lib dwmapi.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib @traceLibraries
   if ($LASTEXITCODE -ne 0) { throw 'Browser selection harness compilation failed' }
+  if ($traceModes.Count -gt 0) {
+    $schemaTest = Join-Path $PSScriptRoot 'windows_uia_numeric_schema_test.cpp'
+    & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /utf-8 $schemaTest /Fe:numeric_schema_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Numeric schema negative-test compilation failed' }
+    & (Join-Path $root 'numeric_schema_test.exe')
+    if ($LASTEXITCODE -ne 0) { throw 'Numeric schema negative tests failed' }
+    # No Edge is running yet. This mode only enables our own zero-payload probe
+    # provider and reads TDH metadata; it cannot enable the UIA provider.
+    $verification = Start-Process -FilePath (Join-Path $root 'browser_smoke.exe') -ArgumentList @('--verify-scoped-timing', "`"$traceReceipt`"", $traceVerifySessionId, $traceSessionId) -PassThru -NoNewWindow
+    if (!$verification.WaitForExit(45000)) {
+      Stop-Process -InputObject $verification -Force
+      throw 'Scoped timing filter/schema verification timed out; UIA tracing remains disabled'
+    }
+    if ($verification.ExitCode -ne 0) { throw 'Scoped timing filter/schema verification failed; UIA tracing remains disabled' }
+    if ($ScopedTimingTraceSelfTest) {
+      Write-Host 'SCOPED_TIMING_SELFTEST_COMPLETE|edgeStarted=0|uiaSessionStarted=0'
+      $testSucceeded = $true
+      return
+    }
+  }
+
   $url = ([Uri]$html).AbsoluteUri
   # Normal installed Edge, isolated profile and local page. No forced renderer
   # accessibility, UIA feature overrides, CDP, remote debugging, extensions or login.
@@ -87,7 +124,14 @@ try {
     Write-Host ("DEFAULT_EDGE_CLIENT_EDGE_START|tick={0}" -f [Environment]::TickCount64)
   }
   $browser = Start-Process -FilePath $edge -ArgumentList $arguments -PassThru
-  $test = Start-Process -FilePath (Join-Path $root 'browser_smoke.exe') -ArgumentList @($token, "`"$output`"") -PassThru -NoNewWindow
+  $testArguments = @($token, "`"$output`"")
+  if ($ScopedTimingTraceControl) {
+    Write-Host "SCOPED_TIMING_CONTROL|samePreflight=1|uiaSessionStarted=0|extraWait=0"
+  }
+  if ($ScopedTimingTrace) {
+    $testArguments += @('--scoped-timing-trace', "`"$traceReceipt`"", $traceSessionId)
+  }
+  $test = Start-Process -FilePath (Join-Path $root 'browser_smoke.exe') -ArgumentList $testArguments -PassThru -NoNewWindow
   if (!$test.WaitForExit(60000)) { throw 'Default Edge selection smoke timed out' }
   if ($test.ExitCode -ne 0) { throw "Default Edge selection smoke failed: $($test.ExitCode). Do not claim browser support from RichEdit coverage." }
   $testSucceeded = $true
@@ -112,6 +156,21 @@ try {
       if (!$test.HasExited) {
         try { Stop-Process -InputObject $test -Force -ErrorAction Stop }
         catch { $test.Refresh(); if (!$test.HasExited) { throw } }
+      }
+    }
+    # Exact invocation-generated identities only, including crash/timeout paths.
+    # The native cleanup tool queries and verifies both GUID and name; it never
+    # enumerates sessions or stops other tracing sessions.
+    if ($traceModes.Count -gt 0 -and (Test-Path -LiteralPath (Join-Path $root 'browser_smoke.exe'))) {
+      foreach ($ownedSessionId in @($traceVerifySessionId, $traceSessionId) | Where-Object { $_ }) {
+        $cleanup = Start-Process -FilePath (Join-Path $root 'browser_smoke.exe') -ArgumentList @('--cleanup-scoped-timing', $ownedSessionId) -PassThru -NoNewWindow
+        try {
+          if (!$cleanup.WaitForExit(10000)) {
+            Stop-Process -InputObject $cleanup -Force
+            throw 'Own-session cleanup timed out'
+          }
+          if ($cleanup.ExitCode -ne 0) { throw 'Own-session cleanup did not verify successful stop' }
+        } finally { $cleanup.Dispose() }
       }
     }
     # Revalidate each PID immediately before killing it. Closing the browser
@@ -146,6 +205,7 @@ try {
     if ($testSucceeded) { throw }
     Write-Warning "Browser cleanup also failed; preserving the primary test failure: $_"
   } finally {
+    if ($verification) { $verification.Dispose() }
     if ($test) { $test.Dispose() }
     if ($browser) { $browser.Dispose() }
     Pop-Location

@@ -1,54 +1,22 @@
-# Read-only provider metadata inventory. Never starts a trace or reads events.
-name: Inspect Windows UIA event schema
+# Guard verification only. No UIA tracing or Edge launch is allowed here.
+name: Verify scoped UIA timing guards
 on:
   push:
     branches: ['validation/windows-new-window-diagnostics']
 permissions:
   contents: read
 jobs:
-  metadata:
+  selftest:
     if: github.repository == 'jiah0231/baocode'
     runs-on: windows-2025
-    timeout-minutes: 5
+    timeout-minutes: 10
+    env:
+      BAOCODE_DISPOSABLE_UI_TEST: '1'
     steps:
-      - name: Enumerate UIA provider metadata without collecting events
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Verify private probe filters and reviewed numeric schema only
         shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          Write-Host ("OS_BUILD|" + [Environment]::OSVersion.Version)
-          $providers = @(& logman.exe query providers)
-          if ($LASTEXITCODE -ne 0) { throw 'Provider enumeration failed' }
-          $matches = @($providers | Where-Object { $_ -match '(?i)UIAutomation|Accessibility' })
-          Write-Host "UIA_PROVIDER_METADATA_BEGIN"
-          $matches | ForEach-Object { Write-Host $_ }
-          foreach ($line in $matches) {
-            if ($line -match '^\s*(.+?)\s+(\{[0-9a-fA-F-]+\})\s*$') {
-              $name = $Matches[1].Trim()
-              Write-Host "PROVIDER_KEYWORDS_BEGIN|$name"
-              & logman.exe query providers $name
-              Write-Host "PROVIDER_KEYWORDS_END|$name|exit=$LASTEXITCODE"
-            }
-          }
-          $publishers = @(& wevtutil.exe ep)
-          if ($LASTEXITCODE -ne 0) { throw 'Publisher enumeration failed' }
-          $names = @($publishers | Where-Object { $_ -match '(?i)UIAutomation|Accessibility' })
-          Write-Host ("PUBLISHER_MATCHES|" + $names.Count)
-          foreach ($name in $names) {
-            Write-Host "PUBLISHER_SCHEMA_BEGIN|$name"
-            & wevtutil.exe gp $name /ge:true /gm:true /f:xml
-            Write-Host "PUBLISHER_SCHEMA_END|$name|exit=$LASTEXITCODE"
-          }
-          $provider = Get-WinEvent -ListProvider 'Microsoft-Windows-UIAutomationCore'
-          $ids = @(1..5) + @(211..230) + @(509..547) + @(701..702)
-          foreach ($event in @($provider.Events | Where-Object { $ids -contains $_.Id })) {
-            $record = [ordered]@{
-              id = $event.Id
-              version = $event.Version
-              task = $event.Task.Name
-              opcode = $event.Opcode.Name
-              template = $event.Template
-            }
-            Write-Host ("EVENT_PAYLOAD_TEMPLATE|" + ($record | ConvertTo-Json -Compress -Depth 5))
-          }
-          Write-Host "READ_ONLY_METADATA_COMPLETE|no_trace_started=1|no_events_read=1"
-          $global:LASTEXITCODE = 0
+        run: ./tool/ci/windows_translation_browser_smoke.ps1 -ScopedTimingTraceSelfTest -SkipPostFailureUiaDiagnostics
