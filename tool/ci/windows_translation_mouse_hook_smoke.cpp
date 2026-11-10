@@ -1,5 +1,5 @@
 // Real WH_MOUSE_LL regression, not a source-string assertion. Run ONLY on an
-// explicitly enabled disposable Windows CI desktop: it injects zero-delta wheel
+// explicitly enabled disposable Windows CI desktop: it injects wheel
 // input. The owning UI thread never pumps messages while the probes execute.
 #include "../../windows/runner/translation_mouse_hook.h"
 #include <algorithm>
@@ -14,6 +14,7 @@ bool Inject(DWORD timestamp) {
   INPUT input{};
   input.type = INPUT_MOUSE;
   input.mi.dwFlags = MOUSEEVENTF_WHEEL;
+  input.mi.mouseData = WHEEL_DELTA;
   input.mi.time = timestamp;
   return SendInput(1, &input, sizeof(input)) == 1;
 }
@@ -48,6 +49,8 @@ int NegativeControl() {
   const bool inserted = injection.get();
   UnhookWindowsHookEx(hook);
   const ULONGLONG seen = control_seen.load();
+  std::printf("HOOK_CONTROL_CHECK|blocked=%d|inserted=%d|seen=%llu|began=%llu\n",
+      blocked ? 1 : 0, inserted ? 1 : 0, seen, began.load());
   if (!blocked || !inserted || !seen || seen - began.load() < 150) return 11;
   std::printf("HOOK_UI_THREAD_CONTROL|blockedMs=%llu\n", seen - began.load());
   return 0;
@@ -72,7 +75,7 @@ int Probe(translation_mouse::Hook& hook) {
       }
       if (!seen) Sleep(1);
     }
-    if (!seen) return 4;
+    if (!seen) { std::printf("HOOK_PROBE_TIMEOUT|probe=%lu|elapsedMs=%lu\n", i, GetTickCount() - began); return 4; }
     worst = (std::max)(worst, GetTickCount() - began);
     Sleep(10);
   }
