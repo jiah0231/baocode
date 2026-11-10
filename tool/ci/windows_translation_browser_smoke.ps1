@@ -5,7 +5,9 @@ param(
   [switch]$ForegroundConnectionExperiment,
   [switch]$ForegroundConnectionTimeoutContinuation,
   [switch]$SharedForegroundDiscoveryExperiment,
-  [switch]$SharedForegroundMetadataExperiment
+  [switch]$SharedForegroundMetadataExperiment,
+  [switch]$ClientLifetimeControl,
+  [switch]$ClientLifetimePrecreate
 )
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or !$env:RUNNER_TEMP -or $env:OS -ne 'Windows_NT' -or $env:BAOCODE_DISPOSABLE_UI_TEST -ne '1') {
@@ -13,8 +15,9 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or !$env:RUNNER_TEMP -or $env:OS -ne 'Window
 }
 $selectedModes = @(@($ForegroundConnectionExperiment, $ForegroundConnectionTimeoutContinuation,
   $SharedForegroundDiscoveryExperiment, $SharedForegroundMetadataExperiment) | Where-Object { $_ })
-if ($selectedModes.Count -gt 1) {
-  throw 'Choose only one foreground connection diagnostic mode.'
+$clientModes = @(@($ClientLifetimeControl, $ClientLifetimePrecreate) | Where-Object { $_ })
+if (($selectedModes.Count + $clientModes.Count) -gt 1) {
+  throw 'Choose only one diagnostic mode; client lifetime and root connection modes are mutually exclusive.'
 }
 $output = [IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Force $output | Out-Null
@@ -65,6 +68,13 @@ try {
     $diagnosticFlags += '/DBAOCODE_CAPTURE_FOREGROUND_METADATA_BUDGET=1'
     Write-Host 'Diagnostic root connection uses 150/200 ms connection/transaction settings, not a whole-call timeout guarantee.'
   }
+  if ($clientModes.Count -gt 0) {
+    $diagnosticFlags += @('/DBAOCODE_DISPOSABLE_UI_TEST_BUILD=1', '/DBAOCODE_CAPTURE_TEST_PREPARED_CLIENT=1')
+    Write-Host 'Client lifetime experiment: same MTA, matched two-second wait before real drag, no root connection experiment.'
+  }
+  if ($ClientLifetimePrecreate) {
+    $diagnosticFlags += '/DBAOCODE_CAPTURE_CLIENT_PRECREATE=1'
+  }
   & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX @diagnosticFlags $source /Fe:browser_smoke.exe /link user32.lib advapi32.lib gdi32.lib dwmapi.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
   if ($LASTEXITCODE -ne 0) { throw 'Browser selection harness compilation failed' }
   $url = ([Uri]$html).AbsoluteUri
@@ -73,6 +83,9 @@ try {
   # Background networking is disabled, HTTP(S) uses an unused loopback proxy,
   # and the local HTML has a restrictive CSP. No external origin is requested.
   $arguments = @("--user-data-dir=`"$profile`"", '--no-first-run', '--no-default-browser-check', '--disable-background-networking', '--disable-sync', '--disable-component-update', '--proxy-server=http://127.0.0.1:9', '--proxy-bypass-list=<-loopback>', '--window-size=1100,650', '--window-position=40,40', "--app=`"$url`"")
+  if ($clientModes.Count -gt 0) {
+    Write-Host ("DEFAULT_EDGE_CLIENT_EDGE_START|tick={0}" -f [Environment]::TickCount64)
+  }
   $browser = Start-Process -FilePath $edge -ArgumentList $arguments -PassThru
   $test = Start-Process -FilePath (Join-Path $root 'browser_smoke.exe') -ArgumentList @($token, "`"$output`"") -PassThru -NoNewWindow
   if (!$test.WaitForExit(60000)) { throw 'Default Edge selection smoke timed out' }

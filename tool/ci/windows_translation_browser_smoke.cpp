@@ -232,6 +232,66 @@ bool VerifyPointerPlacement(const char* selection, POINT pointer, UINT dpi) {
       panel.left, panel.top, panel.right, panel.bottom, passed ? "PASS" : "FAIL");
   return passed;
 }
+#if defined(BAOCODE_CAPTURE_TEST_PREPARED_CLIENT)
+// This harness thread owns no application windows. Both arms enter the same
+// MTA before the common wait; only treatment creates a client during the wait.
+class ClientLifetimePreparation {
+ public:
+  ClientLifetimePreparation() {
+    thread = GetCurrentThreadId();
+    overall_started = GetTickCount64();
+    initialized_ = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    com_elapsed = GetTickCount64() - overall_started;
+  }
+  ~ClientLifetimePreparation() {
+    client.Reset();  // Release the client on its creating MTA before COM teardown.
+    if (SUCCEEDED(initialized_)) CoUninitialize();
+  }
+  ClientLifetimePreparation(const ClientLifetimePreparation&) = delete;
+  ClientLifetimePreparation& operator=(const ClientLifetimePreparation&) = delete;
+  void Prepare() {
+    Check(SUCCEEDED(initialized_), "Client lifetime experiment could not initialize MTA");
+    wait_started = GetTickCount64();
+    const ULONGLONG wait_deadline = wait_started + 2000;
+    HRESULT created = S_FALSE;
+#if defined(BAOCODE_CAPTURE_CLIENT_PRECREATE)
+    const ULONGLONG create_started = GetTickCount64();
+    // No elements, properties, events, patterns, timeout setters or provider
+    // calls before the user-triggered Capture. Only the client is constructed.
+    created = CoCreateInstance(CLSID_CUIAutomation8, nullptr,
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&client));
+    create_elapsed = GetTickCount64() - create_started;
+#endif
+    const ULONGLONG preparation_finished = GetTickCount64();
+    const bool aligned = preparation_finished <= wait_deadline;
+    std::printf("DEFAULT_EDGE_CLIENT_PREPARATION|thread=%lu|overallStartTick=%llu|waitStartTick=%llu|comMs=%llu|comHR=0x%08lX|createMs=%llu|createHR=0x%08lX|clientCreated=%d|creationWithinWait=%d\n",
+        thread, overall_started, wait_started, com_elapsed,
+        static_cast<unsigned long>(initialized_), create_elapsed,
+        static_cast<unsigned long>(created), client ? 1 : 0, aligned ? 1 : 0);
+    if (!aligned) {
+      std::puts("DEFAULT_EDGE_CLIENT_EXPERIMENT|INVALID|reason=creation_exceeded_matched_wait");
+      Check(false, "Client creation exceeded the matched two-second wait; experiment invalid");
+    }
+#if defined(BAOCODE_CAPTURE_CLIENT_PRECREATE)
+    if (FAILED(created) || !client) {
+      std::puts("DEFAULT_EDGE_CLIENT_EXPERIMENT|INVALID|reason=client_creation_failed");
+      Check(false, "Prepared client unavailable; refusing to substitute another client");
+    }
+#endif
+    while (GetTickCount64() < wait_deadline) Sleep(5);
+    wait_finished = GetTickCount64();
+    std::printf("DEFAULT_EDGE_CLIENT_WAIT|startTick=%llu|endTick=%llu|elapsedMs=%llu|requestedMs=2000|phase=before_real_drag\n",
+        wait_started, wait_finished, wait_finished - wait_started);
+    Check(GetForegroundWindow() == browser, "Foreground changed during matched client preparation");
+  }
+  Microsoft::WRL::ComPtr<IUIAutomation> client;
+  DWORD thread = 0;
+  ULONGLONG overall_started = 0, wait_started = 0, wait_finished = 0;
+  ULONGLONG com_elapsed = 0, create_elapsed = 0;
+ private:
+  HRESULT initialized_ = E_FAIL;
+};
+#endif
 #if !defined(BAOCODE_SKIP_POST_FAILURE_UIA_DIAGNOSTICS)
 void FocusDiagnostics() {
   const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -280,7 +340,11 @@ int wmain(int argc, wchar_t** argv) {
   if (argc != 3) return 2;
   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
   titleToken = argv[1];
-#if defined(BAOCODE_CAPTURE_FOREGROUND_METADATA_BUDGET)
+#if defined(BAOCODE_CAPTURE_CLIENT_PRECREATE)
+  std::puts("DEFAULT_EDGE_CAPTURE_VARIANT|client_lifetime_precreated_2s|deadlineMs=1500|rootCalls=0");
+#elif defined(BAOCODE_CAPTURE_TEST_PREPARED_CLIENT)
+  std::puts("DEFAULT_EDGE_CAPTURE_VARIANT|client_lifetime_control_2s|deadlineMs=1500|rootCalls=0");
+#elif defined(BAOCODE_CAPTURE_FOREGROUND_METADATA_BUDGET)
   std::puts("DEFAULT_EDGE_CAPTURE_VARIANT|shared_root_150_200|deadlineMs=1500|discoveryLimit=4");
 #elif defined(BAOCODE_CAPTURE_FOREGROUND_SHARED_DISCOVERY)
   std::puts("DEFAULT_EDGE_CAPTURE_VARIANT|shared_root_300_500|deadlineMs=1500|discoveryLimit=4");
@@ -313,6 +377,10 @@ int wmain(int argc, wchar_t** argv) {
     Check(SetClipboardData(CF_UNICODETEXT, memory) != nullptr, "Clipboard seed failed"); CloseClipboard();
     const DWORD sequence = GetClipboardSequenceNumber();
     bool allPassed = true;
+#if defined(BAOCODE_CAPTURE_TEST_PREPARED_CLIENT)
+    ClientLifetimePreparation preparation;
+    preparation.Prepare();  // Native fixture ready; NO DragLine/UIA capture yet.
+#endif
     for (int line = 0; line < 2; ++line) {
       DragLine(line);
       Check(GetForegroundWindow() == browser, "Drag changed browser foreground");
@@ -323,8 +391,28 @@ int wmain(int argc, wchar_t** argv) {
       POINT capture_pointer{}, after_pointer{};
       const bool have_pointer = GetCursorPos(&capture_pointer) != 0;
       const ULONGLONG capture_started = GetTickCount64();
+#if defined(BAOCODE_CAPTURE_TEST_PREPARED_CLIENT)
+      Check(GetCurrentThreadId() == preparation.thread, "Prepared client crossed MTA threads");
+      const auto capture = translation_selection::Capture(
+          browser, true, nullptr, 0, &diagnostics, preparation.client.Get());
+#else
       const auto capture = translation_selection::Capture(browser, true, nullptr, 0, &diagnostics);
-      const ULONGLONG capture_elapsed = GetTickCount64() - capture_started;
+#endif
+      const ULONGLONG capture_finished = GetTickCount64();
+      const ULONGLONG capture_elapsed = capture_finished - capture_started;
+#if defined(BAOCODE_CAPTURE_TEST_PREPARED_CLIENT)
+      std::printf("DEFAULT_EDGE_CLIENT_RESULT|%s|thread=%lu|captureStartTick=%llu|captureEndTick=%llu|captureMs=%llu|fromCommonBaseMs=%llu|overallPreparationToResultMs=%llu|createMs=%llu|preparedClientUsed=%d|rootCalled=%d\n",
+          line ? "repeat" : "cold", GetCurrentThreadId(), capture_started, capture_finished,
+          capture_elapsed, capture_finished - preparation.wait_started,
+          capture_finished - preparation.overall_started, preparation.create_elapsed,
+          diagnostics.prepared_client_used ? 1 : 0, diagnostics.foreground_connection.completed ? 1 : 0);
+      Check(!diagnostics.foreground_connection.completed, "Client lifetime experiment unexpectedly connected a root");
+#if defined(BAOCODE_CAPTURE_CLIENT_PRECREATE)
+      Check(diagnostics.prepared_client_used, "Capture did not reuse the exact prepared client");
+#else
+      Check(!diagnostics.prepared_client_used, "Control unexpectedly used a prepared client");
+#endif
+#endif
       const bool have_after_pointer = GetCursorPos(&after_pointer) != 0;
       const NativeFocusSnapshot after = ReadNativeFocus();
       PrintNativeFocus(line ? "repeat" : "cold", "before", before);
@@ -339,7 +427,8 @@ int wmain(int argc, wchar_t** argv) {
             record.transaction_ms, static_cast<unsigned long>(record.result));
       };
       print_attempt("com_initialize", 1, diagnostics.com_initialize);
-      print_attempt("automation_create", 1, diagnostics.automation_create);
+      print_attempt(diagnostics.prepared_client_used ? "automation_adopt" : "automation_create",
+          1, diagnostics.automation_create);
       print_attempt("foreground_connection", 1, diagnostics.foreground_connection);
       std::printf("DEFAULT_EDGE_CONNECTION_POLICY|%s|timeoutContinued=%d|initialDiscoveryCalls=%u\n",
           line ? "repeat" : "cold", diagnostics.foreground_connection_timeout_continued ? 1 : 0,

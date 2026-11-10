@@ -25,6 +25,19 @@
 #error Metadata root budget requires shared discovery accounting.
 #endif
 
+#if defined(BAOCODE_CAPTURE_TEST_PREPARED_CLIENT) && \
+    !defined(BAOCODE_DISPOSABLE_UI_TEST_BUILD)
+#error Prepared client injection requires a disposable native test build.
+#endif
+#if defined(BAOCODE_CAPTURE_TEST_PREPARED_CLIENT) && \
+    defined(BAOCODE_CAPTURE_FOREGROUND_CONNECTION_EXPERIMENT)
+#error Client lifetime and foreground connection experiments must not be combined.
+#endif
+#if defined(BAOCODE_CAPTURE_CLIENT_PRECREATE) && \
+    !defined(BAOCODE_CAPTURE_TEST_PREPARED_CLIENT)
+#error Client precreation requires the prepared client diagnostic experiment.
+#endif
+
 namespace translation_selection {
 // Optional test diagnostics contain only operation names/HRESULTs, never text.
 struct FocusAttemptDiagnostics {
@@ -40,6 +53,7 @@ struct CaptureDiagnostics {
   unsigned attempts = 0;
   unsigned final_attempts = 0;
   unsigned initial_discovery_calls = 0;
+  bool prepared_client_used = false;
   FocusAttemptDiagnostics com_initialize, automation_create, foreground_connection;
   bool foreground_connection_timeout_continued = false;
   FocusAttemptDiagnostics focus_attempts[translation_retry::kMaxAttempts];
@@ -144,7 +158,11 @@ inline void RejectEmbeddedNull(Selection& selection) {
 inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
                          const std::atomic<bool>* canceled = nullptr,
                          ULONGLONG deadline = 0,
-                         CaptureDiagnostics* diagnostics = nullptr) {
+                         CaptureDiagnostics* diagnostics = nullptr
+#if defined(BAOCODE_CAPTURE_TEST_PREPARED_CLIENT)
+                         , IUIAutomation* prepared_client = nullptr
+#endif
+                         ) {
   if (diagnostics) *diagnostics = CaptureDiagnostics{};
   const ULONGLONG diagnostic_started = diagnostics ? GetTickCount64() : 0;
   DWORD diagnostic_connection_ms = 0, diagnostic_transaction_ms = 0;
@@ -195,8 +213,22 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
     ComPtr<IUIAutomation> automation;
     auto* create_record = diagnostics ? &diagnostics->automation_create : nullptr;
     start_diagnostic(create_record);
+#if defined(BAOCODE_CAPTURE_TEST_PREPARED_CLIENT)
+    // Test-only injection. The caller creates, retains and uses this exact
+    // client on the same MTA thread. No source element is passed or cached.
+    HRESULT created = S_OK;
+    if (prepared_client) {
+      automation = prepared_client;  // AddRef the SAME client, not a replacement.
+      if (diagnostics) diagnostics->prepared_client_used =
+          automation.Get() == prepared_client;
+    } else {
+      created = CoCreateInstance(CLSID_CUIAutomation8, nullptr,
+          CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&automation));
+    }
+#else
     const HRESULT created = CoCreateInstance(CLSID_CUIAutomation8, nullptr,
         CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&automation));
+#endif
     finish_diagnostic(create_record, created);
     if (SUCCEEDED(created)) {
       ComPtr<IUIAutomation2> bounded;

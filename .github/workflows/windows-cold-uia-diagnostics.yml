@@ -1,5 +1,5 @@
-# Same-request focused-window experiment; original strict gates remain intact.
-name: Windows cold UIA entry comparison
+# Matched-delay client lifetime experiment; no target queries occur before capture.
+name: Windows cold UIA client lifetime comparison
 on:
   push:
     branches: ['validation/windows-new-window-diagnostics']
@@ -13,8 +13,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [baseline, shared_300_500, shared_150_200]
-        replica: [1, 2, 3, 4, 5, 6]
+        replica: [1, 2, 3, 4, 5, 6, 7, 8]
+        mode: [control, precreate]
     env:
       BAOCODE_DISPOSABLE_UI_TEST: '1'
     steps:
@@ -30,9 +30,9 @@ jobs:
             $case = $_
             Write-Host "ENTRY_CASE_BEGIN|mode=${{ matrix.mode }}|replica=${{ matrix.replica }}|case=$case"
             try {
-              $shared = '${{ matrix.mode }}' -eq 'shared_300_500'
-              $metadata = '${{ matrix.mode }}' -eq 'shared_150_200'
-              ./tool/ci/windows_translation_browser_smoke.ps1 -OutputDirectory "build/entry/case-$case" -SkipPostFailureUiaDiagnostics -SharedForegroundDiscoveryExperiment:$shared -SharedForegroundMetadataExperiment:$metadata
+              $control = '${{ matrix.mode }}' -eq 'control'
+              $precreate = '${{ matrix.mode }}' -eq 'precreate'
+              ./tool/ci/windows_translation_browser_smoke.ps1 -OutputDirectory "build/entry/case-$case" -SkipPostFailureUiaDiagnostics -ClientLifetimeControl:$control -ClientLifetimePrecreate:$precreate
               Write-Host "ENTRY_CASE_END|case=$case|result=success"
             } catch {
               $failures++
@@ -42,7 +42,7 @@ jobs:
           Write-Host "ENTRY_MATRIX_SUMMARY|mode=${{ matrix.mode }}|replica=${{ matrix.replica }}|total=3|failures=$failures"
           if ($failures -ne 0) { throw "$failures strict captures failed; no failure converted to success" }
       - name: Verify native policy and protection regressions after cold measurement
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.replica == 1 }}
         shell: pwsh
         run: ./tool/ci/windows_translation_smoke.ps1
       - name: Preserve synthetic mismatch evidence
