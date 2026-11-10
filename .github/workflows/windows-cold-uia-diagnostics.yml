@@ -38,5 +38,17 @@ jobs:
             & wevtutil.exe gp $name /ge:true /gm:true /f:xml
             Write-Host "PUBLISHER_SCHEMA_END|$name|exit=$LASTEXITCODE"
           }
+          $provider = Get-WinEvent -ListProvider 'Microsoft-Windows-UIAutomationCore'
+          $ids = @(1..5) + @(211..230) + @(509..547) + @(701..702)
+          foreach ($event in @($provider.Events | Where-Object { $ids -contains $_.Id })) {
+            $record = [ordered]@{
+              id = $event.Id
+              version = $event.Version
+              task = $event.Task.Name
+              opcode = $event.Opcode.Name
+              template = $event.Template
+            }
+            Write-Host ("EVENT_PAYLOAD_TEMPLATE|" + ($record | ConvertTo-Json -Compress -Depth 5))
+          }
           Write-Host "READ_ONLY_METADATA_COMPLETE|no_trace_started=1|no_events_read=1"
           $global:LASTEXITCODE = 0
