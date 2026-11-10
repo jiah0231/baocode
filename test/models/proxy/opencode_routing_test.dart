@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:baocode/models/model_provider.dart';
 import 'package:baocode/models/proxy/model_proxy.dart';
 import 'package:baocode/models/upstream.dart';
@@ -6,6 +8,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'model_proxy_test.dart' show FakeUpstream, post;
 
 void main() {
+  setUp(() {
+    // These tests exercise real loopback sockets, not the widget binding's
+    // HttpClient mock, which returns 400 without reaching either server.
+    final previousOverrides = HttpOverrides.current;
+    HttpOverrides.global = null;
+    addTearDown(() => HttpOverrides.global = previousOverrides);
+  });
+
   for (final go in [false, true]) {
     for (final protocol in [
       ProviderProtocol.anthropic,
@@ -65,7 +75,7 @@ void main() {
               for (final name in openCodeUntold) name: 'original-session',
             },
           );
-          expect(answer.status, 200);
+          expect(answer.status, 200, reason: answer.text);
           final sent = upstream.requests.single;
           expect((sent.body! as Map).containsKey('tools'), isFalse);
           for (final name in openCodeUntold) {
@@ -112,18 +122,21 @@ void main() {
           'parameters': {'type': 'object'},
         },
       ];
-      await post(
+      final populated = await post(
         uri,
         {'model': 'm', 'input': 'hello', 'tools': tools},
         headers: {'authorization': 'Bearer synthetic-token'},
       );
-      expect((upstream.requests.last.body! as Map)['tools'], tools);
+      expect(populated.status, 200, reason: populated.text);
+      expect((upstream.requests.single.body! as Map)['tools'], tools);
       provider = provider.copyWith(baseUrl: 'http://other.example/v1');
-      await post(
+      final empty = await post(
         uri,
         {'model': 'm', 'input': 'hello', 'tools': []},
         headers: {'authorization': 'Bearer synthetic-token'},
       );
+      expect(empty.status, 200, reason: empty.text);
+      expect(upstream.requests, hasLength(2));
       expect((upstream.requests.last.body! as Map)['tools'], isEmpty);
     },
   );

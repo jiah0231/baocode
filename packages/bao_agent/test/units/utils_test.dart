@@ -181,23 +181,33 @@ void main() {
         for (final f in files) p.relative(f.path, from: root.path): f,
       };
       expect(byName.keys, [
-        'home/.claude/CLAUDE.md',
-        'home/.claude/rules/style.md',
-        'work/CLAUDE.md',
-        'work/app/CLAUDE.md',
+        p.join('home', '.claude', 'CLAUDE.md'),
+        p.join('home', '.claude', 'rules', 'style.md'),
+        p.join('work', 'CLAUDE.md'),
+        p.join('work', 'app', 'CLAUDE.md'),
         // What a file imports comes after it, a file of its own.
-        'work/app/docs/more.md',
-        'work/app/docs/deeper.md',
-        'work/app/.claude/rules/dart.md',
-        'work/app/CLAUDE.local.md',
+        p.join('work', 'app', 'docs', 'more.md'),
+        p.join('work', 'app', 'docs', 'deeper.md'),
+        p.join('work', 'app', '.claude', 'rules', 'dart.md'),
+        p.join('work', 'app', 'CLAUDE.local.md'),
       ]);
-      expect(byName['home/.claude/CLAUDE.md']!.type, MemoryType.user);
-      expect(byName['work/app/CLAUDE.local.md']!.type, MemoryType.local);
-      final app = byName['work/app/CLAUDE.md']!.content;
+      expect(
+        byName[p.join('home', '.claude', 'CLAUDE.md')]!.type,
+        MemoryType.user,
+      );
+      expect(
+        byName[p.join('work', 'app', 'CLAUDE.local.md')]!.type,
+        MemoryType.local,
+      );
+      final app = byName[p.join('work', 'app', 'CLAUDE.md')]!.content;
       expect(app, contains('See @docs/more.md'));
       expect(app, contains('`@not/this.md`'));
-      expect(byName['work/app/docs/deeper.md']!.content, 'Deepest.');
-      final rule = byName['work/app/.claude/rules/dart.md']!;
+      expect(
+        byName[p.join('work', 'app', 'docs', 'deeper.md')]!.content,
+        'Deepest.',
+      );
+      final rule =
+          byName[p.join('work', 'app', '.claude', 'rules', 'dart.md')]!;
       expect(rule.conditional, isTrue);
       final cwd = p.join(root.path, 'work', 'app');
       expect(MemoryLoader.rulesFor(files, p.join(cwd, 'lib', 'a.dart'), cwd), [
@@ -307,9 +317,10 @@ void main() {
       expect(settings.rules.last.source, SettingsSource.session);
       settings.applyFlag({'model': 'haiku'});
       expect(settings.model, 'haiku');
-      settings.addDirectories(['/extra'], SettingsSource.local);
+      final extra = p.normalize('/extra');
+      settings.addDirectories([extra], SettingsSource.local);
       settings.reload();
-      expect(settings.additionalDirectories, contains('/extra'));
+      expect(settings.additionalDirectories, contains(extra));
       expect(SettingsSource.parse('localSettings'), SettingsSource.local);
       expect(SettingsSource.parse('nope'), isNull);
     });
@@ -426,6 +437,17 @@ void main() {
       expect(windows({}, {}).executable, 'cmd.exe');
     });
 
+    test('Git Bash reports the physical cwd in native Windows form', () {
+      final bash = windows(
+        {'CLAUDE_CODE_GIT_BASH_PATH': r'D:\git\bash.exe'},
+        {r'D:\git\bash.exe'},
+      );
+      final args = bash.arguments('cd sub', r'C:\Temp\cwd');
+      expect(args[1], contains(r'cygpath -w -- "$(pwd -P)"'));
+      expect(args[1], endsWith(r' >| "$2" 2>/dev/null; exit $__bao_status'));
+      expect(args.sublist(3), ['cd sub', r'C:\Temp\cwd']);
+    });
+
     test('elsewhere: the user\'s bash or zsh, else bash, else sh', () {
       Shell find(Map<String, String> env, Set<String> files) =>
           Shell.find(env, windows: false, exists: files.contains);
@@ -439,6 +461,8 @@ void main() {
       );
       expect(find({}, {}).executable, '/bin/sh');
       final bash = find({}, {'/bin/bash'});
+      expect(bash.arguments('ls', '/tmp/cwd')[1], isNot(contains('cygpath')));
+      expect(bash.arguments('ls', '/tmp/cwd')[1], contains('pwd -P'));
       expect(bash.arguments('ls', '/tmp/cwd'), [
         '-c',
         isA<String>(),
