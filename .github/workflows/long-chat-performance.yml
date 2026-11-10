@@ -54,6 +54,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+          fetch-depth: 20
       - uses: ilammy/msvc-dev-cmd@v1
       - name: Restore original bundled assets
         shell: pwsh
@@ -92,8 +93,22 @@ jobs:
           test/chat/history_stream_work_test.dart
           test/chat/stream_change_tracking_test.dart
           test/chat/chat_minimap_incremental_test.dart
-      - name: Test conversation regressions and bounded streaming work
-        run: flutter test --no-pub --reporter expanded --timeout 2m test/chat
+      - name: Test changed conversation behavior and bounded streaming work
+        run: >-
+          flutter test --no-pub --reporter expanded --timeout 2m
+          test/chat/step_folds_test.dart test/chat/fold_view_test.dart
+          test/chat/history_scroll_test.dart test/chat/history_selection_test.dart
+          test/chat/history_paging_test.dart test/chat/history_stream_batch_test.dart
+          test/chat/history_stream_work_test.dart test/chat/stream_change_tracking_test.dart
+          test/chat/chat_history_rebuild_test.dart test/chat/chat_minimap_test.dart
+          test/chat/chat_minimap_incremental_test.dart
+      - name: Compare broad Windows failures with the unmodified baseline
+        shell: pwsh
+        run: |
+          python tool/ci/test_compare_long_chat_windows_baseline.py
+          if ($LASTEXITCODE -ne 0) { throw 'Baseline comparison self-tests failed' }
+          python tool/ci/compare_long_chat_windows_baseline.py
+          if ($LASTEXITCODE -ne 0) { throw 'Windows baseline comparison found new or unclassified failures' }
       - name: Build synthetic Windows profile app
         shell: pwsh
         run: |

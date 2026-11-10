@@ -48,9 +48,17 @@ events through the production dedicated hook while the UI thread does not pump
 messages. It also checks a bounded flood, single pending wake, and repeated
 installation/destruction. It does not inject input on the user's desktop.
 
-The dedicated workflow also runs the conversation test directory and builds the
-real app in profile mode for synthetic `chat.long_history` and
-`a11y.long_history` scenarios. Their JSON, logs and report are CI artifacts.
+The full conversation directory passes 735 tests on Linux. On Windows, the
+broader initial run exposed 27 failures in seven path/side-panel suites. The
+workflow runs the affected history/minimap regressions, then reruns those seven
+suites against both the patched and pinned baseline Dart source in the same
+workspace. Its comparison fails for introduced failures, missing tests or
+unclassified/compile failures and retains the exact shared-failure report.
+A green comparison does not mean the full Windows suite is green.
+
+The workflow then builds the real app in profile mode for synthetic
+`chat.long_history` and `a11y.long_history` scenarios. Their JSON, logs and report
+are CI artifacts.
 Profile results require a visible desktop and must not be compared across
 unlike machines. Existing release checks remain independently required.
 
