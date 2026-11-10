@@ -105,6 +105,7 @@ void main() {
       addTearDown(tester.view.reset);
       final handle = semantics ? tester.ensureSemantics() : null;
       try {
+        expect(tester.binding.semanticsEnabled, semantics);
         final counts = <int>[];
         for (final turns in [20, 2000]) {
           final kernel = _Kernel();
@@ -157,6 +158,6 @@ void main() {
       } finally {
         handle?.dispose();
       }
-    });
+    }, semanticsEnabled: false);
   }
 }
