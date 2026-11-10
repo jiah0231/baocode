@@ -31,6 +31,16 @@ inline bool CanRetryInitialFocus(uint32_t hresult, bool identity_bound,
   return IsFocusTimeout(hresult) && !identity_bound && same_foreground &&
       CanRetry(true, completed_attempts, now, deadline, canceled);
 }
+// Diagnostic root-connection continuation is not a target fallback. It permits
+// ONE original focus-discovery attempt after an exact connection timeout, with
+// no accepted identity and the same native HWND/PID/thread. It uses the existing
+// first-retry reserve; it never resets the deadline or retries the root.
+inline bool CanContinueAfterForegroundConnection(uint32_t hresult,
+    bool identity_bound, bool same_native_source, bool already_continued,
+    uint64_t now, uint64_t deadline, bool canceled = false) {
+  return !already_continued && CanRetryInitialFocus(hresult, identity_bound,
+      same_native_source, 1, now, deadline, canceled);
+}
 // A Chromium accessibility root may exist before its actual focused text
 // control. This permits metadata requery only, never accepting that Pane's
 // focus state or reading its value/descendants. All properties must be known.

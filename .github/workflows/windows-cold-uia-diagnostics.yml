@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [baseline, foreground_handle]
+        mode: [baseline, foreground_handle, timeout_continuation]
         replica: [1, 2, 3, 4, 5, 6]
     env:
       BAOCODE_DISPOSABLE_UI_TEST: '1'
@@ -31,7 +31,8 @@ jobs:
             Write-Host "ENTRY_CASE_BEGIN|mode=${{ matrix.mode }}|replica=${{ matrix.replica }}|case=$case"
             try {
               $probe = '${{ matrix.mode }}' -eq 'foreground_handle'
-              ./tool/ci/windows_translation_browser_smoke.ps1 -OutputDirectory "build/entry/case-$case" -SkipPostFailureUiaDiagnostics -ForegroundConnectionExperiment:$probe
+              $continuation = '${{ matrix.mode }}' -eq 'timeout_continuation'
+              ./tool/ci/windows_translation_browser_smoke.ps1 -OutputDirectory "build/entry/case-$case" -SkipPostFailureUiaDiagnostics -ForegroundConnectionExperiment:$probe -ForegroundConnectionTimeoutContinuation:$continuation
               Write-Host "ENTRY_CASE_END|case=$case|result=success"
             } catch {
               $failures++
@@ -40,6 +41,10 @@ jobs:
           }
           Write-Host "ENTRY_MATRIX_SUMMARY|mode=${{ matrix.mode }}|replica=${{ matrix.replica }}|total=3|failures=$failures"
           if ($failures -ne 0) { throw "$failures strict captures failed; no failure converted to success" }
+      - name: Verify native policy and protection regressions after cold measurement
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: ./tool/ci/windows_translation_smoke.ps1
       - name: Preserve synthetic mismatch evidence
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v6

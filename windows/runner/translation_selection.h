@@ -11,6 +11,10 @@
 #include "translation_clipboard_capture.h"
 #include "translation_console_binding.h"
 #include "translation_selection_target.h"
+#if defined(BAOCODE_CAPTURE_FOREGROUND_TIMEOUT_CONTINUATION) && \
+    !defined(BAOCODE_CAPTURE_FOREGROUND_CONNECTION_EXPERIMENT)
+#error Timeout continuation requires the foreground connection diagnostic experiment.
+#endif
 
 namespace translation_selection {
 // Optional test diagnostics contain only operation names/HRESULTs, never text.
@@ -27,6 +31,7 @@ struct CaptureDiagnostics {
   unsigned attempts = 0;
   unsigned final_attempts = 0;
   FocusAttemptDiagnostics com_initialize, automation_create, foreground_connection;
+  bool foreground_connection_timeout_continued = false;
   FocusAttemptDiagnostics focus_attempts[translation_retry::kMaxAttempts];
   FocusAttemptDiagnostics final_focus_attempts[3];
   DWORD console_host_integrity = 0, console_client_integrity = 0;
@@ -235,9 +240,16 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
       // The root is retained as a connection, NEVER as a selection target.
       // No root properties, patterns, text, children or descendants are read.
       ComPtr<IUIAutomationElement> foreground_connection;
+#if defined(BAOCODE_CAPTURE_FOREGROUND_TIMEOUT_CONTINUATION)
+      bool foreground_connection_timeout_continued = false;
+      DWORD foreground_connection_source_thread = 0;
+#endif
       const bool foreground_connection_permitted = [&] {
         DWORD source_pid = 0;
         const DWORD source_thread = GetWindowThreadProcessId(foreground, &source_pid);
+#if defined(BAOCODE_CAPTURE_FOREGROUND_TIMEOUT_CONTINUATION)
+        foreground_connection_source_thread = source_thread;
+#endif
         const auto source_current = [&] {
           DWORD current_pid = 0;
           const DWORD current_thread = GetWindowThreadProcessId(foreground, &current_pid);
@@ -266,8 +278,22 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
         finish_diagnostic(connection_record, connected);
         if (stopped()) return false;
         if (!source_current()) { out.status = "focusChanged"; return false; }
-        // A failed connection grants no permission for another discovery path.
-        return SUCCEEDED(connected) && foreground_connection != nullptr;
+        if (SUCCEEDED(connected)) return foreground_connection != nullptr;
+#if defined(BAOCODE_CAPTURE_FOREGROUND_TIMEOUT_CONTINUATION)
+        // Only an exact transient timeout can continue to the original focus
+        // query. No root identity/text was accepted. Access denial, unsupported,
+        // empty successful results and all other failures still stop above/below.
+        foreground_connection_timeout_continued =
+            translation_retry::CanContinueAfterForegroundConnection(
+                static_cast<uint32_t>(connected), original_element != nullptr,
+                source_current(), foreground_connection_timeout_continued,
+                GetTickCount64(), deadline, canceled && canceled->load());
+        if (diagnostics) diagnostics->foreground_connection_timeout_continued =
+            foreground_connection_timeout_continued;
+        return foreground_connection_timeout_continued;
+#else
+        return false;
+#endif
       }();
 #endif
       // Chromium may expose a focused Document before its accessibility text
@@ -277,6 +303,9 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
       for (unsigned attempt = 0; attempt < translation_retry::kMaxAttempts && !stopped()
 #if defined(BAOCODE_CAPTURE_FOREGROUND_CONNECTION_EXPERIMENT)
           && foreground_connection_permitted
+#endif
+#if defined(BAOCODE_CAPTURE_FOREGROUND_TIMEOUT_CONTINUATION)
+          && (!foreground_connection_timeout_continued || attempt == 0)
 #endif
           ; ++attempt) {
         if (diagnostics) diagnostics->attempts = attempt + 1;
@@ -296,6 +325,18 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
           if (FAILED(set_connection_timeout(std::min(connection, remaining))) ||
               FAILED(set_transaction_timeout(std::min(transaction, remaining)))) break;
         }
+#if defined(BAOCODE_CAPTURE_FOREGROUND_TIMEOUT_CONTINUATION)
+        if (foreground_connection_timeout_continued) {
+          if (stopped()) break;
+          DWORD current_pid = 0;
+          const DWORD current_thread = GetWindowThreadProcessId(foreground, &current_pid);
+          if (GetForegroundWindow() != foreground || current_pid != process ||
+              !current_thread || current_thread != foreground_connection_source_thread) {
+            out.status = "focusChanged";
+            break;
+          }
+        }
+#endif
         ComPtr<IUIAutomationElement> focused;
         auto* focus_record = diagnostics ? &diagnostics->focus_attempts[attempt] : nullptr;
         start_diagnostic(focus_record);
@@ -461,6 +502,11 @@ inline Selection Capture(HWND foreground, bool explicit_shortcut = false,
             }
           }
         }
+#if defined(BAOCODE_CAPTURE_FOREGROUND_TIMEOUT_CONTINUATION)
+        // One original discovery attempt after a root timeout, not a fresh
+        // four-attempt allowance. Preserve final validation of successful text.
+        if (foreground_connection_timeout_continued) break;
+#endif
         if ((out.status != "unsupported" && out.status != "noSelection") ||
             !translation_retry::CanRetry(retryable, attempt + 1, GetTickCount64(), deadline,
                                          canceled && canceled->load())) break;

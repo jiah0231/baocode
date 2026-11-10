@@ -138,6 +138,25 @@ int wmain(int argc, wchar_t** argv) {
       CanRetryInitialFocus(timeout_hr, false, true, 4, 500, 1500) ||
       CanRetryInitialFocus(timeout_hr, false, true, 1, 1400, 1500))
     return Fail("Initial focus timeout retry weakened identity/focus/error/deadline gates");
+  using translation_retry::CanContinueAfterForegroundConnection;
+  for (const uint32_t hr : {translation_retry::kInitialFocusTimeout,
+                            translation_retry::kWin32FocusTimeout}) {
+    if (!CanContinueAfterForegroundConnection(hr, false, true, false, 954, 1500) ||
+        CanContinueAfterForegroundConnection(hr, true, true, false, 954, 1500) ||
+        CanContinueAfterForegroundConnection(hr, false, false, false, 954, 1500) ||
+        CanContinueAfterForegroundConnection(hr, false, true, true, 954, 1500) ||
+        CanContinueAfterForegroundConnection(hr, false, true, false, 954, 1500, true) ||
+        CanContinueAfterForegroundConnection(hr, false, true, false, 1500, 1500) ||
+        CanContinueAfterForegroundConnection(hr, false, true, false, 1600, 1500) ||
+        CanContinueAfterForegroundConnection(hr, false, true, false, 1220, 1500) ||
+        !CanContinueAfterForegroundConnection(hr, false, true, false, 1219, 1500))
+      return Fail("Root timeout continuation weakened source/cancel/deadline/one-attempt gates");
+  }
+  for (const uint32_t hr : {0u, 1u, 0x80004005u, 0x80070005u, 0x80004002u,
+                            0x80040200u, 0x80040201u, 0x800705B5u}) {
+    if (CanContinueAfterForegroundConnection(hr, false, true, false, 954, 1500))
+      return Fail("Root continuation accepted success/null, denial or unrelated failure");
+  }
   using translation_retry::IsInitialChromiumPane;
   if (!IsInitialChromiumPane(false, true, true, true, true, true, true) ||
       IsInitialChromiumPane(true, true, true, true, true, true, true) ||

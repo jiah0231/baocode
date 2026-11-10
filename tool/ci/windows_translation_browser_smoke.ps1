@@ -2,11 +2,15 @@
 param(
   [string]$OutputDirectory = 'build/translation-browser-previews',
   [switch]$SkipPostFailureUiaDiagnostics,
-  [switch]$ForegroundConnectionExperiment
+  [switch]$ForegroundConnectionExperiment,
+  [switch]$ForegroundConnectionTimeoutContinuation
 )
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or !$env:RUNNER_TEMP -or $env:OS -ne 'Windows_NT' -or $env:BAOCODE_DISPOSABLE_UI_TEST -ne '1') {
   throw 'Browser selection smoke requires an explicitly enabled disposable Windows Actions desktop.'
+}
+if ($ForegroundConnectionExperiment -and $ForegroundConnectionTimeoutContinuation) {
+  throw 'Choose either strict foreground connection or timeout continuation, not both.'
 }
 $output = [IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Force $output | Out-Null
@@ -41,9 +45,13 @@ try {
     $diagnosticFlags = @('/DBAOCODE_SKIP_POST_FAILURE_UIA_DIAGNOSTICS=1')
     Write-Host 'Post-failure UIA diagnostics disabled explicitly; exact capture assertions remain enabled.'
   }
-  if ($ForegroundConnectionExperiment) {
+  if ($ForegroundConnectionExperiment -or $ForegroundConnectionTimeoutContinuation) {
     $diagnosticFlags += @('/DBAOCODE_DISPOSABLE_UI_TEST_BUILD=1', '/DBAOCODE_CAPTURE_FOREGROUND_CONNECTION_EXPERIMENT=1')
     Write-Host 'Diagnostic foreground connection enabled inside the original capture deadline; exact assertions remain enabled.'
+  }
+  if ($ForegroundConnectionTimeoutContinuation) {
+    $diagnosticFlags += '/DBAOCODE_CAPTURE_FOREGROUND_TIMEOUT_CONTINUATION=1'
+    Write-Host 'Only an exact root timeout may continue once to original focus discovery within its unchanged deadline.'
   }
   & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX @diagnosticFlags $source /Fe:browser_smoke.exe /link user32.lib advapi32.lib gdi32.lib dwmapi.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
   if ($LASTEXITCODE -ne 0) { throw 'Browser selection harness compilation failed' }
