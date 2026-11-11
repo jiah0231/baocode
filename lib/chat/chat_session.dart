@@ -138,7 +138,8 @@ class ModelSettingChoice {
 /// waiting, the model in effect) is projected from those or read from the
 /// kernel. The UI reaches what the kernel can do through the facets here,
 /// null when the kernel does not declare it.
-class ChatSession extends ChangeNotifier implements ChatFeed {
+class ChatSession extends ChangeNotifier
+    implements ChatFeed, ChatFeedTextChanges {
   ChatSession({
     KernelDescriptor? kernel,
     List<KernelDescriptor>? kernels,
@@ -718,6 +719,12 @@ class ChatSession extends ChangeNotifier implements ChatFeed {
   /// else says so, or it would only flash.
   @override
   int get itemCount => _transcript.length + (isStreaming ? 1 : 0);
+
+  @override
+  Object get structureRevision => (_transcript, _transcript.structureVersion);
+
+  @override
+  Iterable<int> get textChangedRows => _transcript.textChangedRows;
 
   @override
   ChatItem itemAt(int index) {

@@ -73,6 +73,8 @@ class ChatMinimap extends StatefulWidget {
     super.key,
     required this.rowCount,
     required this.rowAt,
+    this.revision,
+    this.changedFrom = 0,
     required this.span,
     required this.moved,
     required this.columnIn,
@@ -89,6 +91,12 @@ class ChatMinimap extends StatefulWidget {
 
   final int rowCount;
   final ChatMinimapRow Function(int index) rowAt;
+
+  /// Unchanged revisions keep the samples on non-content rebuilds. When a
+  /// revision changes, rows before [changedFrom] are guaranteed unchanged.
+  /// Omitted, callers keep the conservative full comparison on each rebuild.
+  final int? revision;
+  final int changedFrom;
 
   /// The part in view, as laid out; null when there is none.
   final ChatMinimapSpan? Function() span;
@@ -262,8 +270,8 @@ class _ChatMinimapState extends State<ChatMinimap>
   // --- Samples ---------------------------------------------------------------
 
   /// Each item's, as last sampled: a changed item is a new one.
-  Map<ChatItem, _Sample> _samples = Map.identity();
-  List<_Sample> _rows = const [];
+  final List<ChatItem> _items = [];
+  final List<_Sample> _rows = [];
 
   /// Where each row starts, in the strokes' own coordinates; the last, where
   /// they end.
@@ -272,63 +280,85 @@ class _ChatMinimapState extends State<ChatMinimap>
 
   /// The rows that are the user's messages, in order, and where each one's
   /// mark is in the strokes.
-  List<int> _users = const [];
-  List<double> _usersAt = const [];
+  final List<int> _users = [];
+  final List<double> _usersAt = [];
 
   /// What they were sampled for: the column's width (in steps of 16, not
   /// sampled anew at each width a pane is dragged through) and the user's
   /// messages' style.
   double _columnWidth = 0;
   UserMessageStyle? _style;
-  bool _stale = true;
+  int? _staleFrom = 0;
 
   void _sync(double columnWidth) {
     final width = math.max(160.0, (columnWidth / 16).round() * 16.0);
     final style = UserMessageStyle.current.value;
     if (width != _columnWidth || style != _style) {
-      _samples = Map.identity();
+      _items.clear();
+      _rows.clear();
       _columnWidth = width;
       _style = style;
-      _stale = true;
+      _staleFrom = 0;
+      _dropTilesFrom(double.negativeInfinity);
     }
-    if (!_stale) return;
-    _stale = false;
-    final sampler = _Sampler(width, bubbles: style == UserMessageStyle.bubble);
+    final stale = _staleFrom;
+    if (stale == null) return;
+    _staleFrom = null;
     final count = widget.rowCount;
-    final samples = Map<ChatItem, _Sample>.identity();
-    final rows = <_Sample>[];
-    final tops = Float64List(count + 1);
-    final users = <int>[];
-    final usersAt = <double>[];
-    var y = 0.0;
-    for (var index = 0; index < count; index++) {
+    // A count change can shift indexes. Only same-count text updates take
+    // the bounded path; structural changes still compare every row.
+    final from = _rows.length == count ? stale.clamp(0, count) : 0;
+    final oldCount = _rows.length;
+    // Prepending history shifts rows without changing their text. Preserve
+    // identity reuse on a full pass; streaming tail updates need no map walk.
+    Map<ChatItem, _Sample>? shifted;
+    if (from == 0 && oldCount > 0) {
+      shifted = Map.identity();
+      for (var i = 0; i < oldCount; i++) {
+        shifted[_items[i]] = _rows[i];
+      }
+    }
+    final oldTops = _tops;
+    if (_tops.length != count + 1) _tops = Float64List(count + 1);
+    final sampler = _Sampler(width, bubbles: style == UserMessageStyle.bubble);
+    while (_users.isNotEmpty && _users.last >= from) {
+      _users.removeLast();
+      _usersAt.removeLast();
+    }
+    var y = _tops[from];
+    var dropped = false;
+    for (var index = from; index < count; index++) {
       final row = widget.rowAt(index);
-      var sample = samples[row.item] ?? _samples[row.item];
+      final old = index < oldCount ? _rows[index] : null;
+      var sample = index < oldCount && identical(_items[index], row.item)
+          ? old
+          : shifted?[row.item];
       if (sample == null || !sample.fits(row)) sample = sampler.sample(row);
-      samples[row.item] = sample;
-      rows.add(sample);
-      tops[index] = y;
+      final oldTop = index < oldCount ? oldTops[index] : y;
+      if (!dropped && (!identical(sample, old) || oldTop != y)) {
+        _dropTilesFrom(math.min(oldTop, y));
+        dropped = true;
+      }
+      if (index < oldCount) {
+        _items[index] = row.item;
+        _rows[index] = sample;
+      } else {
+        _items.add(row.item);
+        _rows.add(sample);
+      }
+      _tops[index] = y;
       if (sample.user case final at?) {
-        users.add(index);
-        usersAt.add(y + at);
+        _users.add(index);
+        _usersAt.add(y + at);
       }
       y += sample.height;
     }
-    tops[count] = y;
-    _users = users;
-    _usersAt = usersAt;
-    // The tiles above the first row that changed (or moved) still hold.
-    var same = 0;
-    final common = math.min(count, _rows.length);
-    while (same < common &&
-        identical(rows[same], _rows[same]) &&
-        tops[same] == _tops[same]) {
-      same++;
+    if (oldCount > count) {
+      _items.removeRange(count, oldCount);
+      _rows.removeRange(count, oldCount);
     }
-    if (same < common || count != _rows.length) _dropTilesFrom(tops[same]);
-    _samples = samples;
-    _rows = rows;
-    _tops = tops;
+    _tops[count] = y;
+    if (!dropped && oldCount != count) _dropTilesFrom(y);
   }
 
   /// The row at [y], one that shows something if any does there.
@@ -771,7 +801,14 @@ class _ChatMinimapState extends State<ChatMinimap>
   @override
   void didUpdateWidget(ChatMinimap oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _stale = true;
+    if (widget.revision == null ||
+        widget.revision != oldWidget.revision ||
+        widget.rowCount != oldWidget.rowCount) {
+      final from = widget.rowCount == oldWidget.rowCount
+          ? widget.changedFrom
+          : 0;
+      _staleFrom = math.min(_staleFrom ?? from, from);
+    }
   }
 
   @override

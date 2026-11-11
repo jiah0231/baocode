@@ -1,0 +1,132 @@
+# Isolated validation only: no signing, publication, model calls or user desktop.
+name: Long chat performance validation
+on:
+  push:
+    branches: ['validation/long-chat-perf-20261111', 'feat/global-translation-floating-window']
+permissions:
+  contents: read
+concurrency:
+  group: long-chat-performance-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    if: github.repository == 'jiah0231/baocode'
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Test mailbox with Release assertions enabled
+        shell: pwsh
+        run: |
+          cl.exe /nologo /std:c++17 /EHsc /O2 /DNDEBUG /W4 /WX tool/ci/translation_mouse_mailbox_test.cpp /Fe:mailbox_test.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Mailbox Release compilation failed' }
+          ./mailbox_test.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Mailbox Release regression failed' }
+      - name: Verify metadata-only passive discovery
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          python tool/ci/verify_translation_action_privacy.py --self-test windows/runner/translation_selection_action.cpp
+          if ($LASTEXITCODE -ne 0) { throw 'Selection privacy guard failed' }
+      - name: Test real hook latency with blocked UI and bounded input flood
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+        run: ./tool/ci/windows_translation_mouse_hook_smoke.ps1
+      - name: Test pill clicks and bound selection privacy regressions
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+        run: ./tool/ci/windows_translation_action_smoke.ps1
+  flutter:
+    if: github.repository == 'jiah0231/baocode'
+    runs-on: windows-2025
+    timeout-minutes: 45
+    env:
+      FLUTTER_SUPPRESS_ANALYTICS: 'true'
+      DART_SUPPRESS_ANALYTICS: 'true'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 20
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Restore original bundled assets
+        shell: pwsh
+        run: |
+          python tool/ci/reassemble_preview_assets.py
+          if ($LASTEXITCODE -ne 0) { throw 'Preview reconstruction failed' }
+          python tool/ci/reassemble_maple_font.py
+          if ($LASTEXITCODE -ne 0) { throw 'Font reconstruction failed' }
+          git diff --exit-code HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Asset reconstruction changed source' }
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.5'
+          cache: true
+      - id: iroh
+        uses: ./.github/actions/bao-iroh-prebuilt
+      - if: steps.iroh.outputs.hit != 'true'
+        uses: ./.github/actions/setup-rust
+      - name: Resolve dependencies
+        shell: pwsh
+        run: |
+          flutter pub get
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency resolution failed' }
+          flutter gen-l10n
+          if ($LASTEXITCODE -ne 0) { throw 'Localization generation failed' }
+          git diff --exit-code HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Generated source differs' }
+      - run: flutter analyze --no-pub --fatal-infos
+      - name: Check changed Dart formatting
+        run: >-
+          dart format --output=none --set-exit-if-changed
+          lib/kernel/transcript.dart lib/chat/chat_feed.dart
+          lib/chat/chat_session.dart lib/chat/step_folds.dart
+          lib/chat/chat_history_view.dart lib/chat/widgets/chat_minimap.dart
+          test/chat/history_stream_work_test.dart
+          test/chat/stream_change_tracking_test.dart
+          test/chat/chat_minimap_incremental_test.dart
+      - name: Test changed conversation behavior and bounded streaming work
+        run: >-
+          flutter test --no-pub --reporter expanded --timeout 2m
+          test/chat/step_folds_test.dart test/chat/fold_view_test.dart
+          test/chat/history_scroll_test.dart test/chat/history_selection_test.dart
+          test/chat/history_paging_test.dart test/chat/history_stream_batch_test.dart
+          test/chat/history_stream_work_test.dart test/chat/stream_change_tracking_test.dart
+          test/chat/chat_history_rebuild_test.dart test/chat/chat_minimap_test.dart
+          test/chat/chat_minimap_incremental_test.dart
+      - name: Compare broad Windows failures with the unmodified baseline
+        shell: pwsh
+        run: |
+          python tool/ci/test_compare_long_chat_windows_baseline.py
+          if ($LASTEXITCODE -ne 0) { throw 'Baseline comparison self-tests failed' }
+          python tool/ci/compare_long_chat_windows_baseline.py
+          if ($LASTEXITCODE -ne 0) { throw 'Windows baseline comparison found new or unclassified failures' }
+      - name: Build synthetic Windows profile app
+        id: profile_build
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          flutter build windows --profile -t tool/perf/perf_app.dart
+          if ($LASTEXITCODE -ne 0) { throw 'Profile build failed' }
+      - name: Measure synthetic long history with and without semantics
+        if: ${{ !cancelled() && steps.profile_build.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          dart run tool/perf/run.dart --no-build --repeat 2 --out build/perf/long-chat-ci chat.long_history a11y.long_history
+          if ($LASTEXITCODE -ne 0) { throw 'Profile scenario failed' }
+      - name: Keep synthetic performance evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: long-chat-synthetic-perf-${{ github.sha }}
+          retention-days: 7
+          if-no-files-found: ignore
+          path: build/perf/long-chat-ci/

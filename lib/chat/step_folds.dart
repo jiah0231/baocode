@@ -215,6 +215,20 @@ class StepFolds {
     ]);
   }
 
+  /// Refreshes text without deriving the unchanged folds again. Returns the
+  /// first displayed row affected, including the start of a merged thought.
+  int refreshText(Iterable<int> changed, ChatItem Function(int) itemAt) {
+    var first = _items.length;
+    for (final index in changed) {
+      if (index < 0 || index >= _items.length) continue;
+      _items[index] = itemAt(index);
+      final row = _thoughtOf[index] ?? index;
+      _merged.remove(row);
+      if (row < first) first = row;
+    }
+    return first;
+  }
+
   /// Whether item [index] is a thought shown in an earlier one's row.
   bool _mergedAway(int index) =>
       index < _thoughtOf.length && _thoughtOf[index] != null;

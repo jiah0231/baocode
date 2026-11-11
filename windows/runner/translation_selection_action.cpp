@@ -40,8 +40,6 @@ struct BoundsTrace {
 constexpr UINT kMouse = WM_APP + 0x391;
 constexpr wchar_t kClass[] = L"BaoCodeTranslationSelectionAction";
 TranslationSelectionAction* active = nullptr;
-HWND hook_dispatcher = nullptr;
-HWND hook_button = nullptr;
 using Microsoft::WRL::ComPtr;
 
 
@@ -443,9 +441,8 @@ bool TranslationSelectionAction::Configure(bool enabled, bool dark) {
   if (enabled_ == enabled) return enabled_;
   enabled_ = enabled;
   if (!enabled) {
-    if (hook_) UnhookWindowsHookEx(hook_);
-    hook_ = nullptr;
-    if (active == this) { active = nullptr; hook_dispatcher = nullptr; hook_button = nullptr; }
+    hook_.reset();
+    if (active == this) active = nullptr;
     if (timer_) KillTimer(dispatcher_, timer_);
     timer_ = 0;
     down_ = false;
@@ -455,32 +452,11 @@ bool TranslationSelectionAction::Configure(bool enabled, bool dark) {
   if (!worker_available_) { enabled_ = false; return false; }
   if (active && active != this) { enabled_ = false; return false; }
   active = this;
-  hook_dispatcher = dispatcher_;
-  hook_button = button_;
-  hook_ = SetWindowsHookExW(WH_MOUSE_LL, MouseHook, GetModuleHandle(nullptr), 0);
+  hook_ = std::make_unique<translation_mouse::Hook>(dispatcher_, kMouse);
+  if (!hook_->Start()) { Configure(false, dark); return false; }
   timer_ = SetTimer(dispatcher_, reinterpret_cast<UINT_PTR>(this), 50, nullptr);
   if (!hook_ || !timer_) Configure(false, dark);
   return enabled_;
-}
-
-LRESULT CALLBACK TranslationSelectionAction::MouseHook(int code, WPARAM wparam, LPARAM lparam) {
-  // Constant-time event bookkeeping only. No UIA, focus mutation, or text reads.
-  if (code == HC_ACTION && hook_dispatcher &&
-      (wparam == WM_LBUTTONDOWN || wparam == WM_LBUTTONUP ||
-       wparam == WM_RBUTTONDOWN || wparam == WM_MBUTTONDOWN ||
-       wparam == WM_XBUTTONDOWN || wparam == WM_MOUSEWHEEL || wparam == WM_MOUSEHWHEEL)) {
-    const auto* mouse = reinterpret_cast<const MSLLHOOKSTRUCT*>(lparam);
-    if (!((wparam == WM_LBUTTONDOWN || wparam == WM_LBUTTONUP) &&
-          hook_button && IsWindowVisible(hook_button) &&
-          active && active->ButtonHit(mouse->pt))) {
-      // Coordinates remain signed on monitors left/above the primary display.
-      static_assert(sizeof(LPARAM) >= sizeof(uint64_t), "Selection action requires Win64");
-      const uint64_t packed = static_cast<uint32_t>(mouse->pt.x) |
-          (static_cast<uint64_t>(static_cast<uint32_t>(mouse->pt.y)) << 32);
-      PostMessage(hook_dispatcher, kMouse, wparam, static_cast<LPARAM>(packed));
-    }
-  }
-  return CallNextHookEx(nullptr, code, wparam, lparam);
 }
 
 bool TranslationSelectionAction::CaptureClickedSelection(HWND source, ULONGLONG deadline,
@@ -522,6 +498,7 @@ void TranslationSelectionAction::Hide() {
   shown_ = false;
   hovered_ = pressed_ = false;
   source_ = nullptr;
+  if (hook_) hook_->Publish({});
   if (button_) ShowWindow(button_, SW_HIDE);
 }
 
@@ -529,13 +506,28 @@ bool TranslationSelectionAction::HandleMessage(UINT message, WPARAM wparam, LPAR
   if (message == WM_TIMER && timer_ && wparam == timer_) { Tick(); *result = 0; return true; }
   if (message != kMouse) return false;
   *result = 0;
-  if (!enabled_) return true;
-  const uint64_t packed = static_cast<uint64_t>(lparam);
-  const POINT point{static_cast<LONG>(static_cast<int32_t>(packed & 0xffffffffu)),
-                    static_cast<LONG>(static_cast<int32_t>(packed >> 32))};
+  if (!enabled_ || !hook_) return true;
+  const auto batch = hook_->Take();
+  if (batch.lost) { down_ = false; last_up_ = 0; Hide(); return true; }
+  for (size_t i = 0; i < batch.count; ++i) {
+    const auto& event = batch.events[i];
+    // A stalled UI must not reinterpret old input against today's foreground
+    // selection, or replay a partial/overflowed gesture after recovering.
+    if (GetTickCount() - event.time > 250 || event.source != GetForegroundWindow()) {
+      down_ = false; last_up_ = 0; Hide();
+    } else {
+      MouseEvent(event);
+    }
+  }
+  return true;
+}
+
+void TranslationSelectionAction::MouseEvent(const translation_mouse::Hook::Event& event) {
+  const WPARAM wparam = event.message;
+  const POINT point = event.point;
   if (wparam == WM_LBUTTONDOWN) { Hide(); down_ = true; down_point_ = point; }
   else if (wparam == WM_LBUTTONUP) {
-    const DWORD now = GetTickCount();
+    const DWORD now = event.time;
     const bool dragged = std::abs(point.x - down_point_.x) >= GetSystemMetrics(SM_CXDRAG) ||
                          std::abs(point.y - down_point_.y) >= GetSystemMetrics(SM_CYDRAG);
     const bool doubled = last_up_ && now - last_up_ <= GetDoubleClickTime() &&
@@ -559,7 +551,6 @@ bool TranslationSelectionAction::HandleMessage(UINT message, WPARAM wparam, LPAR
     last_up_ = now;
     last_up_point_ = point;
   } else { down_ = false; Hide(); }
-  return true;
 }
 
 void TranslationSelectionAction::Request() {
@@ -631,7 +622,6 @@ void TranslationSelectionAction::Show(const RECT& bounds) {
     RegisterClassW(&cls);
     button_ = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED,
         kClass, L"翻译选中文字", WS_POPUP, 0, 0, 32, 32, nullptr, nullptr, cls.hInstance, this);
-    hook_button = button_;
   }
   if (!button_) return;
   MONITORINFO monitor{sizeof(monitor)};
@@ -651,6 +641,17 @@ void TranslationSelectionAction::Show(const RECT& bounds) {
   SetWindowPos(button_, HWND_TOPMOST, rect.left, rect.top, size, size,
                SWP_NOACTIVATE | SWP_SHOWWINDOW);
   if (redraw) PaintButton();
+  else PublishButton();
+}
+
+void TranslationSelectionAction::PublishButton() {
+  if (!hook_) return;
+  RECT bounds{};
+  if (!shown_ || !button_ || !IsWindowVisible(button_) || !GetWindowRect(button_, &bounds)) {
+    hook_->Publish({});
+    return;
+  }
+  hook_->Publish({bounds, painted_size_, painted_pixels_});
 }
 
 bool TranslationSelectionAction::ButtonHit(POINT screen) const {
@@ -693,6 +694,7 @@ void TranslationSelectionAction::PaintButton() {
   if (bitmap) DeleteObject(bitmap);
   if (dc) DeleteDC(dc);
   if (screen) ReleaseDC(nullptr, screen);
+  PublishButton();
 }
 
 LRESULT CALLBACK TranslationSelectionAction::WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -739,6 +741,7 @@ LRESULT CALLBACK TranslationSelectionAction::WindowProc(HWND hwnd, UINT message,
       // synchronous callback has queued a bound job and allocated requestId.
       self->candidate_ = false;
       self->shown_ = false;
+      self->PublishButton();
       ShowWindow(hwnd, SW_HIDE);
       self->accepting_click_ = true;
       self->click_queued_ = false;

@@ -2,7 +2,7 @@
 name: Selection geometry validation
 on:
   push:
-    branches: ['fix/pdf-selection-geometry-20261110']
+    branches: ['fix/pdf-selection-geometry-20261110', 'feat/global-translation-floating-window']
   workflow_dispatch:
 permissions:
   contents: read
