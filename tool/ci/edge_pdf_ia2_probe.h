@@ -256,6 +256,64 @@ inline void LogNativeChainEquality(const NativeFocusChain& before,
   }
 }
 
+// QueryService may legitimately return a different COM object. Inspect that
+// object's own IAccessible identity/mapping, but NEVER admit it for text reads.
+// Repeat mapping twice on the same retained service result, without read admission.
+inline void InspectServiceMappingMetadata(IUIAutomation* uia, HWND source,
+    IAccessible* original, IUIAutomationElement* focus, int focusPid,
+    const std::function<bool()>& validateFocus) {
+  const int attempt = 0;
+  if (!validateFocus() || !SafeAccessible(original, source)) return;
+  ComPtr<IServiceProvider> provider;
+  HRESULT hr = original->QueryInterface(IID_PPV_ARGS(&provider));
+  Hr("service_object_QI_IServiceProvider", hr, attempt);
+  if (hr != S_OK || !provider) return;
+  ComPtr<IAccessibleText> serviceText;
+  hr = provider->QueryService(__uuidof(IAccessible), __uuidof(IAccessibleText),
+      reinterpret_cast<void**>(serviceText.GetAddressOf()));
+  Hr("service_object_QueryService_IAccessibleText", hr, attempt);
+  if (hr != S_OK || !serviceText) return;
+  ComPtr<IAccessible> serviceAccessible;
+  hr = serviceText.As(&serviceAccessible);
+  Hr("service_object_QI_own_IAccessible", hr, attempt);
+  if (hr != S_OK || !serviceAccessible) return;
+  ComPtr<IUnknown> textIdentity, accessibleIdentity;
+  const bool sameServiceIdentity = SUCCEEDED(serviceText.As(&textIdentity)) &&
+      SUCCEEDED(serviceAccessible.As(&accessibleIdentity)) &&
+      textIdentity && accessibleIdentity &&
+      textIdentity.Get() == accessibleIdentity.Get();
+  printf("IA2_SERVICE_OBJECT_IDENTITY|ownAccessibleMatchesText=%d|matchesOriginal=%d\n",
+      sameServiceIdentity, SameAccessible(original, serviceAccessible.Get()));
+  if (!sameServiceIdentity || !validateFocus() ||
+      !SafeAccessible(original, source) || !SafeAccessible(serviceAccessible.Get(), source)) return;
+  long role = 0, state = 0;
+  if (!NativeMetadata(serviceAccessible.Get(), &role, &state)) return;
+  printf("IA2_SERVICE_OBJECT_ROLE|attempt=%d|role=%ld|state=0x%08lX\n",
+      attempt, role, static_cast<unsigned long>(state));
+  for (int observation = 0; observation < 2; ++observation) {
+    if (!validateFocus() || !SafeAccessible(original, source) ||
+        !SafeAccessible(serviceAccessible.Get(), source)) return;
+    ComPtr<IUIAutomationElement> mapped;
+    const HRESULT mappingHr = uia->ElementFromIAccessible(
+        serviceAccessible.Get(), CHILDID_SELF, &mapped);
+    Hr("service_object_ElementFromIAccessible_SELF", mappingHr, observation);
+    BOOL equalsBoundFocus = FALSE;
+    HRESULT compareHr = E_FAIL;
+    if (mappingHr == S_OK && mapped)
+      compareHr = uia->CompareElements(mapped.Get(), focus, &equalsBoundFocus);
+    Hr("service_object_CompareElements_exact_focus", compareHr, observation);
+    const bool mappedSafe = mappingHr == S_OK && mapped &&
+        SafeElement(mapped.Get(), focusPid, true);
+    const bool focusStillValid = validateFocus() && SafeAccessible(original, source) &&
+        SafeAccessible(serviceAccessible.Get(), source);
+    printf("IA2_SERVICE_OBJECT_MAPPING_METADATA|attempt=%d|present=%d|compareSucceeded=%d|equalsBoundFocus=%d|mappedSafe=%d|focusStillValid=%d|selection_reads=0\n",
+        observation, mapped != nullptr, compareHr == S_OK, equalsBoundFocus,
+        mappedSafe, focusStillValid);
+    if (!focusStillValid) return;
+  }
+  puts("IA2_SERVICE_OBJECT_METADATA_ONLY_DONE|selection_reads=0|no_admission_change");
+}
+
 inline void Run(IUIAutomation* uia, HWND source,
                 const std::function<void()>& validateNativeIdentity) {
   puts("IA2_DIAGNOSTIC_BEGIN|bounded_focus_only|not_product_fallback|no_proxy_registration");
@@ -419,6 +477,7 @@ inline void Run(IUIAutomation* uia, HWND source,
       Hr("unstable_chain_metadata_CompareElements_exact_focus", metadataCompareHr, 101);
       printf("IA2_UNSTABLE_CHAIN_MAPPING_METADATA|present=%d|equalsBoundFocus=%d|focusStillValid=%d\n",
           metadataMapped != nullptr, metadataEqualsBoundFocus, validateFocus());
+      InspectServiceMappingMetadata(uia, source, accessible.Get(), focus.Get(), focusPid, validateFocus);
     } else puts("IA2_UNSTABLE_CHAIN_METADATA_SKIPPED|original_terminal_or_focus_unsafe");
     puts("IA2_NATIVE_UNSTABLE_CHAIN_METADATA_ONLY|selection_reads=0|unconditional_return");
     return;

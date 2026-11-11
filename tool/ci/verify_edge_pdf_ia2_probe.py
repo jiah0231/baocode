@@ -119,6 +119,31 @@ def check(header: str, script: str | None = None) -> list[str]:
         require(forbidden_read not in failure_branch,
                 'unstable-chain metadata branch forbids: ' + forbidden_read)
 
+    helper_start = src.find('inlinevoidInspectServiceMappingMetadata(')
+    helper_end = src.find('inlinevoidRun(', helper_start)
+    helper = src[helper_start:helper_end] if helper_start >= 0 and helper_end > helper_start else ''
+    require(bool(helper), 'locate service-object metadata helper')
+    require('InspectServiceMappingMetadata(uia,source,accessible.Get(),focus.Get(),focusPid,validateFocus);' in failure_branch,
+            'service-object helper called only from already-rejected branch')
+    require(src.count('InspectServiceMappingMetadata(') == 2,
+            'one metadata helper declaration and one rejected-branch call')
+    for token, label in [
+        ('for (int observation = 0; observation < 2; ++observation)', 'at most two metadata observations'),
+        ('if (!validateFocus() || !SafeAccessible(original, source)) return;', 'revalidate original source before service query'),
+        ('serviceText.As(&serviceAccessible)', 'query service result for its own accessible'),
+        ('textIdentity && accessibleIdentity && textIdentity.Get() == accessibleIdentity.Get()', 'own accessible must share nonnull service canonical identity'),
+        ('if (!sameServiceIdentity || !validateFocus() || !SafeAccessible(original, source) || !SafeAccessible(serviceAccessible.Get(), source)) return;', 'service object identity and source gated'),
+        ('uia->ElementFromIAccessible(serviceAccessible.Get(), CHILDID_SELF, &mapped)', 'map service-owned self rather than original wrapper'),
+        ('uia->CompareElements(mapped.Get(), focus, &equalsBoundFocus)', 'service mapping compares only exact bound focus'),
+        ('SafeElement(mapped.Get(), focusPid, true)', 'report service mapping password/PID/focus safety'),
+        ('validateFocus() && SafeAccessible(original, source) && SafeAccessible(serviceAccessible.Get(), source)', 'revalidate both source objects after mapping'),
+    ]:
+        require(compact(token) in helper, label)
+    for forbidden_read in ('ReadSelected(', 'ReadOffsets(', 'get_nSelections(', 'get_selection(',
+                           'get_text(', 'get_characterExtents(', 'QueryText(', 'Run(',
+                           'validateMappedNativeRole(', 'validateNativeCandidate('):
+        require(forbidden_read not in helper, 'service metadata helper forbids: ' + forbidden_read)
+
     read = src.find('text->get_text(start,end,&selected)')
     pre = src.find('beforeStart!=start||beforeEnd!=end')
     post = src.find('afterStart==start&&afterEnd==end')
@@ -154,6 +179,16 @@ def self_test(header: str, script: str | None) -> int:
     if baseline:
         raise AssertionError('Baseline failed: ' + '; '.join(baseline))
     mutations = {
+        'service_metadata_extra_read': ('serviceText.As(&serviceAccessible)', 'serviceText.get_nSelections(); serviceText.As(&serviceAccessible)'),
+        'service_metadata_read_admission': ('serviceText.As(&serviceAccessible)', 'ReadSelected(); serviceText.As(&serviceAccessible)'),
+        'service_metadata_repeat_unbounded': ('observation < 2', 'observation < 200'),
+        'service_metadata_wrong_mapping': ('serviceAccessible.Get(), CHILDID_SELF, &mapped', 'original, CHILDID_SELF, &mapped'),
+        'service_metadata_wrong_focus': ('mapped.Get(), focus, &equalsBoundFocus', 'mapped.Get(), root, &equalsBoundFocus'),
+        'service_metadata_null_identity': ('textIdentity && accessibleIdentity &&', ''),
+        'service_metadata_skip_identity': ('textIdentity.Get() == accessibleIdentity.Get()', 'true'),
+        'service_metadata_skip_original_safety': ('if (!validateFocus() || !SafeAccessible(original, source)) return;', 'if (false) return;'),
+        'service_metadata_skip_service_safety': ('!SafeAccessible(original, source) || !SafeAccessible(serviceAccessible.Get(), source)', 'false'),
+        'service_metadata_second_call': ('InspectServiceMappingMetadata(uia, source, accessible.Get(), focus.Get(), focusPid, validateFocus);', 'InspectServiceMappingMetadata(uia, source, accessible.Get(), focus.Get(), focusPid, validateFocus); InspectServiceMappingMetadata();'),
         'unstable_chain_fallthrough': ('puts("IA2_NATIVE_UNSTABLE_CHAIN_METADATA_ONLY|selection_reads=0|unconditional_return");\n    return;', 'puts("IA2_NATIVE_UNSTABLE_CHAIN_METADATA_ONLY|selection_reads=0|unconditional_return");'),
         'unstable_chain_selection_read': ('QueryText(accessible, 101);', 'QueryText(accessible, 101); ReadOffsets();'),
         'unstable_chain_character_read': ('QueryText(accessible, 101);', 'QueryText(accessible, 101); get_characterExtents();'),

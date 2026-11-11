@@ -40,3 +40,32 @@ UIA source PID may be a renderer PID, so it is bound and revalidated rather than
 No IA2 proxy is installed or registered. CoGetPSClsid is queried read-only to report the currently registered proxy CLSID/HRESULT. Legacy GetIAccessible also logs pointer presence: S_OK/null means a missing bridge, not a QI failure. QI/QueryService HRESULTs are logged individually. Interface failure does not prove Edge lacks IA2 because cross-process marshaling may need a proxy. The existing external 60-second process watchdog is the runtime bound; synchronous COM calls have no claimed in-process deadline guarantee. IA2 results do not change production behavior, default test results or release gates.
 
 If re-created native focus chains fail strict COM identity/role/state equality, the probe logs per-node equality flags. It may revalidate the original terminal's source/state and bound UIA focus, then inspect QI/QueryService and exact UIA mapping metadata only. That rejection branch always returns without invoking any selection getter or text read, regardless of favorable metadata. This distinguishes wrapper identity instability from unavailable interfaces without weakening text admission. An identity mismatch alone does not prove page navigation or lack of IA2 support.
+
+
+## Service-owned accessible mapping (metadata only)
+
+QueryService is allowed to return a different COM object. On a rejected unstable
+native chain, an isolated helper queries the retained terminal's existing
+IAccessibleText service result for its own IAccessible. The two service-owned
+interfaces must expose equal non-null canonical IUnknown pointers. The helper
+then checks both objects' source HWND/PID/state, logs the service role/state,
+and repeats ElementFromIAccessible(serviceAccessible, CHILDID_SELF) and exact
+CompareElements(originalBoundFocus) twice against the same retained service
+object. Full original focus/path and password/offscreen/PID safety remain
+checked. Only HRESULTs and identity/state booleans are logged. No selection,
+text, extents, name/value, or descendant read is added. The helper returns no
+interface and cannot call a text admission function. The rejected outer branch
+still returns unconditionally, even if all service mapping metadata succeeds.
+
+Direct QI failure is an inconclusive capability result, not evidence Edge lacks
+IA2. ElementFromIAccessible can be limited when the application implements both
+native UIA and MSAA. A positive result would support a separately reviewed
+identity strategy; it would not clear the current failed chain guard, establish
+correct text, or change production/release status. The existing timeout, public
+fixture hash, isolated profile, and unchanged expected-text failure are retained.
+
+References:
+- https://accessibility.linuxfoundation.org/a11yspecs/ia2/docs/html/_general_info.html
+- https://learn.microsoft.com/en-us/windows/win32/com/rules-for-implementing-queryinterface
+- https://learn.microsoft.com/en-us/windows/win32/winauto/getting-an-accessible-object-interface-pointer
+- https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomation-elementfromiaccessible
