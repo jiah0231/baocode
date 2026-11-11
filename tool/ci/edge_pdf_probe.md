@@ -136,3 +136,41 @@ are verified at setup, and retained process lifetime/creation time/HWND/PID and
 foreground are rechecked during execution. The experiment does not claim to
 prove immutable document contents or every navigation race. Its source-mutation
 tests do not replace runtime safety tests. No translation request is sent.
+
+## Opt-in one-level selected embedded-object experiment
+
+The prior bound-container test returned U+FFFC at the current IA2 selection,
+with an abstract-sized extent, while its identity checks all passed. The new
+`-IA2 -ChromiumBoundIA2 -SelectedEmbeddedIA2` mode follows exactly that one
+currently selected embedded object using the official Hypertext APIs. This is
+an independent fixed-public-fixture diagnostic, not a product fallback.
+
+This mode explicitly permits a maximum of two selected-text calls total, one
+per stage. The first reads at most one currently selected character using all
+root identity/selection validation and must return U+FFFC in this run. The second
+reads at most4096 characters from the child object's own current selection,
+only after all relationship/safety checks. Budgets are consumed before calls,
+never reset, and old single-read modes remain mutually exclusive and unchanged.
+
+Only get_hyperlinkIndex(parentSelectionStart) followed by get_hyperlink(index)
+is used. No hyperlink count, child enumeration, anchor/anchorTarget, action or
+full-document getter is used. Link endpoints must exactly equal the current
+parent selection; the link/text/core/own-accessible interfaces must share a
+canonical identity distinct from the parent. The child must be native Text
+role, explicitly readonly, in the original native source HWND/PID, and free of
+MSAA protected/invisible/offscreen/unavailable states and IA2 editable/defunct
+states. Unknown state/HRESULT/role rejects before child selection getters.
+
+Every child validation freshly re-resolves the same selected offset and link,
+requires the same child canonical identity/index and unchanged parent selection,
+and rechecks retained/fresh child role/state/ID/HWND/PIDs plus the complete
+original root identity/focus/UniqueId binding. The child is not claimed to have
+keyboard focus or UIA password validation; its native checks and exact selected
+relationship are explicit, separately reviewed guards. Another child U+FFFC is
+unsupported at depth one; this probe never recurses.
+
+Added official Action/Hyperlink/Hypertext IDLs use the same pinned revision and
+license/hash checks. Their MIDL headers are generated in dependency order.
+Text output is logged only after full post-read checks. Stable IDs/offsets do
+not prove immutable content or general navigation safety. Production raw-UIA
+and icon assertions remain unchanged regardless of diagnostic child text.

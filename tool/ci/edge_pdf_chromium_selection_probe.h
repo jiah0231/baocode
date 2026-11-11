@@ -32,6 +32,11 @@ inline bool QueryChromiumService(IAccessible* terminal, HWND source,
       SafeAccessible(out->accessible.Get(), source);
 }
 
+#if defined(BAOCODE_SELECTED_EMBEDDED_IA2_DIAGNOSTIC)
+inline void ReadSelectedEmbedded(const ChromiumServiceCandidate& bound, HWND source,
+    const std::function<bool()>& validateRootCandidate);
+#endif
+
 inline void RunChromiumBoundSelection(IUIAutomation* uia, HWND source,
                 const std::function<void()>& validateNativeIdentity) {
   puts("IA2_CHROMIUM_BOUND_BEGIN|separate_identity_strategy|public_fixture_only|not_product_fallback");
@@ -200,9 +205,17 @@ inline void RunChromiumBoundSelection(IUIAutomation* uia, HWND source,
   // Independent admission: fresh service canonical identity AND Chromium's
   // documented shared node ID. Never admit using MSAA wrapper similarity.
   if (!validateCandidate()) { puts("IA2_BOUND_REJECT|pre_selection_identity"); return; }
+#if defined(BAOCODE_SELECTED_EMBEDDED_IA2_DIAGNOSTIC)
+  ReadSelectedEmbedded(bound, source, validateCandidate);
+#else
   bool consumed = false;
   ReadSelected(bound.text, validateCandidate, 200, &consumed);
   printf("IA2_BOUND_DONE|selected_text_read_consumed=%d|validationCount=%d|diagnostic_only=1\n",
       consumed, validationCount);
+#endif
 }
 }  // namespace edge_pdf_ia2
+
+#if defined(BAOCODE_SELECTED_EMBEDDED_IA2_DIAGNOSTIC)
+#include "edge_pdf_selected_embedded_probe.h"
+#endif

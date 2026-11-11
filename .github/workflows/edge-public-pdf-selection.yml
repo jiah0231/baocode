@@ -22,6 +22,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Base structural guard failed' }
           python tool/ci/verify_edge_pdf_chromium_selection_probe.py --self-test
           if ($LASTEXITCODE -ne 0) { throw 'Chromium identity guard failed' }
+          python tool/ci/verify_edge_pdf_selected_embedded_probe.py --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Selected object guard failed' }
       - name: Fetch and verify public fixture
         shell: pwsh
         run: |
@@ -33,7 +35,7 @@ jobs:
         env:
           BAOCODE_DISPOSABLE_UI_TEST: '1'
         run: |
-          ./tool/ci/run_edge_pdf_probe.ps1 -Repository . -Pdf (Join-Path $env:RUNNER_TEMP '2608.11260.pdf') -Output (Join-Path $env:RUNNER_TEMP 'edge-public-pdf-evidence') -Zoom 150 -ScrollY 450 -ExpectedDpi 96 -FromX 516 -FromY 532 -ToX 616 -ToY 532 -Warm -IA2 -ChromiumBoundIA2
+          ./tool/ci/run_edge_pdf_probe.ps1 -Repository . -Pdf (Join-Path $env:RUNNER_TEMP '2608.11260.pdf') -Output (Join-Path $env:RUNNER_TEMP 'edge-public-pdf-evidence') -Zoom 150 -ScrollY 450 -ExpectedDpi 96 -FromX 516 -FromY 532 -ToX 616 -ToY 532 -Warm -IA2 -ChromiumBoundIA2 -SelectedEmbeddedIA2
       - name: Keep isolated public PDF evidence
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v6

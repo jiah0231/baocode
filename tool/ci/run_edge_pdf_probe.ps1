@@ -5,9 +5,10 @@ param(
   [string]$Output = (Join-Path $PSScriptRoot 'artifacts'),
   [int]$FromX=0, [int]$FromY=0, [int]$ToX=0, [int]$ToY=0,
   [int]$Zoom=100, [int]$ScrollY=450, [int]$ExpectedDpi=0,
-  [switch]$Warm, [switch]$CalibrateOnly, [switch]$IA2, [switch]$ChromiumBoundIA2
+  [switch]$Warm, [switch]$CalibrateOnly, [switch]$IA2, [switch]$ChromiumBoundIA2, [switch]$SelectedEmbeddedIA2
 )
 $ErrorActionPreference='Stop'
+if ($SelectedEmbeddedIA2 -and !$ChromiumBoundIA2) { throw 'Selected object mode requires explicit -ChromiumBoundIA2' }
 if ($ChromiumBoundIA2 -and !$IA2) { throw 'Chromium identity comparison requires explicit -IA2' }
 if ($env:GITHUB_ACTIONS -cne 'true' -or $env:OS -cne 'Windows_NT' -or $env:BAOCODE_DISPOSABLE_UI_TEST -cne '1') { throw 'Requires explicitly enabled disposable Windows GitHub Actions desktop' }
 $expected='d159155dffad685a388562d1d2a4e0f869a5473be90c6c06381ab68a381451dc'
@@ -50,6 +51,9 @@ try {
   if ($IA2) {
     $vendor=Join-Path $PSScriptRoot 'ia2_vendor'
     $pins=@{
+      'AccessibleHypertext.idl'='1ec84a2927419eda602a73c5a852944eec799f40aaac35be05245d4e71966747'
+      'AccessibleHyperlink.idl'='04e29b9ba7a62b0af559259ef6ffd6358c7896602668465e19ed38359f067809'
+      'AccessibleAction.idl'='09f8cd3ad0b4b96738286a9316548f915c77f4c79509673f798edbdd7814bf5a'
       'AccessibleText.idl'='0f86b12a904044a7f9f0bc103cc25181bdec18b962c07a9fca13fd2b53ffb0a3'
       'IA2CommonTypes.idl'='84451f99df2a73a3e9e6548c5a079745c92c35ab51642081911ee53064cd3a94'
       'Accessible2.idl'='e3d6a3fa6f72a1e630c746abba9376508cf327a4ae7648fcd176cff8c90317f6'
@@ -73,8 +77,16 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Pinned official IA2 core generation failed' }
     & midl.exe /nologo /env x64 "/I$vendor" /out $run /h ia2_text_generated.h /iid ia2_text_i.c (Join-Path $vendor 'AccessibleText.idl')
     if ($LASTEXITCODE -ne 0) { throw 'Pinned official IA2 IDL header generation failed' }
+    if ($SelectedEmbeddedIA2) {
+      Copy-Item (Join-Path $run 'ia2_text_generated.h') (Join-Path $run 'AccessibleText.h')
+      foreach($name in @('AccessibleAction','AccessibleHyperlink','AccessibleHypertext')) {
+        & midl.exe /nologo /env x64 "/I$vendor" /out $run /h ($name+'.h') (Join-Path $vendor ($name+'.idl'))
+        if ($LASTEXITCODE -ne 0) { throw "Pinned selected-object IA2 header generation failed: $name" }
+      }
+    }
     $extraCompile=@('/DBAOCODE_PUBLIC_PDF_IA2_DIAGNOSTIC',"/I$run")
     if ($ChromiumBoundIA2) { $extraCompile += '/DBAOCODE_CHROMIUM_BOUND_IA2_DIAGNOSTIC' }
+    if ($SelectedEmbeddedIA2) { $extraCompile += '/DBAOCODE_SELECTED_EMBEDDED_IA2_DIAGNOSTIC' }
   }
   & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /wd4100 /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX /DBAOCODE_TRANSLATION_ACTION_DIAGNOSTICS "/I$include" @extraCompile $source $impl /Fe:edge_pdf_probe.exe /link user32.lib advapi32.lib gdi32.lib dwmapi.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib oleacc.lib
   if ($LASTEXITCODE -ne 0) { throw 'Probe compilation failed' }
