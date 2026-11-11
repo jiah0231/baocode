@@ -5,9 +5,10 @@ param(
   [string]$Output = (Join-Path $PSScriptRoot 'artifacts'),
   [int]$FromX=0, [int]$FromY=0, [int]$ToX=0, [int]$ToY=0,
   [int]$Zoom=100, [int]$ScrollY=450, [int]$ExpectedDpi=0,
-  [switch]$Warm, [switch]$CalibrateOnly, [switch]$IA2, [switch]$ChromiumBoundIA2, [switch]$SelectedEmbeddedIA2
+  [switch]$Warm, [switch]$CalibrateOnly, [switch]$IA2, [switch]$ChromiumBoundIA2, [switch]$SelectedEmbeddedIA2, [switch]$SelectedParagraphIA2
 )
 $ErrorActionPreference='Stop'
+if ($SelectedParagraphIA2 -and !$SelectedEmbeddedIA2) { throw 'Paragraph mode requires explicit -SelectedEmbeddedIA2' }
 if ($SelectedEmbeddedIA2 -and !$ChromiumBoundIA2) { throw 'Selected object mode requires explicit -ChromiumBoundIA2' }
 if ($ChromiumBoundIA2 -and !$IA2) { throw 'Chromium identity comparison requires explicit -IA2' }
 if ($env:GITHUB_ACTIONS -cne 'true' -or $env:OS -cne 'Windows_NT' -or $env:BAOCODE_DISPOSABLE_UI_TEST -cne '1') { throw 'Requires explicitly enabled disposable Windows GitHub Actions desktop' }
@@ -51,6 +52,7 @@ try {
   if ($IA2) {
     $vendor=Join-Path $PSScriptRoot 'ia2_vendor'
     $pins=@{
+      'AccessibleRole.idl'='c43b097e0f62547b454e128eb115ea7267c707723ab0197de7a7bf9eb7556d1d'
       'AccessibleHypertext.idl'='1ec84a2927419eda602a73c5a852944eec799f40aaac35be05245d4e71966747'
       'AccessibleHyperlink.idl'='04e29b9ba7a62b0af559259ef6ffd6358c7896602668465e19ed38359f067809'
       'AccessibleAction.idl'='09f8cd3ad0b4b96738286a9316548f915c77f4c79509673f798edbdd7814bf5a'
@@ -84,9 +86,14 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Pinned selected-object IA2 header generation failed: $name" }
       }
     }
+    if ($SelectedParagraphIA2) {
+      & midl.exe /nologo /env x64 "/I$vendor" /out $run /h AccessibleRole.h (Join-Path $vendor 'AccessibleRole.idl')
+      if ($LASTEXITCODE -ne 0) { throw 'Pinned IA2 role header generation failed' }
+    }
     $extraCompile=@('/DBAOCODE_PUBLIC_PDF_IA2_DIAGNOSTIC',"/I$run")
     if ($ChromiumBoundIA2) { $extraCompile += '/DBAOCODE_CHROMIUM_BOUND_IA2_DIAGNOSTIC' }
     if ($SelectedEmbeddedIA2) { $extraCompile += '/DBAOCODE_SELECTED_EMBEDDED_IA2_DIAGNOSTIC' }
+    if ($SelectedParagraphIA2) { $extraCompile += '/DBAOCODE_SELECTED_PARAGRAPH_IA2_DIAGNOSTIC' }
   }
   & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /wd4100 /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX /DBAOCODE_TRANSLATION_ACTION_DIAGNOSTICS "/I$include" @extraCompile $source $impl /Fe:edge_pdf_probe.exe /link user32.lib advapi32.lib gdi32.lib dwmapi.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib oleacc.lib
   if ($LASTEXITCODE -ne 0) { throw 'Probe compilation failed' }
@@ -113,7 +120,7 @@ try {
     ownerPid=$owner.ProcessId; profile=$profile; uri=$uri; zoomRequested=$Zoom; scrollRequested=$ScrollY;
     coordinates='physical pixels relative to GetWindowRect top-left, NOT document points';
     from=@($FromX,$FromY); to=@($ToX,$ToY); warm=$Warm.IsPresent; calibrationOnly=$CalibrateOnly.IsPresent;
-    expectedDpi=$ExpectedDpi; ia2Diagnostic=$IA2.IsPresent; note='PDF fragment zoom/scroll is a request, verify screenshot. Not cold-start acceptance evidence. PrintWindow may render blank GPU content.'
+    expectedDpi=$ExpectedDpi; ia2Diagnostic=$IA2.IsPresent; chromiumBound=$ChromiumBoundIA2.IsPresent; selectedEmbedded=$SelectedEmbeddedIA2.IsPresent; selectedParagraph=$SelectedParagraphIA2.IsPresent; note='PDF fragment zoom/scroll is a request, verify screenshot. Not cold-start acceptance evidence. PrintWindow may render blank GPU content.'
   } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath ($prefix+'-manifest.json') -Encoding utf8
   $args=@($owner.ProcessId,$FromX,$FromY,$ToX,$ToY,"`"$prefix`"",$mode,$ExpectedDpi,"`"$edge`"")
   $probe=Start-Process -FilePath (Join-Path $run 'edge_pdf_probe.exe') -ArgumentList $args -PassThru -RedirectStandardOutput ($prefix+'-stdout.log') -RedirectStandardError ($prefix+'-stderr.log')

@@ -174,3 +174,27 @@ license/hash checks. Their MIDL headers are generated in dependency order.
 Text output is logged only after full post-read checks. Stable IDs/offsets do
 not prove immutable content or general navigation safety. Production raw-UIA
 and icon assertions remain unchanged regardless of diagnostic child text.
+
+## Opt-in exact semantic paragraph selection
+
+`-SelectedParagraphIA2` requires all three existing explicit diagnostic switches
+and selects a separate role predicate. It does not allow arbitrary Grouping.
+The already identity-bound, uniquely selected child must report MSAA Grouping,
+IAccessible2::role S_OK with exactly IA2_ROLE_PARAGRAPH, explicit readonly state,
+and successful noneditable/nondefunct IA2 states. The semantic role is captured
+and checked again on retained and freshly resolved interfaces during every
+child validation. The original native-Text-only mode remains the default branch.
+
+Chromium explicitly maps a semantic paragraph to MSAA Grouping but separately
+reports IA2_ROLE_PARAGRAPH. This supplies a role distinction absent from MSAA;
+it does not prove that the actual Edge child is a paragraph or that its selection
+will be correct. The experiment observes that metadata and only conditionally
+proceeds, using the same exact selected relationship, one-level limit and two
+stage/read budget. No other selected-object or product guard changes.
+
+The official AccessibleRole.idl from the existing pinned LinuxA11y revision is
+included with license/hash verification and generated with MIDL. The code uses
+the official enum, not a handwritten numeric role.
+
+https://chromium.googlesource.com/chromium/src/+/refs/heads/main/ui/accessibility/platform/ax_platform_node_win.cc
+https://raw.githubusercontent.com/LinuxA11y/IAccessible2/c9ae003d9c85eb707716928de97e055f5b77189c/api/AccessibleRole.idl

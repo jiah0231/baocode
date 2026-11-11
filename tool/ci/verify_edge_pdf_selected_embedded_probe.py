@@ -30,10 +30,10 @@ def check(source,parent,script):
         ('link->get_endIndex(&linkEnd) != S_OK || linkEnd != parentEnd', 'link ends exactly at selected end'),
         ('child->identity.Get() == textIdentity.Get() && child->identity.Get() == coreIdentity.Get() && child->identity.Get() == accessibleIdentity.Get() && child->identity.Get() != bound.identity.Get()', 'four child interfaces identity-equal and not parent'),
         ('*role == ROLE_SYSTEM_TEXT && (*state & STATE_SYSTEM_READONLY) && hr == S_OK && !(*extended & (IA2_STATE_EDITABLE | IA2_STATE_DEFUNCT))', 'safe explicit readonly native child and noneditable IA2 state'),
-        ('if (!SafeEmbeddedText(child, source, &childRole, &childState, &childExtended))', 'child safety before any child selection'),
+        ('if (!SafeEmbeddedText(child, source, &childRole, &childState, &childExtended, &childSemanticRole))', 'child safety before any child selection'),
         ('childPid != sourcePid || GetAncestor(childWindow, GA_ROOT) != source', 'child window PID/root bound'),
         ('resolveCurrentSelectedChild(&fresh, &nowIndex) || nowIndex != boundIndex || fresh.identity.Get() != child.identity.Get()', 'fresh selected link index and canonical child identity'),
-        ('!SafeEmbeddedText(fresh, source, &role, &state, &extended) || !SafeEmbeddedText(child, source, &retainedRole, &retainedState, &retainedExtended)', 'fresh and retained child safety'),
+        ('!SafeEmbeddedText(fresh, source, &role, &state, &extended, &semanticRole) || !SafeEmbeddedText(child, source, &retainedRole, &retainedState, &retainedExtended, &retainedSemanticRole)', 'fresh and retained child safety'),
         ('role != childRole || retainedRole != childRole || state != childState || retainedState != childState || extended != childExtended || retainedExtended != childExtended', 'own child role/all states unchanged'),
         ('freshId != childId', 'fresh child ID stable'),
         ('retainedId != childId', 'retained child ID stable'),
@@ -61,11 +61,28 @@ def check(source,parent,script):
     require(compact(exclusive) in p,'embedded and single-read modes mutually exclusive')
     require(p.count('ReadSelectedEmbedded(')==2,'one declaration and one exclusive embedded invocation')
     require('if ($SelectedEmbeddedIA2 -and !$ChromiumBoundIA2)' in script,'embedded mode explicitly requires identity mode')
+    require('if ($SelectedParagraphIA2 -and !$SelectedEmbeddedIA2)' in script,'paragraph mode explicitly requires selected-object mode')
+    paragraph_start=s.find('constHRESULTroleHr=child.core->role(semanticRole);')
+    paragraph_end=s.find('#else', paragraph_start)
+    paragraph=s[paragraph_start:paragraph_end] if paragraph_start>=0 and paragraph_end>paragraph_start else ''
+    require(bool(paragraph),'locate separately gated semantic paragraph mode')
+    require('#ifdefined(BAOCODE_SELECTED_PARAGRAPH_IA2_DIAGNOSTIC)constHRESULTroleHr=' in s and '#else*semanticRole=*role;return*role==ROLE_SYSTEM_TEXT' in s,'paragraph predicate is opt in with separate Text default')
+    require('returnroleHr==S_OK&&*role==ROLE_SYSTEM_GROUPING&&*semanticRole==IA2_ROLE_PARAGRAPH&&(*state&STATE_SYSTEM_READONLY)&&hr==S_OK&&!(*extended&(IA2_STATE_EDITABLE|IA2_STATE_DEFUNCT));' in paragraph,'only exact readonly semantic paragraph admitted')
+    require('semanticRole!=childSemanticRole||retainedSemanticRole!=childSemanticRole' in s,'fresh and retained semantic role unchanged')
+    require("if ($SelectedParagraphIA2) { $extraCompile += '/DBAOCODE_SELECTED_PARAGRAPH_IA2_DIAGNOSTIC' }" in script,'semantic mode explicitly opt in')
     return failures
 
 
 def self_test(s,p,script):
     mutations=[
+        ('paragraph_opt_in_removed','#if defined(BAOCODE_SELECTED_PARAGRAPH_IA2_DIAGNOSTIC)\n  const HRESULT roleHr', '  const HRESULT roleHr'),
+        ('paragraph_sfalse','roleHr == S_OK','SUCCEEDED(roleHr)'),
+        ('paragraph_role_failure','roleHr == S_OK','true'),
+        ('paragraph_generic_group','*semanticRole == IA2_ROLE_PARAGRAPH &&','true &&'),
+        ('paragraph_native_role','*role == ROLE_SYSTEM_GROUPING &&','true &&'),
+        ('paragraph_fresh_role','semanticRole != childSemanticRole','false'),
+        ('paragraph_retained_role','retainedSemanticRole != childSemanticRole','false'),
+        ('paragraph_wrong_enum','*semanticRole == IA2_ROLE_PARAGRAPH &&','*semanticRole == IA2_ROLE_SECTION &&'),
         ('budget_decrement','++*totalReads;','--*totalReads;'),
         ('budget_reset','int totalReads = 0;','int totalReads = 0; int totalReads = 0;'),
         ('defunct_child',' | IA2_STATE_DEFUNCT',''),

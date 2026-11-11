@@ -1,5 +1,8 @@
 #pragma once
 #include "AccessibleHypertext.h"
+#if defined(BAOCODE_SELECTED_PARAGRAPH_IA2_DIAGNOSTIC)
+#include "AccessibleRole.h"
+#endif
 
 namespace edge_pdf_ia2 {
 // At most one read in each stage, at most two text calls in this entire mode.
@@ -35,15 +38,26 @@ inline bool ReadEmbeddedStage(ComPtr<IAccessibleText> text,
 }
 
 inline bool SafeEmbeddedText(const ChromiumServiceCandidate& child, HWND source,
-    long* role, long* state, AccessibleStates* extended) {
+    long* role, long* state, AccessibleStates* extended, long* semanticRole) {
   if (!SafeAccessible(child.accessible.Get(), source) ||
       !NativeMetadata(child.accessible.Get(), role, state)) return false;
   const HRESULT hr = child.core->get_states(extended);
   Hr("embedded_child_IA2_states", hr);
   printf("IA2_EMBEDDED_CHILD_ROLE|role=%ld|state=0x%08lX|extended=0x%llX\n",
       *role, static_cast<unsigned long>(*state), static_cast<unsigned long long>(*extended));
+#if defined(BAOCODE_SELECTED_PARAGRAPH_IA2_DIAGNOSTIC)
+  const HRESULT roleHr = child.core->role(semanticRole);
+  Hr("embedded_child_IA2_semantic_role", roleHr);
+  printf("IA2_EMBEDDED_SEMANTIC_ROLE|roleHr=0x%08lX|semanticRole=%ld|isParagraph=%d\n",
+      static_cast<unsigned long>(roleHr), *semanticRole, *semanticRole == IA2_ROLE_PARAGRAPH);
+  return roleHr == S_OK && *role == ROLE_SYSTEM_GROUPING &&
+      *semanticRole == IA2_ROLE_PARAGRAPH && (*state & STATE_SYSTEM_READONLY) &&
+      hr == S_OK && !(*extended & (IA2_STATE_EDITABLE | IA2_STATE_DEFUNCT));
+#else
+  *semanticRole = *role;
   return *role == ROLE_SYSTEM_TEXT && (*state & STATE_SYSTEM_READONLY) &&
       hr == S_OK && !(*extended & (IA2_STATE_EDITABLE | IA2_STATE_DEFUNCT));
+#endif
 }
 
 inline void ReadSelectedEmbedded(const ChromiumServiceCandidate& bound, HWND source,
@@ -99,9 +113,9 @@ inline void ReadSelectedEmbedded(const ChromiumServiceCandidate& bound, HWND sou
   if (!resolveCurrentSelectedChild(&child, &boundIndex)) {
     puts("IA2_EMBEDDED_REJECT|selected_object_relation"); return;
   }
-  long childRole = 0, childState = 0;
+  long childRole = 0, childState = 0, childSemanticRole = 0;
   AccessibleStates childExtended = 0;
-  if (!SafeEmbeddedText(child, source, &childRole, &childState, &childExtended)) {
+  if (!SafeEmbeddedText(child, source, &childRole, &childState, &childExtended, &childSemanticRole)) {
     puts("IA2_EMBEDDED_REJECT|child_role_or_state_unsafe"); return;
   }
   long childId = 0; HWND childWindow = nullptr;
@@ -119,11 +133,13 @@ inline void ReadSelectedEmbedded(const ChromiumServiceCandidate& bound, HWND sou
     if (!resolveCurrentSelectedChild(&fresh, &nowIndex) || nowIndex != boundIndex ||
         fresh.identity.Get() != child.identity.Get()) return false;
     long role = 0, state = 0, retainedRole = 0, retainedState = 0;
+    long semanticRole = 0, retainedSemanticRole = 0;
     AccessibleStates extended = 0, retainedExtended = 0;
-    if (!SafeEmbeddedText(fresh, source, &role, &state, &extended) ||
-        !SafeEmbeddedText(child, source, &retainedRole, &retainedState, &retainedExtended) ||
+    if (!SafeEmbeddedText(fresh, source, &role, &state, &extended, &semanticRole) ||
+        !SafeEmbeddedText(child, source, &retainedRole, &retainedState, &retainedExtended, &retainedSemanticRole) ||
         role != childRole || retainedRole != childRole || state != childState || retainedState != childState ||
-        extended != childExtended || retainedExtended != childExtended) return false;
+        extended != childExtended || retainedExtended != childExtended ||
+        semanticRole != childSemanticRole || retainedSemanticRole != childSemanticRole) return false;
     long freshId = 0, retainedId = 0; HWND freshWindow = nullptr, retainedWindow = nullptr;
     if (fresh.core->get_uniqueID(&freshId) != S_OK || freshId != childId ||
         child.core->get_uniqueID(&retainedId) != S_OK || retainedId != childId ||
