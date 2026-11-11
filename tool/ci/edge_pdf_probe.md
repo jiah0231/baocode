@@ -254,3 +254,40 @@ The additional source-shape verifier rejects 66 mutations, including endpoint
 text calls and tree traversal. It is not runtime privacy or race-safety testing.
 No product fallback, main-branch change, gate bypass, merge or publication is
 part of this diagnostic.
+
+
+## Independent selection-container metadata experiment
+
+The first endpoint-interface run f99612ad5155962c7e3b2edb0fcbce7f79480168 /
+42950366644 stopped because QI(IAccessible2_3) on the bound paragraph returned
+E_NOINTERFACE. No endpoint snapshot or second-interface query occurred. This
+did not establish that the independent selection-container interface is absent.
+
+Official AccessibleTextSelectionContainer.idl directly extends IUnknown and
+permits this interface on objects supporting IAccessibleText/Hypertext, including
+a document subtree. Its read-only get_selections returns endpoint text objects
+and their own character offsets, but the returned selection can be cropped to
+the queried subtree. Current Chromium main's implementation is source rationale,
+not proof that the tested Edge version exposes that interface.
+
+The separately opted-in `-SelectionContainerOnlyMetadataIA2` requires the existing
+metadata mode for its pinned generated-header prerequisites. The call branch is
+mutually exclusive with the IAccessible2_3 experiment. It does not repeat that
+failed query, and it still excludes paragraph and endpoint text reads.
+
+Only QI on the same already-bound paragraph is attempted. Canonical identity
+must match. At most two get_selections snapshots require S_OK, exactly one
+nonnull range, complete parent/root identity guards, safe endpoint metadata,
+single identical endpoint object, and stable state, direction and bounded
+nonempty offsets. No endpoint outside the returned current selection is sought.
+The previously reviewed metadata and cleanup helpers are unchanged.
+
+This is intentionally not the old two-interface consistency check with a weaker
+acceptance claim: it reports croppingUnverified=1, does not establish physical
+selection completeness, and is not a text-source admission. The single endpoint
+can still be the already-bound paragraph rather than a Text-role object. A
+failure stops without another object, API retry, proxy registration, traversal,
+text read or system change. Existing UIA and icon correctness assertions remain.
+
+The added structural verifier rejects 55 mutations (249 total across all five
+suites); it does not establish runtime correctness or race/privacy safety.

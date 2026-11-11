@@ -6,6 +6,9 @@
 #if defined(BAOCODE_SELECTED_ENDPOINT_METADATA_IA2_DIAGNOSTIC)
 #include "edge_pdf_endpoint_metadata_probe.h"
 #endif
+#if defined(BAOCODE_SELECTION_CONTAINER_ONLY_METADATA_IA2_DIAGNOSTIC)
+#include "edge_pdf_container_metadata_probe.h"
+#endif
 
 namespace edge_pdf_ia2 {
 // At most one read in each stage, at most two text calls in this entire mode.
@@ -159,7 +162,11 @@ inline void ReadSelectedEmbedded(const ChromiumServiceCandidate& bound, HWND sou
   };
 #if defined(BAOCODE_SELECTED_ENDPOINT_METADATA_IA2_DIAGNOSTIC)
   static_cast<void>(childConsumed);
+#if defined(BAOCODE_SELECTION_CONTAINER_ONLY_METADATA_IA2_DIAGNOSTIC)
+  ProbeContainerOnlyMetadata(child, source, validateChild);
+#else
   ProbeEndpointMetadata(child, source, validateChild);
+#endif
   printf("IA2_ENDPOINT_MODE_DONE|parentTextReads=%d|endpointTextReads=0|paragraphTextReads=0\n", totalReads);
   return;
 #else

@@ -57,7 +57,11 @@ def check(source, parent, script):
         if s.count(token) != count: failures.append('bounded calls: '+token)
     route = '''#if defined(BAOCODE_SELECTED_ENDPOINT_METADATA_IA2_DIAGNOSTIC)
   static_cast<void>(childConsumed);
+#if defined(BAOCODE_SELECTION_CONTAINER_ONLY_METADATA_IA2_DIAGNOSTIC)
+  ProbeContainerOnlyMetadata(child, source, validateChild);
+#else
   ProbeEndpointMetadata(child, source, validateChild);
+#endif
   printf("IA2_ENDPOINT_MODE_DONE|parentTextReads=%d|endpointTextReads=0|paragraphTextReads=0\\n", totalReads);
   return;
 #else

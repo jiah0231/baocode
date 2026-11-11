@@ -5,9 +5,10 @@ param(
   [string]$Output = (Join-Path $PSScriptRoot 'artifacts'),
   [int]$FromX=0, [int]$FromY=0, [int]$ToX=0, [int]$ToY=0,
   [int]$Zoom=100, [int]$ScrollY=450, [int]$ExpectedDpi=0,
-  [switch]$Warm, [switch]$CalibrateOnly, [switch]$IA2, [switch]$ChromiumBoundIA2, [switch]$SelectedEmbeddedIA2, [switch]$SelectedParagraphIA2, [switch]$SelectedEndpointMetadataIA2
+  [switch]$Warm, [switch]$CalibrateOnly, [switch]$IA2, [switch]$ChromiumBoundIA2, [switch]$SelectedEmbeddedIA2, [switch]$SelectedParagraphIA2, [switch]$SelectedEndpointMetadataIA2, [switch]$SelectionContainerOnlyMetadataIA2
 )
 $ErrorActionPreference='Stop'
+if ($SelectionContainerOnlyMetadataIA2 -and !$SelectedEndpointMetadataIA2) { throw 'Container-only metadata mode requires explicit -SelectedEndpointMetadataIA2' }
 if ($SelectedEndpointMetadataIA2 -and !$SelectedParagraphIA2) { throw 'Endpoint metadata mode requires explicit -SelectedParagraphIA2' }
 if ($SelectedParagraphIA2 -and !$SelectedEmbeddedIA2) { throw 'Paragraph mode requires explicit -SelectedEmbeddedIA2' }
 if ($SelectedEmbeddedIA2 -and !$ChromiumBoundIA2) { throw 'Selected object mode requires explicit -ChromiumBoundIA2' }
@@ -106,6 +107,7 @@ try {
     if ($SelectedEmbeddedIA2) { $extraCompile += '/DBAOCODE_SELECTED_EMBEDDED_IA2_DIAGNOSTIC' }
     if ($SelectedParagraphIA2) { $extraCompile += '/DBAOCODE_SELECTED_PARAGRAPH_IA2_DIAGNOSTIC' }
     if ($SelectedEndpointMetadataIA2) { $extraCompile += '/DBAOCODE_SELECTED_ENDPOINT_METADATA_IA2_DIAGNOSTIC' }
+    if ($SelectionContainerOnlyMetadataIA2) { $extraCompile += '/DBAOCODE_SELECTION_CONTAINER_ONLY_METADATA_IA2_DIAGNOSTIC' }
   }
   & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /wd4100 /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX /DBAOCODE_TRANSLATION_ACTION_DIAGNOSTICS "/I$include" @extraCompile $source $impl /Fe:edge_pdf_probe.exe /link user32.lib advapi32.lib gdi32.lib dwmapi.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib oleacc.lib
   if ($LASTEXITCODE -ne 0) { throw 'Probe compilation failed' }
@@ -132,7 +134,7 @@ try {
     ownerPid=$owner.ProcessId; profile=$profile; uri=$uri; zoomRequested=$Zoom; scrollRequested=$ScrollY;
     coordinates='physical pixels relative to GetWindowRect top-left, NOT document points';
     from=@($FromX,$FromY); to=@($ToX,$ToY); warm=$Warm.IsPresent; calibrationOnly=$CalibrateOnly.IsPresent;
-    expectedDpi=$ExpectedDpi; ia2Diagnostic=$IA2.IsPresent; chromiumBound=$ChromiumBoundIA2.IsPresent; selectedEmbedded=$SelectedEmbeddedIA2.IsPresent; selectedParagraph=$SelectedParagraphIA2.IsPresent; endpointMetadata=$SelectedEndpointMetadataIA2.IsPresent; note='PDF fragment zoom/scroll is a request, verify screenshot. Not cold-start acceptance evidence. PrintWindow may render blank GPU content.'
+    expectedDpi=$ExpectedDpi; ia2Diagnostic=$IA2.IsPresent; chromiumBound=$ChromiumBoundIA2.IsPresent; selectedEmbedded=$SelectedEmbeddedIA2.IsPresent; selectedParagraph=$SelectedParagraphIA2.IsPresent; endpointMetadata=$SelectedEndpointMetadataIA2.IsPresent; containerOnlyMetadata=$SelectionContainerOnlyMetadataIA2.IsPresent; note='PDF fragment zoom/scroll is a request, verify screenshot. Not cold-start acceptance evidence. PrintWindow may render blank GPU content.'
   } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath ($prefix+'-manifest.json') -Encoding utf8
   $args=@($owner.ProcessId,$FromX,$FromY,$ToX,$ToY,"`"$prefix`"",$mode,$ExpectedDpi,"`"$edge`"")
   $probe=Start-Process -FilePath (Join-Path $run 'edge_pdf_probe.exe') -ArgumentList $args -PassThru -RedirectStandardOutput ($prefix+'-stdout.log') -RedirectStandardError ($prefix+'-stderr.log')
