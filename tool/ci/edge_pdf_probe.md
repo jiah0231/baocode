@@ -105,3 +105,34 @@ no handwritten vtable or proxy registration is used.
 - https://chromium.googlesource.com/chromium/src/+/HEAD/docs/accessibility/browser/custom_uia_properties.md
 - https://chromium.googlesource.com/chromium/src/+/refs/heads/main/docs/accessibility/browser/ia2_to_uia.md
 - https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-regcustompropseventpatterns
+
+## Opt-in selected-range experiment with supported Chromium identity
+
+`-IA2 -ChromiumBoundIA2` selects a separate diagnostic implementation. It does
+not call the old bridge or change that bridge's failure return. The ordinary
+`-IA2` mode remains unchanged. Only the isolated public fixture is permitted.
+
+The new path binds the exact original safe UIA focus/path and its documented
+UniqueId to a retained service-owned IAccessibleText/IAccessible2/IAccessible.
+All three canonical IUnknown pointers must match. It records the service's
+negative Chromium node ID, containing HWND, original native process IDs and
+readonly focused Pane role/state. Every candidate validation reacquires the
+bounded native focus-only chain, checks the same chain length/role/state, unwraps
+the fresh terminal service and requires its canonical IUnknown to equal the
+retained service. Similar MSAA wrappers alone never suffice. Both retained and
+fresh core ID/HWND values, owning PIDs, safe states and exact-focus UniqueId must
+still match before admission and after all metadata calls.
+
+The experiment then uses the existing single shared selected-read implementation:
+exactly one noncollapsed IA2 selection, explicit bounded offsets, endpoint/identity
+rechecks before text, exactly one get_text call, and full post-read validation
+before text logging. The expected phrase is evaluated only after admission; it
+is never used as an identity shortcut. All original production icon/raw-UIA
+assertions remain unchanged, so a correct diagnostic IA2 string alone cannot
+turn this into a production or release success.
+
+This remains a fixed public-fixture investigation. Browser identity/profile/URI
+are verified at setup, and retained process lifetime/creation time/HWND/PID and
+foreground are rechecked during execution. The experiment does not claim to
+prove immutable document contents or every navigation race. Its source-mutation
+tests do not replace runtime safety tests. No translation request is sent.

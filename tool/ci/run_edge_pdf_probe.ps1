@@ -5,9 +5,10 @@ param(
   [string]$Output = (Join-Path $PSScriptRoot 'artifacts'),
   [int]$FromX=0, [int]$FromY=0, [int]$ToX=0, [int]$ToY=0,
   [int]$Zoom=100, [int]$ScrollY=450, [int]$ExpectedDpi=0,
-  [switch]$Warm, [switch]$CalibrateOnly, [switch]$IA2
+  [switch]$Warm, [switch]$CalibrateOnly, [switch]$IA2, [switch]$ChromiumBoundIA2
 )
 $ErrorActionPreference='Stop'
+if ($ChromiumBoundIA2 -and !$IA2) { throw 'Chromium identity comparison requires explicit -IA2' }
 if ($env:GITHUB_ACTIONS -cne 'true' -or $env:OS -cne 'Windows_NT' -or $env:BAOCODE_DISPOSABLE_UI_TEST -cne '1') { throw 'Requires explicitly enabled disposable Windows GitHub Actions desktop' }
 $expected='d159155dffad685a388562d1d2a4e0f869a5473be90c6c06381ab68a381451dc'
 if (!$Pdf) {
@@ -73,6 +74,7 @@ try {
     & midl.exe /nologo /env x64 "/I$vendor" /out $run /h ia2_text_generated.h /iid ia2_text_i.c (Join-Path $vendor 'AccessibleText.idl')
     if ($LASTEXITCODE -ne 0) { throw 'Pinned official IA2 IDL header generation failed' }
     $extraCompile=@('/DBAOCODE_PUBLIC_PDF_IA2_DIAGNOSTIC',"/I$run")
+    if ($ChromiumBoundIA2) { $extraCompile += '/DBAOCODE_CHROMIUM_BOUND_IA2_DIAGNOSTIC' }
   }
   & cl.exe /nologo /std:c++17 /EHsc /W4 /WX /wd4100 /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX /DBAOCODE_TRANSLATION_ACTION_DIAGNOSTICS "/I$include" @extraCompile $source $impl /Fe:edge_pdf_probe.exe /link user32.lib advapi32.lib gdi32.lib dwmapi.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib oleacc.lib
   if ($LASTEXITCODE -ne 0) { throw 'Probe compilation failed' }

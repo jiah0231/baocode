@@ -14,6 +14,9 @@
 #include <vector>
 #if defined(BAOCODE_PUBLIC_PDF_IA2_DIAGNOSTIC)
 #include "edge_pdf_ia2_probe.h"
+#if defined(BAOCODE_CHROMIUM_BOUND_IA2_DIAGNOSTIC)
+#include "edge_pdf_chromium_selection_probe.h"
+#endif
 #endif
 using Microsoft::WRL::ComPtr;
 namespace {
@@ -448,7 +451,11 @@ int wmain(int argc,wchar_t** argv) {
     // snapshot to one Document and one focused non-Document TextPattern.
     puts("RAW_UIA_PHASE|BEFORE_IA2");
     Selected(uia,true,1,true);
+#if defined(BAOCODE_CHROMIUM_BOUND_IA2_DIAGNOSTIC)
+    edge_pdf_ia2::RunChromiumBoundSelection(uia.Get(), browser, [] { Scoped(); });
+#else
     edge_pdf_ia2::Run(uia.Get(), browser, [] { Scoped(); });
+#endif
     puts("RAW_UIA_PHASE|AFTER_IA2");
     phraseMatched=false;
     int selected=Selected(uia,true,1,true);
