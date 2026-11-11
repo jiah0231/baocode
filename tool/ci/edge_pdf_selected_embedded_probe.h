@@ -3,6 +3,9 @@
 #if defined(BAOCODE_SELECTED_PARAGRAPH_IA2_DIAGNOSTIC)
 #include "AccessibleRole.h"
 #endif
+#if defined(BAOCODE_SELECTED_ENDPOINT_METADATA_IA2_DIAGNOSTIC)
+#include "edge_pdf_endpoint_metadata_probe.h"
+#endif
 
 namespace edge_pdf_ia2 {
 // At most one read in each stage, at most two text calls in this entire mode.
@@ -154,6 +157,12 @@ inline void ReadSelectedEmbedded(const ChromiumServiceCandidate& bound, HWND sou
     printf("IA2_EMBEDDED_CHILD_VALIDATION|number=%d|accepted=%d\n", childValidations, valid);
     return valid;
   };
+#if defined(BAOCODE_SELECTED_ENDPOINT_METADATA_IA2_DIAGNOSTIC)
+  static_cast<void>(childConsumed);
+  ProbeEndpointMetadata(child, source, validateChild);
+  printf("IA2_ENDPOINT_MODE_DONE|parentTextReads=%d|endpointTextReads=0|paragraphTextReads=0\n", totalReads);
+  return;
+#else
   long childStart = -1, childEnd = -1;
   std::wstring selected;
   if (!ReadEmbeddedStage(child.text, validateChild, 4096, &childConsumed,
@@ -166,5 +175,6 @@ inline void ReadSelectedEmbedded(const ChromiumServiceCandidate& bound, HWND sou
   puts("");
   printf("IA2_EMBEDDED_RESULT|VAD_method=%d|anotherPlaceholder=%d|totalReads=%d|childValidations=%d|one_level_only=1\n",
       selected == L"VAD method", selected == L"\xFFFC", totalReads, childValidations);
+#endif
 }
 }  // namespace edge_pdf_ia2

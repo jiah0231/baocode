@@ -198,3 +198,59 @@ the official enum, not a handwritten numeric role.
 
 https://chromium.googlesource.com/chromium/src/+/refs/heads/main/ui/accessibility/platform/ax_platform_node_win.cc
 https://raw.githubusercontent.com/LinuxA11y/IAccessible2/c9ae003d9c85eb707716928de97e055f5b77189c/api/AccessibleRole.idl
+
+
+## Paragraph counterexample and explicit endpoint metadata mode
+
+Commit 196472e205dbfda2cc38feaaf420d3929a4585bb, first run
+https://github.com/jiah0231/baocode/actions/runs/42948756454, confirmed the unique
+child's readonly IA2 paragraph role. The source/selection checks passed, but
+its current 1025..1035 slice returned `e a multim` while the screenshot showed
+`VAD method`. This paragraph text fallback is rejected, not a product fix.
+
+`-SelectedEndpointMetadataIA2` is a new explicit diagnostic mode that requires
+`-SelectedParagraphIA2` (and its existing prerequisites). It replaces the child
+paragraph text-read branch; it does not run alongside it. The parent one-character
+U+FFFC read remains solely to establish the existing exact selected-child binding.
+New endpoint and paragraph text calls in this mode are both zero.
+
+Only the bound paragraph is queried for IAccessible2_3 and
+IAccessibleTextSelectionContainer. Both interfaces must have the paragraph's
+canonical IUnknown. At most two explicit snapshots call each selection getter
+once, with full current root/paragraph validation around each stage. Only S_OK
+and exactly one range with nonnull endpoints are accepted. Returned endpoints
+are checked for canonical interface identity, native owner, ID, role and safe
+readonly states. Only readonly Text or the canonical already-bound paragraph is
+admitted for metadata. No generic Grouping expansion or enumeration is used.
+
+The raw anchor/active identities must match the container start/end identities
+after accounting for startIsActive; complete metadata must agree within and
+between snapshots. Raw offsets are NOT compared to hypertext offsets because
+non-leaf raw positions can be child indexes. They must never be passed to text
+getters. An endpoint mismatch/cropping, multiple range, unsafe or changing
+object, different endpoint objects, collapsed/unbounded selected range or
+unsupported interface stops this mode. No traversal tries to explain a mismatch.
+
+The single-object check includes the already-bound paragraph, not just Text-role
+endpoints. A stable result is not proof that a Text-role endpoint was found.
+Even a successful metadata result is not evidence that text matches the screen
+and does not authorize endpoint text reads. Any later text read needs separate
+review with direct hypertext coordinates and complete source/selection guards.
+The original UIA expected-text and production-icon assertions are unchanged.
+
+Official IDLs are unmodified, pinned to the same LinuxA11y commit as before:
+- api/Accessible2_2.idl: e87fa6f8feda4a4fdcd4bf0faeb8cba1249afff91d33b84e60234ca86bdcf898
+- api/Accessible2_3.idl: 2dcb0d4a9301df2deed9db0d1c7c251c7d840acd565f2d2d6fa1800cd4d90f12
+- api/AccessibleTextSelectionContainer.idl: f829fb3079cb35e0490c85e2b13efb2b85c89b99ef7efe37539f21f185d93765
+
+Returned arrays release their owned interface references and then use
+CoTaskMemFree. To avoid trusting an abnormal count for unbounded cleanup, only
+counts 0..64 are iterated; larger/negative replies are rejected and their block
+is freed without dereferencing elements. Any remaining COM references live only
+until this bounded, disposable probe exits. No response objects outside the
+sole accepted range are queried for metadata.
+
+The additional source-shape verifier rejects 66 mutations, including endpoint
+text calls and tree traversal. It is not runtime privacy or race-safety testing.
+No product fallback, main-branch change, gate bypass, merge or publication is
+part of this diagnostic.
