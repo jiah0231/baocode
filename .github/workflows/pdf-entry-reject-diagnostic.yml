@@ -1,0 +1,113 @@
+name: Diagnose terminal PDF focus rejection
+on:
+  push:
+    branches: [diagnostic/pdf-entry-reject-20261111]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cold_case:
+    if: github.repository == 'jiah0231/baocode'
+    runs-on: windows-2025
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - key: a
+            sha: 1e63028e029b5decc6e7dee915dc59679accab0c
+          - key: b
+            sha: 5d61828f0b794cddd5bd9ef12e66fd36fe1a854e
+          - key: c
+            sha: 1308fb3b70328aea8ca549ef4d1a287865d413da
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: diagnostic
+          persist-credentials: false
+      # All source checkouts support strict three-source tests; only the selected
+      # matrix baseline launches an application, exactly once on this runner.
+      - uses: actions/checkout@v5
+        with:
+          ref: 1e63028e029b5decc6e7dee915dc59679accab0c
+          path: baseline-a
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          ref: 5d61828f0b794cddd5bd9ef12e66fd36fe1a854e
+          path: baseline-b
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          ref: 1308fb3b70328aea8ca549ef4d1a287865d413da
+          path: baseline-c
+          persist-credentials: false
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Verify strict source tests
+        shell: pwsh
+        run: |
+          python diagnostic/tool/ci/pdf_entry_reject_diagnostic/test_inject_focus_diagnostics.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: One original cold entry gate
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+          BASELINE_KEY: ${{ matrix.key }}
+          BASELINE_SHA: ${{ matrix.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $root = $env:GITHUB_WORKSPACE
+          $key = $env:BASELINE_KEY
+          $sha = $env:BASELINE_SHA
+          $case = "cold-$key"
+          $checkout = Join-Path $root "baseline-$key"
+          $evidence = Join-Path $root 'reject-evidence'
+          $output = Join-Path $evidence $case
+          New-Item -ItemType Directory -Force $output | Out-Null
+          python "$root/diagnostic/tool/ci/pdf_entry_reject_diagnostic/inject_focus_diagnostics.py" $checkout --sha $sha *> "$evidence/injection.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Diagnostic injection rejected baseline' }
+          $changed = @(git -C $checkout diff --name-only)
+          if ($LASTEXITCODE -ne 0 -or $changed.Count -ne 1 -or $changed[0] -ne 'windows/runner/translation_selection_action.cpp') {
+            throw 'Unexpected modified baseline files'
+          }
+          $changed | Set-Content "$evidence/changed-files.txt"
+          git -C $checkout diff -- windows/runner/translation_selection_action.cpp | Set-Content "$evidence/diagnostic.diff"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot record diagnostic diff' }
+          $actual = git -C $checkout rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $actual -ne $sha) { throw 'Baseline identity changed' }
+          $originalSha = $env:GITHUB_SHA
+          $env:GITHUB_SHA = $sha
+          $began = [DateTime]::UtcNow.ToString('o')
+          Write-Host "FOCUS_CASE_BEGIN|case=$case|sha=$sha|exitCode=pending"
+          Push-Location $checkout
+          try {
+            & pwsh -NoProfile -File tool/ci/windows_translation_desktop_entry_smoke.ps1 -OutputDirectory $output *> "$output/wrapper.log"
+            $code = $LASTEXITCODE
+          } finally {
+            Pop-Location
+            $env:GITHUB_SHA = $originalSha
+          }
+          $edgeVersion = $null
+          $coverageStatus = 'missing'
+          $coveragePath = Join-Path $output 'desktop-entry-coverage.json'
+          if (Test-Path -LiteralPath $coveragePath) {
+            try {
+              $coverage = Get-Content -Raw -LiteralPath $coveragePath | ConvertFrom-Json
+              $edgeCases = @($coverage.results | Where-Object { $_.id -eq 'edgePdf' })
+              if ($edgeCases.Count -eq 1 -and $edgeCases[0].version) {
+                $edgeVersion = $edgeCases[0].version
+                $coverageStatus = 'recorded'
+              } else { $coverageStatus = 'edgeVersionUnavailable' }
+            } catch { $coverageStatus = 'invalidCoverageJson' }
+          }
+          [ordered]@{ case=$case; baseline=$sha; beganUtc=$began; endedUtc=[DateTime]::UtcNow.ToString('o'); exitCode=$code; runnerImage=$env:ImageVersion; edgeVersion=$edgeVersion; edgeVersionEvidence=$coverageStatus } | ConvertTo-Json -Depth 6 | Set-Content "$evidence/comparison.json"
+          Get-Content "$output/wrapper.log" | Write-Host
+          Write-Host "FOCUS_CASE_END|case=$case|sha=$sha|exitCode=$code"
+          exit $code
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: pdf-focus-reject-${{ matrix.key }}
+          if-no-files-found: error
+          path: reject-evidence/
