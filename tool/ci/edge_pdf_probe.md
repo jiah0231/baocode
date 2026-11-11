@@ -69,3 +69,39 @@ References:
 - https://learn.microsoft.com/en-us/windows/win32/com/rules-for-implementing-queryinterface
 - https://learn.microsoft.com/en-us/windows/win32/winauto/getting-an-accessible-object-interface-pointer
 - https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomation-elementfromiaccessible
+
+## Chromium documented UniqueId identity comparison
+
+The generic service-owned ElementFromIAccessible mapping failed in both
+observations on Edge 156 at commit 0388fc4. A separate metadata-only helper now
+compares Chromium's documented custom UniqueId property on ONLY the already
+bound exact UIA focus with IAccessible2::uniqueID on the retained service
+object. No ItemContainer search, tree scan or guessed runtime-ID field is used.
+
+The helper uses the official GUID CC7EEB32-4B62-4F4C-AFF6-1C2E5752AD8E, name
+UniqueId and UIAutomationType_String. Microsoft requires both client and
+provider to register custom properties at runtime. IUIAutomationRegistrar's
+registration is process-global metadata that expires with the diagnostic
+process, not persistent Windows registry/DLL/typelib/proxy installation. The
+helper registers only this documented property once and never hard-codes a
+numeric property ID. A UiaLookupId-only experiment is omitted because it cannot
+prove a usable registration for a separate client process.
+
+The IAccessible2 interface must share non-null canonical IUnknown identity
+with both the retained IAccessibleText and its own IAccessible. Only get_uniqueID
+and get_windowHandle are read. HWND/root/process and existing safe source/focus
+checks bracket each of two observations on the retained object. The exact UIA
+focus value must be a nonempty VT_BSTR of at most 11 characters, fully equal to
+the decimal signed IA2 ID; there is no extra sign negation. Arbitrary returned
+strings are never logged. Positive matching/stable ID metadata alone does not
+allow a selected-text read, clear the failed native chain, establish navigation
+race safety, or change release status. The outer branch returns unconditionally.
+
+Accessible2.idl, AccessibleRelation.idl and AccessibleStates.idl use the same
+pinned LinuxA11y/IAccessible2 revision as the existing text IDL. All three retain
+their licenses and source bytes. MIDL generates official core/dependency headers;
+no handwritten vtable or proxy registration is used.
+
+- https://chromium.googlesource.com/chromium/src/+/HEAD/docs/accessibility/browser/custom_uia_properties.md
+- https://chromium.googlesource.com/chromium/src/+/refs/heads/main/docs/accessibility/browser/ia2_to_uia.md
+- https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-regcustompropseventpatterns

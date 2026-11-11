@@ -51,6 +51,9 @@ try {
     $pins=@{
       'AccessibleText.idl'='0f86b12a904044a7f9f0bc103cc25181bdec18b962c07a9fca13fd2b53ffb0a3'
       'IA2CommonTypes.idl'='84451f99df2a73a3e9e6548c5a079745c92c35ab51642081911ee53064cd3a94'
+      'Accessible2.idl'='e3d6a3fa6f72a1e630c746abba9376508cf327a4ae7648fcd176cff8c90317f6'
+      'AccessibleRelation.idl'='651febf3ccc1ceb76e8523ed3b6c1746ca578ead337d12b8bc20b6dde81636b0'
+      'AccessibleStates.idl'='51124be3bd0f41de60a6120a7d50b693b88545de6634b888c4262b87aa2d1306'
     }
     foreach($name in $pins.Keys) {
       # Normalize only Windows checkout line endings; verify all source content.
@@ -61,6 +64,12 @@ try {
     }
     & midl.exe /nologo /env x64 "/I$vendor" /out $run /h IA2CommonTypes.h (Join-Path $vendor 'IA2CommonTypes.idl')
     if ($LASTEXITCODE -ne 0) { throw 'Pinned official IA2 common types generation failed' }
+    foreach($name in @('AccessibleRelation','AccessibleStates')) {
+      & midl.exe /nologo /env x64 "/I$vendor" /out $run /h ($name+'.h') (Join-Path $vendor ($name+'.idl'))
+      if ($LASTEXITCODE -ne 0) { throw "Pinned official IA2 dependency generation failed: $name" }
+    }
+    & midl.exe /nologo /env x64 "/I$vendor" /out $run /h ia2_core_generated.h (Join-Path $vendor 'Accessible2.idl')
+    if ($LASTEXITCODE -ne 0) { throw 'Pinned official IA2 core generation failed' }
     & midl.exe /nologo /env x64 "/I$vendor" /out $run /h ia2_text_generated.h /iid ia2_text_i.c (Join-Path $vendor 'AccessibleText.idl')
     if ($LASTEXITCODE -ne 0) { throw 'Pinned official IA2 IDL header generation failed' }
     $extraCompile=@('/DBAOCODE_PUBLIC_PDF_IA2_DIAGNOSTIC',"/I$run")

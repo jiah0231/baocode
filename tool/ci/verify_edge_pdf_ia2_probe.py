@@ -144,6 +144,36 @@ def check(header: str, script: str | None = None) -> list[str]:
                            'validateMappedNativeRole(', 'validateNativeCandidate('):
         require(forbidden_read not in helper, 'service metadata helper forbids: ' + forbidden_read)
 
+    unique_start = src.find('inlinevoidInspectChromiumUniqueIdMetadata(')
+    unique_end = src.find('inlinevoidInspectServiceMappingMetadata(', unique_start)
+    unique = src[unique_start:unique_end] if unique_start >= 0 and unique_end > unique_start else ''
+    require(bool(unique), 'locate Chromium unique ID metadata helper')
+    require(src.count('InspectChromiumUniqueIdMetadata(') == 2 and
+            'InspectChromiumUniqueIdMetadata(focus,source,original,serviceAccessible.Get(),serviceText.Get(),validateFocus);' in helper,
+            'unique ID helper called only from rejected-branch metadata helper')
+    for token, label in [
+        ('if (!validateFocus() || !SafeAccessible(original, source) || !SafeAccessible(serviceAccessible, source)) return;', 'unique ID source safety before metadata'),
+        ('coreIdentity && textIdentity && accessibleIdentity && coreIdentity.Get() == textIdentity.Get() && coreIdentity.Get() == accessibleIdentity.Get()', 'unique ID belongs to same retained service object'),
+        ('const GUID propertyGuid = {0xcc7eeb32, 0x4b62, 0x4f4c, {0xaf, 0xf6, 0x1c, 0x2e, 0x57, 0x52, 0xad, 0x8e}}', 'exact documented Chromium property GUID'),
+        ('UIAutomationPropertyInfo propertyInfo = {propertyGuid, L"UniqueId", UIAutomationType_String}', 'documented unique ID name and string type'),
+        ('if (hr != S_OK || propertyId <= 0) return;', 'process-local property registration must succeed'),
+        ('for (int observation = 0; observation < 2; ++observation)', 'two unique ID observations only'),
+        ('windowHr == S_OK && native && GetAncestor(native, GA_ROOT) == source && sourcePid && nativePid == sourcePid', 'IA2 unique ID window and PID binding'),
+        ('if (idHr != S_OK || nodeId == 0 || !sourceMatches || !validateFocus()) return;', 'unique ID must exist with current exact source'),
+        ('focus->GetCurrentPropertyValueEx(propertyId, TRUE, &value)', 'read custom property only from original exact focus'),
+        ('valueHr == S_OK && value.vt == VT_BSTR && value.bstrVal && SysStringLen(value.bstrVal) > 0 && SysStringLen(value.bstrVal) <= 11', 'strict bounded signed integer string metadata'),
+        ('std::wstring(value.bstrVal, SysStringLen(value.bstrVal)) == std::to_wstring(nodeId)', 'compare complete signed unique ID without negation'),
+        ('VariantClear(&value)', 'release provider property value'),
+        ('validateFocus() && SafeAccessible(original, source) && SafeAccessible(serviceAccessible, source)', 'unique ID source revalidation after observation'),
+    ]:
+        require(compact(token) in unique, label)
+    require(src.count('->RegisterProperty(') == 1, 'exactly one process-local property registration')
+    for forbidden_read in ('ReadSelected(', 'ReadOffsets(', 'get_nSelections(', 'get_selection(',
+                           'get_text(', 'get_characterExtents(', 'QueryText(', 'Run(',
+                           'validateMappedNativeRole(', 'validateNativeCandidate(',
+                           'FindItemByProperty(', 'GetCurrentPatternAs(', 'GetRuntimeId('):
+        require(forbidden_read not in unique, 'unique ID metadata helper forbids: ' + forbidden_read)
+
     read = src.find('text->get_text(start,end,&selected)')
     pre = src.find('beforeStart!=start||beforeEnd!=end')
     post = src.find('afterStart==start&&afterEnd==end')
@@ -179,6 +209,17 @@ def self_test(header: str, script: str | None) -> int:
     if baseline:
         raise AssertionError('Baseline failed: ' + '; '.join(baseline))
     mutations = {
+        'unique_extra_selection_read': ('core->get_uniqueID(&nodeId)', 'ReadOffsets(); core->get_uniqueID(&nodeId)'),
+        'unique_wrong_target': ('focus->GetCurrentPropertyValueEx', 'mapped->GetCurrentPropertyValueEx'),
+        'unique_wrong_guid': ('0xcc7eeb32', '0xcc7eeb33'),
+        'unique_unbounded_string': ('SysStringLen(value.bstrVal) <= 11', 'true'),
+        'unique_wrong_variant': ('value.vt == VT_BSTR', 'true'),
+        'unique_ignore_id_failure': ('idHr != S_OK || nodeId == 0', 'false'),
+        'unique_ignore_core_identity': ('coreIdentity.Get() == textIdentity.Get()', 'true'),
+        'unique_ignore_native_root': ('windowHr == S_OK && native &&', 'true &&'),
+        'unique_lost_native_pid': ('sourcePid && nativePid == sourcePid', 'sourcePid'),
+        'unique_negated_id': ('std::to_wstring(nodeId)', 'std::to_wstring(-nodeId)'),
+        'unique_extra_registration': ('hr = registrar->RegisterProperty(&propertyInfo, &propertyId);', 'registrar->RegisterProperty(&propertyInfo, &propertyId); hr = registrar->RegisterProperty(&propertyInfo, &propertyId);'),
         'service_metadata_extra_read': ('serviceText.As(&serviceAccessible)', 'serviceText.get_nSelections(); serviceText.As(&serviceAccessible)'),
         'service_metadata_read_admission': ('serviceText.As(&serviceAccessible)', 'ReadSelected(); serviceText.As(&serviceAccessible)'),
         'service_metadata_repeat_unbounded': ('observation < 2', 'observation < 200'),
