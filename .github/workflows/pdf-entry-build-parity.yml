@@ -1,0 +1,87 @@
+# One predeclared four-cell comparison. No retry, release, model, or user desktop.
+name: Compare PDF entry build configurations
+on:
+  push:
+    branches: [diagnostic/pdf-entry-build-parity-20261111]
+permissions:
+  contents: read
+jobs:
+  cold_configuration:
+    if: github.repository == 'jiah0231/baocode'
+    runs-on: windows-2025
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [legacy-diagnostic, legacy-quiet, release-diagnostic, release-quiet]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: experiment
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          ref: 1308fb3b70328aea8ca549ef4d1a287865d413da
+          path: baseline
+          persist-credentials: false
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Verify compiler-only transformation and unchanged assertions
+        shell: pwsh
+        run: |
+          python experiment/tool/ci/pdf_entry_build_parity/test_compile_variant.py baseline
+          if ($LASTEXITCODE -ne 0) { throw 'Parity transformation tests failed' }
+          python -O experiment/tool/ci/pdf_entry_build_parity/test_compile_variant.py baseline
+          if ($LASTEXITCODE -ne 0) { throw 'Optimized parity transformation tests failed' }
+      - name: Run one original cold gesture with selected compiler settings
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+          PARITY_MODE: ${{ matrix.mode }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $root = $env:GITHUB_WORKSPACE
+          $checkout = Join-Path $root 'baseline'
+          $evidence = Join-Path $root 'parity-evidence'
+          $output = Join-Path $evidence 'original-smoke'
+          New-Item -ItemType Directory -Force $output | Out-Null
+          python "$root/experiment/tool/ci/pdf_entry_build_parity/make_compile_variant.py" $checkout $env:PARITY_MODE *> "$evidence/transformation.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Compile-only transformation rejected the baseline' }
+          git -C $checkout diff -- tool/ci/windows_translation_desktop_entry_smoke.ps1 | Set-Content "$evidence/compiler-only.diff"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot record exact compiler diff' }
+          $originalSha = $env:GITHUB_SHA
+          $env:GITHUB_SHA = '1308fb3b70328aea8ca549ef4d1a287865d413da'
+          $began = [DateTime]::UtcNow.ToString('o')
+          Write-Host "PARITY_CASE_BEGIN|mode=$env:PARITY_MODE|baseline=$env:GITHUB_SHA|exitCode=pending"
+          Push-Location $checkout
+          try {
+            & pwsh -NoProfile -File tool/ci/windows_translation_desktop_entry_smoke.ps1 -OutputDirectory $output *> "$output/wrapper.log"
+            $code = $LASTEXITCODE
+          } finally {
+            Pop-Location
+            $env:GITHUB_SHA = $originalSha
+          }
+          $edgeVersion = $null
+          $coverageStatus = 'missing'
+          $coveragePath = Join-Path $output 'desktop-entry-coverage.json'
+          if (Test-Path -LiteralPath $coveragePath) {
+            try {
+              $coverage = Get-Content -Raw -LiteralPath $coveragePath | ConvertFrom-Json
+              $edgeCases = @($coverage.results | Where-Object { $_.id -eq 'edgePdf' })
+              if ($edgeCases.Count -eq 1 -and $edgeCases[0].version) {
+                $edgeVersion = $edgeCases[0].version
+                $coverageStatus = 'recorded'
+              } else { $coverageStatus = 'edgeVersionUnavailable' }
+            } catch { $coverageStatus = 'invalidCoverageJson' }
+          }
+          [ordered]@{ mode=$env:PARITY_MODE; baseline='1308fb3b70328aea8ca549ef4d1a287865d413da'; beganUtc=$began; endedUtc=[DateTime]::UtcNow.ToString('o'); exitCode=$code; runnerImage=$env:ImageVersion; edgeVersion=$edgeVersion; edgeVersionEvidence=$coverageStatus; originalReleaseGateUnchanged=$true; nativeHarnessOnly=$true } | ConvertTo-Json -Depth 6 | Set-Content "$evidence/comparison.json"
+          Get-Content "$output/wrapper.log" | Write-Host
+          Write-Host "PARITY_CASE_END|mode=$env:PARITY_MODE|exitCode=$code"
+          exit $code
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: pdf-entry-parity-${{ matrix.mode }}
+          retention-days: 7
+          if-no-files-found: error
+          path: parity-evidence/
