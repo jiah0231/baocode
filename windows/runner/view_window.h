@@ -69,6 +69,11 @@ class ViewWindow : public Win32Window {
     return std::nullopt;
   }
 
+  // Only bounded tool views opt into Flutter accessibility. Workspace views
+  // keep the upstream crash/per-frame-cost mitigation even if another view
+  // of the same engine has enabled semantics.
+  virtual bool ExposesAccessibility() const { return false; }
+
   // The engine's turn at the window's messages: a result when it handled
   // one.
   virtual std::optional<LRESULT> EngineMessage(HWND window, UINT message,

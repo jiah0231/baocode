@@ -237,11 +237,8 @@ void main() {
     );
     // Only the find bar's portal must be absent while search is closed;
     // unrelated chat controls may keep their own portals mounted.
-    final findPortal = find.descendant(
-      of: find.byWidgetPredicate(
-        (widget) => widget.runtimeType.toString() == '_OverRail',
-      ),
-      matching: find.byType(OverlayPortal),
+    final findPortal = find.byKey(
+      const ValueKey('chat-find-over-rail-portal'),
     );
     expect(findPortal, findsNothing);
     ChatHistoryView.find(_historyKey, query: 'Question');

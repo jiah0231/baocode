@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/main.dart';
+import 'package:baocode/window/app_window_semantics.dart';
 import 'package:baocode/platform/app_platform.dart';
 import 'package:baocode/workspace/workspace.dart';
 
@@ -47,6 +48,39 @@ void main() {
     );
     semantics.dispose();
   }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
+
+  testWidgets('only the translation tool view keeps semantics when excluded', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    addTearDown(semantics.dispose);
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: Column(
+          children: [
+            AppWindowSemantics(
+              exclude: true,
+              child: Semantics(
+                label: 'Workspace history',
+                child: const SizedBox(width: 100, height: 20),
+              ),
+            ),
+            AppWindowSemantics(
+              exclude: true,
+              translation: true,
+              child: Semantics(
+                label: 'Fresh translation source',
+                child: const SizedBox(width: 100, height: 20),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    expect(find.bySemanticsLabel('Workspace history'), findsNothing);
+    expect(find.bySemanticsLabel('Fresh translation source'), findsOneWidget);
+  });
 
   testWidgets('elsewhere, the app\'s semantics as they are', (tester) async {
     final semantics = tester.ensureSemantics();

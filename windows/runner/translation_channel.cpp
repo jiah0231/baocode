@@ -62,6 +62,10 @@ class TranslationPanelWindow : public IdeWindow {
       : IdeWindow(engine, messenger), hide_(std::move(hide)) {}
   void Detach() { hide_ = nullptr; }
  protected:
+  // This bounded source/result popup remains readable by UIA; the main
+  // workspace and every ordinary IDE/chat view keep accessibility blocked.
+  bool ExposesAccessibility() const override { return true; }
+
   std::optional<LRESULT> ViewMessage(HWND, UINT message, WPARAM wparam,
                                      LPARAM lparam) override {
     if (wparam != VK_F4) return std::nullopt;

@@ -3069,6 +3069,7 @@ class _OverRailState extends State<_OverRail> {
 
   @override
   Widget build(BuildContext context) => OverlayPortal.overlayChildLayoutBuilder(
+    key: const ValueKey('chat-find-over-rail-portal'),
     controller: _portal,
     overlayChildBuilder: (context, info) {
       final rect = MatrixUtils.transformRect(

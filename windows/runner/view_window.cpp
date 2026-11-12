@@ -253,8 +253,10 @@ LRESULT CALLBACK ViewWindow::ViewProc(HWND hwnd, UINT const message,
   // which costs every frame (PipelineOwner.flushSemantics), and its hit test
   // over that tree crashes on a child it has no node for
   // (FlutterPlatformNodeDelegateWindows::HitTestSync, flutter/flutter#195653).
-  // The app makes no claim to work with screen readers.
-  if (message == WM_GETOBJECT) {
+  // Workspace views keep this mitigation. Only explicitly opted-in bounded
+  // tool views (the translation popup) retain Flutter's accessibility answer.
+  if (message == WM_GETOBJECT &&
+      (that == nullptr || !that->ExposesAccessibility())) {
     return ::DefWindowProcW(hwnd, message, wparam, lparam);
   }
 

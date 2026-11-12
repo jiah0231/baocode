@@ -87,6 +87,7 @@ import 'platform/memory_budget.dart';
 import 'platform/native_md_clipboard.dart';
 import 'platform/app_binding.dart';
 import 'platform/app_platform.dart';
+import 'window/app_window_semantics.dart';
 import 'platform/data_dir.dart';
 import 'platform/error_log.dart';
 import 'platform/event_log.dart';
@@ -835,7 +836,7 @@ class BaoCodeApp extends StatefulWidget {
   final TerminalBackend? terminalBackend;
 
   /// Whether each window's app has no semantics (see
-  /// _BaoCodeAppState._withoutSemantics): on Windows itself, unless a test
+  /// [AppWindowSemantics]): on Windows itself, unless a test
   /// says. Tests that target Windows from another host keep theirs, to find
   /// widgets by.
   @visibleForTesting
@@ -1153,8 +1154,10 @@ class _BaoCodeAppState extends State<BaoCodeApp>
     AppWindow window, {
     bool translation = false,
     int? viewId,
-  }) => _withoutSemantics(
-    MaterialApp(
+  }) => AppWindowSemantics(
+    exclude: BaoCodeApp.debugWithoutSemantics ?? AppPlatform.isWindowsHost,
+    translation: translation,
+    child: MaterialApp(
       key: translation
           ? ValueKey(TranslationHost.instance.panelGeneration)
           : null,
@@ -1233,18 +1236,4 @@ class _BaoCodeAppState extends State<BaoCodeApp>
             ),
     ),
   );
-
-  /// [app] with no semantics on Windows: only a screen reader would read
-  /// them, and the app makes no claim to work with one. Windows' engine
-  /// turns them on at another app's first question for the view's
-  /// accessibility (input methods and translators ask too, before the view
-  /// answers them itself, see view_window.cpp), and its bridge then
-  /// crashes on the tree as the app's changes move it: on a node with no
-  /// parent in CreateRemoveReparentedNodesUpdate (at every start on 1.9.4,
-  /// on some machines), or in HitTestSync. With nothing under the root
-  /// there is nothing to move, and no tree to keep up each frame.
-  static Widget _withoutSemantics(Widget app) =>
-      (BaoCodeApp.debugWithoutSemantics ?? AppPlatform.isWindowsHost)
-      ? ExcludeSemantics(child: app)
-      : app;
 }
