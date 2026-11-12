@@ -14,6 +14,7 @@ import '../chat/session_query.dart' show SessionQueryService;
 import '../images/image_tools.dart' show ImageTools;
 import '../kernel/agent_kernel.dart';
 import '../kernel/claude_code/claude_sdk_tools.dart';
+import '../kernel/kernel_registry.dart';
 import '../kernel/queued_messages.dart';
 import '../link/chat_codec.dart';
 import '../link/link_platform.dart';
