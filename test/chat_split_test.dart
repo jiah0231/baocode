@@ -46,6 +46,14 @@ Future<Workspace> pumpApp(WidgetTester tester, {double width = 1400}) async {
   return workspace;
 }
 
+/// Locate the actual labeled control, not the platform accessibility tree.
+/// Windows deliberately excludes workspace semantics to avoid the engine's
+/// streaming-tree crash; these tests exercise pointer actions and layout.
+Finder labeledControl(String label) => find.byWidgetPredicate(
+  (widget) => widget is Semantics && widget.properties.label == label,
+  description: 'control labeled "$label"',
+);
+
 Finder inSidebar(Finder finder) =>
     find.descendant(of: find.byType(Sidebar), matching: finder);
 
@@ -455,20 +463,17 @@ void main() {
   testWidgets('a closed pane gives its place to the one beside it; '
       'archived, an agent\'s pane closes', (tester) async {
     final workspace = await pumpApp(tester);
-    expect(find.bySemanticsLabel('Close pane'), findsNothing);
+    expect(labeledControl('Close pane'), findsNothing);
     await dropAgent(tester, second, near(gridRect(tester), PaneSide.right));
     await dropAgent(
       tester,
       third,
       near(tester.getRect(pane(second)), PaneSide.bottom),
     );
-    expect(find.bySemanticsLabel('Close pane'), findsNWidgets(3));
+    expect(labeledControl('Close pane'), findsNWidgets(3));
 
     await tester.tap(
-      find.descendant(
-        of: pane(third),
-        matching: find.bySemanticsLabel('Close pane'),
-      ),
+      find.descendant(of: pane(third), matching: labeledControl('Close pane')),
     );
     await tester.pumpAndSettle();
     expect(paneTitles(tester), unorderedEquals([first, second]));
@@ -482,7 +487,7 @@ void main() {
     expect(paneTitles(tester), [first]);
     expect(tester.getRect(pane(first)), gridRect(tester));
     expect(workspace.current!.title, first);
-    expect(find.bySemanticsLabel('Close pane'), findsNothing);
+    expect(labeledControl('Close pane'), findsNothing);
   });
 
   testWidgets('on macOS a top pane\'s title bar drags the pane, not the '
@@ -739,7 +744,7 @@ void main() {
         (thread) => thread.title == second,
       );
       expect(right.project, isNot(focused.project));
-      Finder tool(String label) => find.bySemanticsLabel(label);
+      Finder tool(String label) => labeledControl(label);
       // The window's, not one in each pane.
       expect(find.byType(OpenInEditorButton), findsOneWidget);
       for (final title in [first, second, third]) {
@@ -771,7 +776,7 @@ void main() {
       await tester.tap(
         find.descendant(
           of: pane(third),
-          matching: find.bySemanticsLabel('Close pane'),
+          matching: labeledControl('Close pane'),
         ),
       );
       await tester.pumpAndSettle();
@@ -835,7 +840,7 @@ void main() {
         final close = tester.getRect(
           find.descendant(
             of: pane(title),
-            matching: find.bySemanticsLabel('Close pane'),
+            matching: labeledControl('Close pane'),
           ),
         );
         expect(rail.overlaps(close), isFalse);
@@ -994,10 +999,7 @@ void main() {
     }
 
     await tester.tap(
-      find.descendant(
-        of: pane(second),
-        matching: find.bySemanticsLabel('Close pane'),
-      ),
+      find.descendant(of: pane(second), matching: labeledControl('Close pane')),
     );
     await tester.pumpAndSettle();
     expect(inHeader(SidePanelToggle), findsNothing);
@@ -1183,7 +1185,7 @@ void main() {
     workspace.select(agent(second));
     await tester.pumpAndSettle();
     expect(tab(second), findsOneWidget);
-    await tester.tap(find.bySemanticsLabel('1 conversation under this one'));
+    await tester.tap(labeledControl('1 conversation under this one'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Show as Tabs'));
     await tester.pumpAndSettle();
@@ -1234,13 +1236,13 @@ void main() {
     // The pane says what is under it, and its close button what comes back.
     final layers = find.descendant(
       of: pane(third),
-      matching: find.bySemanticsLabel('1 conversation under this one'),
+      matching: labeledControl('1 conversation under this one'),
     );
     expect(layers, findsOneWidget);
     expect(
       find.descendant(
         of: pane(third),
-        matching: find.bySemanticsLabel('Close pane, back to $second'),
+        matching: labeledControl('Close pane, back to $second'),
       ),
       findsOneWidget,
     );
@@ -1275,7 +1277,7 @@ void main() {
     await tester.tap(
       find.descendant(
         of: pane(third),
-        matching: find.bySemanticsLabel('Close pane, back to $second'),
+        matching: labeledControl('Close pane, back to $second'),
       ),
     );
     await tester.pumpAndSettle();
@@ -1410,10 +1412,7 @@ void main() {
     // Out of room: said so, and released, nothing.
     room = {'width': 0, 'height': 0};
     await tester.tap(
-      find.descendant(
-        of: pane(second),
-        matching: find.bySemanticsLabel('Close pane'),
-      ),
+      find.descendant(of: pane(second), matching: labeledControl('Close pane')),
     );
     await tester.pumpAndSettle();
     gesture = await dragAgent(tester, second, near(grid, PaneSide.right));
@@ -1446,7 +1445,7 @@ void main() {
       },
     );
     await pumpApp(tester, width: 700);
-    await tester.tap(find.bySemanticsLabel('Show sidebar'));
+    await tester.tap(labeledControl('Show sidebar'));
     await tester.pumpAndSettle();
     final gesture = await dragAgent(tester, second, const Offset(650, 450));
     await tester.pumpAndSettle();
@@ -1487,7 +1486,7 @@ void main() {
         final button = tester.getRect(
           find.descendant(
             of: pane(title),
-            matching: find.bySemanticsLabel('Close pane'),
+            matching: labeledControl('Close pane'),
           ),
         );
         expect(button.left, start);
