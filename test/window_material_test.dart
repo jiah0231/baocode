@@ -192,7 +192,14 @@ void main() {
     'chat, not the material',
     (tester) async {
       await pumpMacApp(tester, width: 700);
-      await tester.tap(find.bySemanticsLabel('Show sidebar'));
+      // Windows intentionally omits the workspace accessibility tree.
+      // Exercise the actual button without re-enabling that costly tree.
+      await tester.tap(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is SidebarIconButton && widget.tooltip == 'Show sidebar',
+        ),
+      );
       await tester.pumpAndSettle();
       expect(colorsUnder(tester, find.byType(Sidebar)).first.a, 1);
     },
