@@ -235,11 +235,18 @@ void main() {
         child: const ColoredBox(color: Color(0xFF00FF00)),
       ),
     );
-    // No overlay is kept in the route while search is closed.
-    expect(find.byType(OverlayPortal), findsNothing);
+    // Only the find bar's portal must be absent while search is closed;
+    // unrelated chat controls may keep their own portals mounted.
+    final findPortal = find.descendant(
+      of: find.byWidgetPredicate(
+        (widget) => widget.runtimeType.toString() == '_OverRail',
+      ),
+      matching: find.byType(OverlayPortal),
+    );
+    expect(findPortal, findsNothing);
     ChatHistoryView.find(_historyKey, query: 'Question');
     await tester.pump();
-    expect(find.byType(OverlayPortal), findsOneWidget);
+    expect(findPortal, findsOneWidget);
     final bar = tester.getRect(find.byType(IdeFindWidget));
     final rail = Rect.fromLTWH(1000 - _railWidth, 0, _railWidth, 200);
     expect(bar.overlaps(rail), isTrue);
@@ -256,7 +263,7 @@ void main() {
     await tester.pump();
     expect(railTaps, 0);
     expect(find.byType(IdeFindWidget), findsNothing);
-    expect(find.byType(OverlayPortal), findsNothing);
+    expect(findPortal, findsNothing);
     expect(closed, 1);
   });
 }
