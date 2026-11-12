@@ -1910,10 +1910,7 @@ class CodexKernel
         // Ask remains read-only through the sandbox policy above.
         'collaborationMode': {
           'mode': _modeId == 'plan' ? 'plan' : 'default',
-          'settings': {
-            'model': ?_modelForServer,
-            'reasoning_effort': ?_effort,
-          },
+          'settings': {'model': ?_modelForServer, 'reasoning_effort': ?_effort},
         },
       });
       final serverTurn =

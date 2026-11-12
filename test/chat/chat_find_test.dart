@@ -237,9 +237,7 @@ void main() {
     );
     // Only the find bar's portal must be absent while search is closed;
     // unrelated chat controls may keep their own portals mounted.
-    final findPortal = find.byKey(
-      const ValueKey('chat-find-over-rail-portal'),
-    );
+    final findPortal = find.byKey(const ValueKey('chat-find-over-rail-portal'));
     expect(findPortal, findsNothing);
     ChatHistoryView.find(_historyKey, query: 'Question');
     await tester.pump();

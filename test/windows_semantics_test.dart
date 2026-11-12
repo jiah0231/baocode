@@ -37,9 +37,7 @@ void main() {
     semantics.dispose();
   }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
-  testWidgets('Windows defaults follow the actual host', (
-    tester,
-  ) async {
+  testWidgets('Windows defaults follow the actual host', (tester) async {
     final semantics = tester.ensureSemantics();
     await pumpApp(tester);
     expect(
@@ -53,7 +51,6 @@ void main() {
     tester,
   ) async {
     final semantics = tester.ensureSemantics();
-    addTearDown(semantics.dispose);
     await tester.pumpWidget(
       Directionality(
         textDirection: TextDirection.ltr,
@@ -80,6 +77,7 @@ void main() {
     );
     expect(find.bySemanticsLabel('Workspace history'), findsNothing);
     expect(find.bySemanticsLabel('Fresh translation source'), findsOneWidget);
+    semantics.dispose();
   });
 
   testWidgets('elsewhere, the app\'s semantics as they are', (tester) async {
