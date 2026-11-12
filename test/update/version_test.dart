@@ -76,9 +76,9 @@ void main() {
       expect(v('1.2.0') == v('1.2.0+0'), isTrue);
     });
 
-    test('Window chat isolation and upstream 1.9.2 upgrade the published +52 build', () {
-      expect(currentAppVersion, v('1.9.2+53'));
-      expect(currentAppVersion > v('1.9.1+52'), isTrue);
+    test('Upstream 1.9.5 and Agent mode fix upgrade the published +53 build', () {
+      expect(currentAppVersion, v('1.9.5+54'));
+      expect(currentAppVersion > v('1.9.2+53'), isTrue);
     });
 
     test("is pubspec.yaml's version", () {

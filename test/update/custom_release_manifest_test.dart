@@ -13,7 +13,7 @@ void main() {
     final notes = readCustomReleaseNotes(Directory.current, currentAppVersion);
     expect(notes.keys, containsAll(['zh', 'en']));
     expect(notes['zh'], contains('窗口'));
-    expect(notes['en'], contains('v1.9.2'));
+    expect(notes['en'], contains('v1.9.5'));
     expect(
       () =>
           readCustomReleaseNotes(Directory.current, AppVersion.parse('0.0.0')),

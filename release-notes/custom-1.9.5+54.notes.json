@@ -1,0 +1,4 @@
+{
+  "zh": "整合上游 v1.9.5 及后续群聊、图片、上下文用量和文件位置修复。修复 Codex 从 Plan 切回 Agent 后仍沿用规划模式的问题。保留独立多窗口、全局翻译、快捷提问、Ultra 和长会话增量刷新；合入 Windows 无障碍树稳定性优化。配对协议仍为 v2，已有设备保留。Edge PDF 取词不一致问题仍未解决。下载后仍由你确认重启安装。",
+  "en": "Integrates upstream v1.9.5 and subsequent group chat, image, context usage and file-position fixes. Explicitly exits Codex Plan collaboration mode on new Agent turns. Preserves independent windows, global translation, Quick Ask, Ultra and incremental long-chat rendering; includes Windows accessibility-tree stability improvements. Pairing remains v2 with existing identities preserved. Incorrect text returned by Edge PDF remains unresolved. Installation still requires confirming a restart."
+}
