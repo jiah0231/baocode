@@ -1904,14 +1904,17 @@ class CodexKernel
           'serviceTierForTurn': tier
         else if (_fast == false)
           'serviceTierForTurn': 'default',
-        if (_modeId == 'plan')
-          'collaborationMode': {
-            'mode': 'plan',
-            'settings': {
-              'model': ?_modelForServer,
-              'reasoning_effort': ?_effort,
-            },
+        // The server keeps the last collaboration mode when it is omitted.
+        // Explicitly leave Plan on the next Agent/Ask turn; changing the
+        // local picker alone must not leave the model planning indefinitely.
+        // Ask remains read-only through the sandbox policy above.
+        'collaborationMode': {
+          'mode': _modeId == 'plan' ? 'plan' : 'default',
+          'settings': {
+            'model': ?_modelForServer,
+            'reasoning_effort': ?_effort,
           },
+        },
       });
       final serverTurn =
           ((result['turn'] as Map?)?.cast<String, Object?>())?['id'] as String?;
