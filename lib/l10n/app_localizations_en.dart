@@ -13368,6 +13368,103 @@ class AppLocalizationsEn extends AppLocalizations {
       'Its quota starts over at once. The credit can\'t be given back, and whatever quota is left now is lost.';
 
   @override
+  String claudeResets(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count resets',
+      one: '1 reset',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get claudeResetsTitle => 'Claude limit resets';
+
+  @override
+  String get claudeResetsDetail =>
+      'Granted by Anthropic. Using one sets the limits it lists back to nothing used. With more than one, they are used one at a time, in the order Anthropic sets.';
+
+  @override
+  String claudeResetClears(String windows) {
+    return 'Clears $windows';
+  }
+
+  @override
+  String claudeResetWindowUsed(String window, int percent) {
+    return '$window ($percent% used)';
+  }
+
+  @override
+  String claudeResetWeeklyOf(String model) {
+    return '$model weekly';
+  }
+
+  @override
+  String get claudeResetNext => 'Usable now';
+
+  @override
+  String get claudeResetQueued =>
+      'Waits its turn: usable once the one above is used';
+
+  @override
+  String get claudeResetUse => 'Use This One…';
+
+  @override
+  String get claudeResetConfirm => 'Use a Claude limit reset?';
+
+  @override
+  String claudeResetConfirmDetail(String label, String windows) {
+    return '“$label” sets $windows back to nothing used, at once. The reset can\'t be given back, and what is left of these limits now is lost.';
+  }
+
+  @override
+  String get claudeResetPaused => 'Paused';
+
+  @override
+  String claudeResetCooldown(String time) {
+    return 'Usable again $time';
+  }
+
+  @override
+  String claudeResetUnavailable(String reason) {
+    return 'Not usable now ($reason)';
+  }
+
+  @override
+  String get claudeResetSignedOut =>
+      'The Claude.ai sign-in has expired; Claude Code renews it as it next runs.';
+
+  @override
+  String claudeResetDone(String windows) {
+    return 'Reset: $windows';
+  }
+
+  @override
+  String claudeResetNotDone(String reason) {
+    return 'Not reset: $reason';
+  }
+
+  @override
+  String get claudeResetNotNext =>
+      'Another reset is the one usable now; nothing was used. Refresh and try again.';
+
+  @override
+  String get claudeResetNotLimited =>
+      'This reset can only be used once a limit is reached; nothing was used.';
+
+  @override
+  String get claudeResetAlreadyUsed =>
+      'This reset was already used; nothing was used now.';
+
+  @override
+  String get claudeResetCoolingDown =>
+      'A reset was just used; wait a little before the next. Nothing was used.';
+
+  @override
+  String get claudeResetsRefresh => 'Refresh';
+
+  @override
   String resetCreditsHint(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,
@@ -14027,4 +14124,79 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get quickAskAgentFailed =>
       'Could not hand off to Agent. Check the Agent conversation before retrying; it may already have received the request.';
+  String get rewindFilesTitle =>
+      'Undo the file changes made after this message?';
+
+  @override
+  String rewindFilesChanged(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count files',
+      one: '1 file',
+    );
+    return 'The agent changed $_temp0 after this message:';
+  }
+
+  @override
+  String rewindFilesMore(int count) {
+    return '…and $count more';
+  }
+
+  @override
+  String rewindFilesMerged(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count of them were',
+      one: '1 of them was',
+    );
+    return '$_temp0 also changed elsewhere since: those changes are kept.';
+  }
+
+  @override
+  String rewindFilesConflicts(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count files can\'t',
+      one: '1 file can\'t',
+    );
+    String _temp1 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'they are',
+      one: 'it is',
+    );
+    return '$_temp0 be undone cleanly and will stay as $_temp1:';
+  }
+
+  @override
+  String get rewindFilesCommands =>
+      'What commands changed (Bash) isn\'t tracked and stays.';
+
+  @override
+  String get rewindFilesRevert => 'Undo and Send';
+
+  @override
+  String get rewindFilesKeep => 'Keep and Send';
+
+  @override
+  String get rewindFilesRemember => 'Remember my choice';
+
+  @override
+  String get generalSettingsRewindFiles => 'Edited Messages';
+
+  @override
+  String get generalSettingsRewindFilesDescription =>
+      'When you edit an earlier message and send it again, what happens to the files the agent changed after it. Commands\' (Bash) changes are not tracked. Claude Code and BaoCode agent only.';
+
+  @override
+  String get generalSettingsRewindAsk => 'Ask Each Time';
+
+  @override
+  String get generalSettingsRewindRevert => 'Undo the Changes';
+
+  @override
+  String get generalSettingsRewindKeep => 'Keep the Changes';
 }

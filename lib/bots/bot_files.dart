@@ -44,8 +44,8 @@ abstract final class BotFiles {
     ('signature', bot.signature),
     for (final ability in shownAbilities) (ability.name, '${bot.can(ability)}'),
     // Codex's false is an explicit opt-in; keep it distinct from old cards.
-    if (bot.chatOnly || bot.kernel == 'codex')
-      ('chat_only', '${bot.chatOnly}'),
+    if (bot.chatOnly || bot.kernel == 'codex') ('chat_only', '${bot.chatOnly}'),
+    if (!bot.writesFirst) ('writes_first', 'false'),
     ('model', bot.model),
     if (bot.kernel != 'claude-code') ('kernel', bot.kernel),
     if (bot.assistant) ('assistant', 'true'),
@@ -100,6 +100,7 @@ abstract final class BotFiles {
       // Old Codex cards had only restricted tools. Missing is not consent
       // to expand them; Claude follows the upstream full-agent default.
       chatOnly: _yes(fields['chat_only']) ?? (text('kernel') == 'codex'),
+      writesFirst: _yes(fields['writes_first']) ?? true,
       created:
           DateTime.tryParse(text('created')) ?? createdIn(p.basename(folder)),
     );

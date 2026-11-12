@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:convert' show jsonEncode;
 import 'dart:ui' show AppExitResponse, AppExitType;
 
-import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
+import 'package:flutter/foundation.dart'
+    show kDebugMode, kIsWeb, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show ServicesBinding;
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -26,6 +27,7 @@ import 'chat/user_message_style.dart';
 import 'chat/widgets/chat_minimap.dart';
 import 'chat/widgets/pixel_loader.dart';
 import 'chat/resume_after_reset.dart';
+import 'chat/rewind_files_setting.dart';
 import 'chat/widgets/turn_footer.dart' show LiveTurnStatsSetting;
 import 'customize/customization_store.dart';
 import 'diagnostics/app_event_watch.dart';
@@ -515,6 +517,20 @@ void followSettingsFiles(SettingsFiles files) {
           debugPrint('${ResumeAfterResetSetting.settingKey} not kept: $error');
         }),
   );
+  // A message edited and sent again: whether the files changed after it
+  // go back, asked unless set (there, or in its prompt).
+  RewindFilesSetting.current = () =>
+      RewindFilesSetting.parse(files.settings[RewindFilesSetting.settingKey]);
+  RewindFilesSetting.write = (value) => unawaited(
+    files.settings
+        .update(
+          RewindFilesSetting.settingKey,
+          value == RewindFilesSetting.fallback ? null : value.name,
+        )
+        .catchError((Object error) {
+          debugPrint('${RewindFilesSetting.settingKey} not kept: $error');
+        }),
+  );
   // Settings → Customize's switches: the skills, MCP servers and tools
   // turned off, given each agent at start and as they change.
   ExtensionSwitches.current = () =>
@@ -817,6 +833,13 @@ class BaoCodeApp extends StatefulWidget {
 
   /// What the IDE's terminals run on; none when null.
   final TerminalBackend? terminalBackend;
+
+  /// Whether each window's app has no semantics (see
+  /// _BaoCodeAppState._withoutSemantics): on Windows itself, unless a test
+  /// says. Tests that target Windows from another host keep theirs, to find
+  /// widgets by.
+  @visibleForTesting
+  static bool? debugWithoutSemantics;
 
   @override
   State<BaoCodeApp> createState() => _BaoCodeAppState();
@@ -1130,80 +1153,98 @@ class _BaoCodeAppState extends State<BaoCodeApp>
     AppWindow window, {
     bool translation = false,
     int? viewId,
-  }) => MaterialApp(
-    key: translation
-        ? ValueKey(TranslationHost.instance.panelGeneration)
-        : null,
-    title: 'BaoCode',
-    debugShowCheckedModeBanner: false,
-    theme: buildAppTheme(),
-    themeAnimationDuration: Duration.zero,
-    scrollBehavior: const BaoScrollBehavior(),
-    builder: (context, child) => ValueListenableBuilder<int>(
-      valueListenable: CodeFont.uiScale,
-      builder: (context, percent, scaled) {
-        // The whole window is zoomed, not its text alone: its fixed heights,
-        // icons and gaps grow with the text they hold.
-        final zoom = percent / 100;
-        final media = UiZoom.zoomed(MediaQuery.of(context), zoom);
-        // The traffic lights in the middle of the title bar, as it grows.
-        WindowControls.setTitleBarDrop(
-          (AppMetrics.titleBarHeight * zoom - AppMetrics.nativeTitleBarHeight) /
-              2,
-          viewId: viewId ?? window.viewId,
-        );
-        // Windows blurs glyphs drawn at a fractional pixel size.
-        TextScaler snapped(TextScaler scaler) => AppPlatform.isWindows
-            ? PixelSnappedTextScaler(scaler, media.devicePixelRatio)
-            : scaler;
-        final system = media.textScaler;
-        return SystemTextScale(
-          // A terminal at a size of its own: the zoom taken back off.
-          scaler: snapped(
-            zoom == 1 ? system : TextScaler.linear(system.scale(1) / zoom),
-          ),
-          child: MediaQuery(
-            data: media.copyWith(textScaler: snapped(system)),
-            child: UiZoom(scale: zoom, child: scaled),
-          ),
-        );
-      },
-      child: _themeTransition.wrap(
-        child ?? const SizedBox.shrink(),
-        canvas: AppColors.windowCanvas,
-      ),
-    ),
-    locale: _locale.locale,
-    supportedLocales: AppLocale.supportedLocales,
-    localizationsDelegates: const [
-      AppLocalizations.delegate,
-      GlobalMaterialLocalizations.delegate,
-      GlobalCupertinoLocalizations.delegate,
-      GlobalWidgetsLocalizations.delegate,
-    ],
-    home: translation
-        ? _translationPanel()
-        : window.isStash
-        ? Material(
-            type: MaterialType.transparency,
-            child: StashPanelView(
-              controller: StashController.current!,
-              viewId: window.viewId,
+  }) => _withoutSemantics(
+    MaterialApp(
+      key: translation
+          ? ValueKey(TranslationHost.instance.panelGeneration)
+          : null,
+      title: 'BaoCode',
+      debugShowCheckedModeBanner: false,
+      theme: buildAppTheme(),
+      themeAnimationDuration: Duration.zero,
+      scrollBehavior: const BaoScrollBehavior(),
+      builder: (context, child) => ValueListenableBuilder<int>(
+        valueListenable: CodeFont.uiScale,
+        builder: (context, percent, scaled) {
+          // The whole window is zoomed, not its text alone: its fixed heights,
+          // icons and gaps grow with the text they hold.
+          final zoom = percent / 100;
+          final media = UiZoom.zoomed(MediaQuery.of(context), zoom);
+          // The traffic lights in the middle of the title bar, as it grows.
+          WindowControls.setTitleBarDrop(
+            (AppMetrics.titleBarHeight * zoom -
+                    AppMetrics.nativeTitleBarHeight) /
+                2,
+            viewId: viewId ?? window.viewId,
+          );
+          // Windows blurs glyphs drawn at a fractional pixel size.
+          TextScaler snapped(TextScaler scaler) => AppPlatform.isWindows
+              ? PixelSnappedTextScaler(scaler, media.devicePixelRatio)
+              : scaler;
+          final system = media.textScaler;
+          return SystemTextScale(
+            // A terminal at a size of its own: the zoom taken back off.
+            scaler: snapped(
+              zoom == 1 ? system : TextScaler.linear(system.scale(1) / zoom),
             ),
-          )
-        : Workbench(
-            key: ValueKey((window.viewId, window.generation)),
-            workspace: _workspace,
-            windows: _windows,
-            window: window,
-            languagesFor: widget.languagesFor,
-            themeExtensions: widget.themeExtensions,
-            gitFor: widget.gitFor,
-            repositoriesIn: widget.repositoriesIn,
-            terminalBackend: widget.terminalBackend,
-            settings: _settings,
-            conversations: widget.conversations ?? const NoConversationSearch(),
-            customizations: widget.customizations,
-          ),
+            child: MediaQuery(
+              data: media.copyWith(textScaler: snapped(system)),
+              child: UiZoom(scale: zoom, child: scaled),
+            ),
+          );
+        },
+        child: _themeTransition.wrap(
+          child ?? const SizedBox.shrink(),
+          canvas: AppColors.windowCanvas,
+        ),
+      ),
+      locale: _locale.locale,
+      supportedLocales: AppLocale.supportedLocales,
+      localizationsDelegates: const [
+        AppLocalizations.delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+      ],
+      home: translation
+          ? _translationPanel()
+          : window.isStash
+          ? Material(
+              type: MaterialType.transparency,
+              child: StashPanelView(
+                controller: StashController.current!,
+                viewId: window.viewId,
+              ),
+            )
+          : Workbench(
+              key: ValueKey((window.viewId, window.generation)),
+              workspace: _workspace,
+              windows: _windows,
+              window: window,
+              languagesFor: widget.languagesFor,
+              themeExtensions: widget.themeExtensions,
+              gitFor: widget.gitFor,
+              repositoriesIn: widget.repositoriesIn,
+              terminalBackend: widget.terminalBackend,
+              settings: _settings,
+              conversations:
+                  widget.conversations ?? const NoConversationSearch(),
+              customizations: widget.customizations,
+            ),
+    ),
   );
+
+  /// [app] with no semantics on Windows: only a screen reader would read
+  /// them, and the app makes no claim to work with one. Windows' engine
+  /// turns them on at another app's first question for the view's
+  /// accessibility (input methods and translators ask too, before the view
+  /// answers them itself, see view_window.cpp), and its bridge then
+  /// crashes on the tree as the app's changes move it: on a node with no
+  /// parent in CreateRemoveReparentedNodesUpdate (at every start on 1.9.4,
+  /// on some machines), or in HitTestSync. With nothing under the root
+  /// there is nothing to move, and no tree to keep up each frame.
+  static Widget _withoutSemantics(Widget app) =>
+      (BaoCodeApp.debugWithoutSemantics ?? AppPlatform.isWindowsHost)
+      ? ExcludeSemantics(child: app)
+      : app;
 }

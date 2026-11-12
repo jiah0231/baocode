@@ -12656,6 +12656,91 @@ class AppLocalizationsZh extends AppLocalizations {
       '额度会立即重置，卡用掉后不能退回；现在还没用完的额度也就作废了。';
 
   @override
+  String claudeResets(int count) {
+    return '重置卡 $count 张';
+  }
+
+  @override
+  String get claudeResetsTitle => 'Claude 重置卡';
+
+  @override
+  String get claudeResetsDetail =>
+      'Anthropic 赠送。用掉一张，它列出的额度立即清零。有多张时要按 Anthropic 排好的顺序一张一张用。';
+
+  @override
+  String claudeResetClears(String windows) {
+    return '清零：$windows';
+  }
+
+  @override
+  String claudeResetWindowUsed(String window, int percent) {
+    return '$window（已用 $percent%）';
+  }
+
+  @override
+  String claudeResetWeeklyOf(String model) {
+    return '$model 每周';
+  }
+
+  @override
+  String get claudeResetNext => '现在可用';
+
+  @override
+  String get claudeResetQueued => '排在后面，用掉上面那张后才能用';
+
+  @override
+  String get claudeResetUse => '使用这张…';
+
+  @override
+  String get claudeResetConfirm => '用掉一张 Claude 重置卡？';
+
+  @override
+  String claudeResetConfirmDetail(String label, String windows) {
+    return '「$label」会把 $windows 立即清零。卡用掉后不能退回，这些额度现在还没用完的部分也就作废了。';
+  }
+
+  @override
+  String get claudeResetPaused => '已暂停';
+
+  @override
+  String claudeResetCooldown(String time) {
+    return '$time 后可再用';
+  }
+
+  @override
+  String claudeResetUnavailable(String reason) {
+    return '现在不能使用（$reason）';
+  }
+
+  @override
+  String get claudeResetSignedOut => 'Claude.ai 登录已过期，Claude Code 下次运行时会自动续上。';
+
+  @override
+  String claudeResetDone(String windows) {
+    return '已重置：$windows';
+  }
+
+  @override
+  String claudeResetNotDone(String reason) {
+    return '没有重置：$reason';
+  }
+
+  @override
+  String get claudeResetNotNext => '现在能用的换成了另一张，这次什么都没扣。刷新看看再用。';
+
+  @override
+  String get claudeResetNotLimited => '这张卡要等额度用满了才能用，这次什么都没扣。';
+
+  @override
+  String get claudeResetAlreadyUsed => '这张卡已经用过了，这次什么都没扣。';
+
+  @override
+  String get claudeResetCoolingDown => '刚用过一张，要稍等一会儿才能再用，这次什么都没扣。';
+
+  @override
+  String get claudeResetsRefresh => '刷新';
+
+  @override
   String resetCreditsHint(int count) {
     return '有 $count 张重置卡将在一周内过期。建议按这个计划用 Codex 模型，额度用满后再重置，别让它们白白过期：';
   }
@@ -13261,4 +13346,53 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get quickAskAgentFailed => '未能完成 Agent 交接。重试前请先检查 Agent 对话，请求可能已经收到。';
+  String get rewindFilesTitle => '撤回这条消息之后的文件改动？';
+
+  @override
+  String rewindFilesChanged(int count) {
+    return '这条消息之后，Agent 改了 $count 个文件：';
+  }
+
+  @override
+  String rewindFilesMore(int count) {
+    return '……还有 $count 个';
+  }
+
+  @override
+  String rewindFilesMerged(int count) {
+    return '其中 $count 个后来在别处也改过，那些改动会保留。';
+  }
+
+  @override
+  String rewindFilesConflicts(int count) {
+    return '$count 个文件无法自动撤回，会保持不变：';
+  }
+
+  @override
+  String get rewindFilesCommands => '命令（Bash）做的改动没有记录，不会撤回。';
+
+  @override
+  String get rewindFilesRevert => '撤回并发送';
+
+  @override
+  String get rewindFilesKeep => '保留改动并发送';
+
+  @override
+  String get rewindFilesRemember => '记住我的选择';
+
+  @override
+  String get generalSettingsRewindFiles => '修改历史消息';
+
+  @override
+  String get generalSettingsRewindFilesDescription =>
+      '修改之前的消息并重新发送时，Agent 在那之后改过的文件怎么处理。命令（Bash）做的改动没有记录。仅支持 Claude Code 和 BaoCode Agent。';
+
+  @override
+  String get generalSettingsRewindAsk => '每次询问';
+
+  @override
+  String get generalSettingsRewindRevert => '撤回改动';
+
+  @override
+  String get generalSettingsRewindKeep => '保留改动';
 }

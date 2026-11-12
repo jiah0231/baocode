@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -15,23 +16,30 @@ import '../link/workspace_bridge.dart' show WorkspaceBridge;
 import '../models/image_api.dart' show imageMediaType;
 import '../workspace/workspace.dart';
 import 'bot.dart';
+import 'bot_life.dart';
 import 'bot_pacer.dart' show BotEventKind, botTime;
 import 'bot_watch.dart';
+import 'bot_world.dart';
 import 'bots.dart';
 
 /// Which bots a tool of theirs is for: those trusted with [level]; only
 /// the assistant, if [assistant]. One that keeps what is in a bot's files
 /// ([files]) is not for a bot that works on the computer: it keeps its
-/// files itself, with Claude Code's tools.
+/// files itself, with Claude Code's tools. The world's ([world]) is for
+/// none of them.
 class BotToolAccess {
-  const BotToolAccess({this.ability, this.assistant = false});
+  const BotToolAccess({this.ability, this.assistant = false}) : world = false;
+  const BotToolAccess.world() : ability = null, assistant = false, world = true;
 
   /// What a bot needs on for it; none for any bot.
   final BotAbility? ability;
   final bool assistant;
+  final bool world;
 
   bool allows(Bot bot) =>
-      (!assistant || bot.assistant) && (ability == null || bot.can(ability!));
+      !world &&
+      (!assistant || bot.assistant) &&
+      (ability == null || bot.can(ability!));
 }
 
 /// The bots' tools (`mcp__baocode__bot_*`): the user's agents seen,
@@ -541,6 +549,11 @@ abstract final class BotTools {
                 uri.host.isEmpty) {
               throw ArgumentError('Not a web address: $url');
             }
+            // In a group's turn: fetched, to go with its reply there.
+            final bot = bots.botAt(call.cwd);
+            if (bot != null && bots.groups.answering(bot.id) != null) {
+              bots.groups.sentPicture(bot.id, await _fetchPicture(uri));
+            }
             return 'Sent.';
           },
           required: ['url'],
@@ -551,15 +564,24 @@ abstract final class BotTools {
       (
         tool(
           'bot_remember',
-          'Keeps what you remember across conversations: about the user, or '
+          'Keeps what you remember across conversations: about the user; '
               'about yourself (what you said you like, did or think; what '
-              'your picture shows), to stay the same person. "add" a line, '
-              'or "replace" all of it with what you give.',
+              'your picture shows), to stay the same person; how you are '
+              'now ("now": your mood, what you are up to, in a line, in place '
+              'of the last); or about a person you know ("person", named in '
+              '"who": what you think of them, what happened between you). '
+              '"add" a line, or "replace" all of it with what you give.',
           {
             'about': {
               'type': 'string',
-              'enum': ['user', 'self'],
-              'description': 'Whose: the user\'s (if none) or yours.',
+              'enum': ['user', 'self', 'now', 'person'],
+              'description':
+                  'Whose: the user\'s (if none), yours, how you '
+                  'are now, or a person\'s.',
+            },
+            'who': {
+              'type': 'string',
+              'description': 'The person, by name (for "person").',
             },
             'action': {
               'type': 'string',
@@ -569,8 +591,17 @@ abstract final class BotTools {
           },
           (input, call) async {
             final bot = botOf(call);
-            final self = input['about'] == 'self';
             final given = (input['text'] as String? ?? '').trim();
+            switch (input['about']) {
+              case 'now':
+                bots.setNow(bot, given);
+                return 'Noted.';
+              case 'person':
+                final who = text(input, 'who');
+                bots.notePerson(bot, who, given);
+                return 'Noted, of $who.';
+            }
+            final self = input['about'] == 'self';
             final kept = (self ? bots.selfNotes(bot) : bots.memory(bot)).trim();
             final memory = input['action'] == 'replace'
                 ? given
@@ -588,6 +619,141 @@ abstract final class BotTools {
           required: ['text'],
         ),
         const BotToolAccess(),
+      ),
+      (
+        tool(
+          ChatCodec.botSendTool,
+          'Sends a message somewhere other than where you are answering '
+          'now: to the user in private while you are in a group (they '
+          'asked you to write to them, say), or to one of your groups '
+          'from your chat with the user (they asked you to pass '
+          'something on); with pictures from files, if you like. It may '
+          'not go: then you are told why, and it is yours to say so, or '
+          'not. Pictures for the group you are answering go with your '
+          'reply: send them here with no text.',
+          {
+            'to': {
+              'type': 'string',
+              'description':
+                  '"${ChatCodec.botToUser}": the user, in your chat with '
+                  'them. Else a group, by its name or id (WORLD.md).',
+            },
+            'text': {
+              'type': 'string',
+              'description': 'What you say: a line or two, as in a chat.',
+            },
+            'images': {
+              'type': 'array',
+              'items': {'type': 'string'},
+              'description':
+                  'Pictures to send with it: their files (absolute paths, '
+                  'or in your folder), as generate_image saved them, say.',
+            },
+          },
+          (input, call) async {
+            final bot = botOf(call);
+            final to = text(input, 'to');
+            final said = (input['text'] as String? ?? '').trim();
+            final pictures = [
+              for (final path in (input['images'] as List? ?? const []))
+                await _pictureFrom(bots, bot, '$path'),
+            ];
+            if (said.isEmpty && pictures.isEmpty) {
+              throw ArgumentError('Nothing to send: text is empty');
+            }
+            if (to == ChatCodec.botToUser) {
+              if (bots.groups.answering(bot.id) == null) {
+                throw StateError(
+                  'You are in your chat with the user now: say it in your '
+                  'reply, not with this tool.',
+                );
+              }
+              if (bots.world.sendsPrivately(bot) case final why?) {
+                throw StateError('Not sent: $why.');
+              }
+              return [
+                claudeSdkText('Sent to the user, in your chat with them.'),
+                for (final picture in pictures)
+                  claudeSdkImage(
+                    base64Encode(picture.bytes),
+                    picture.mediaType,
+                  ),
+              ];
+            }
+            final group =
+                bots.groups.byId(to) ??
+                bots.groups.groups
+                    .where((g) => g.name == to && g.members.contains(bot.id))
+                    .firstOrNull ??
+                (throw StateError('You are in no group $to.'));
+            // The group it answers: its pictures with its reply.
+            if (bots.groups.answering(bot.id) == group.id &&
+                pictures.isNotEmpty) {
+              for (final picture in pictures) {
+                bots.groups.sentPicture(bot.id, picture);
+              }
+              return 'The pictures go with your reply to "${group.name}"'
+                  '${said.isEmpty ? '' : '; say your words in it'}.';
+            }
+            final message = bots.groups.say(
+              group.id,
+              bot.id,
+              said,
+              images: pictures,
+            );
+            return 'Said in "${group.name}" (#${message.seq}).';
+          },
+          required: ['to'],
+          summary: (input, _) => '${input['to'] ?? ''}',
+        ),
+        const BotToolAccess(),
+      ),
+      (
+        tool(
+          BotWorld.wakeTool,
+          'Wakes a bot: in a group, to read what is new there and answer if '
+          'it will; or in private, with something on its mind for the user. '
+          'It is told why, and decides itself. Tells you if it does not go, '
+          'and why.',
+          {
+            'who': {
+              'type': 'string',
+              'description': 'The bot, by name (${BotLife.world}).',
+            },
+            'where': {
+              'type': 'string',
+              'description':
+                  'A group, by its id or name; "${BotWorld.inPrivate}" for its '
+                  'chat with the user.',
+            },
+            'after': {
+              'type': 'string',
+              'description':
+                  'How long from now: "0s", "3s", "2m", "3h". Now if none.',
+            },
+            'why': {
+              'type': 'string',
+              'description': 'What happened, in a few words of fact.',
+            },
+          },
+          (input, call) async => bots.world.wake(
+            who: text(input, 'who'),
+            where: text(input, 'where'),
+            after: switch (input['after']) {
+              null => Duration.zero,
+              final after =>
+                BotWorld.duration('$after') ??
+                    (throw ArgumentError(
+                      'after: "$after" is not a time from now ("5s", "2m").',
+                    )),
+            },
+            why: (input['why'] as String? ?? '').trim(),
+          ),
+          required: ['who', 'where', 'why'],
+          summary: (input, _) =>
+              '${input['who'] ?? ''} · ${input['where'] ?? ''}',
+        ),
+        const BotToolAccess.world(),
       ),
       (
         tool(
@@ -760,9 +926,20 @@ abstract final class BotTools {
             },
             'identity': {
               'type': 'string',
-              'description': 'Who it is, to it: "you are…".',
+              'description':
+                  'Who it is, to it: "you are…". A whole person, not a '
+                  'line: their age, what they do and where, what their days '
+                  'are like (when they sleep, work, go out), what they care '
+                  'about and dislike, their habits and flaws, what they are '
+                  'to the user. A few paragraphs.',
             },
-            'style': {'type': 'string', 'description': 'How it talks.'},
+            'style': {
+              'type': 'string',
+              'description':
+                  'How it talks: how long its messages, its words and '
+                  'tics, its emoji or none, how it is when it is busy, '
+                  'tired, annoyed.',
+            },
           },
           (input, call) async {
             final me = freshOf(call);
@@ -796,6 +973,8 @@ abstract final class BotTools {
               abilities: had?.abilities ?? const {},
               proactive: had?.proactive ?? const BotProactive(),
               by: me,
+              // A new one only chats, as the user is told (they say more).
+              chatOnly: had == null ? true : null,
             );
             return had == null
                 ? 'Made ${saved.name} (${saved.id}). It may do nothing more '
@@ -851,6 +1030,50 @@ abstract final class BotTools {
         : bots.folders.readFile(p.join(bot.folder, path));
     if (bytes == null) throw StateError('No file $path');
     return squarePicture(bytes);
+  }
+
+  /// The picture in file [path] (absolute, or in [bot]'s folder), as it is.
+  static Future<ImageAttachment> _pictureFrom(
+    Bots bots,
+    Bot bot,
+    String path,
+  ) async {
+    final bytes = p.isAbsolute(path)
+        ? switch (File(path)) {
+            final file when file.existsSync() => await file.readAsBytes(),
+            _ => null,
+          }
+        : bots.folders.readFile(p.join(bot.folder, path));
+    if (bytes == null) throw StateError('No file $path');
+    final type = imageMediaType(bytes);
+    if (type == null) throw StateError('Not a picture: $path');
+    return ImageAttachment(bytes: bytes, mediaType: type, name: path);
+  }
+
+  /// The picture at [uri], fetched: no larger than 20 MB.
+  static Future<ImageAttachment> _fetchPicture(Uri uri) async {
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 15);
+    try {
+      final request = await client.getUrl(uri);
+      final response = await request.close().timeout(
+        const Duration(seconds: 30),
+      );
+      if (response.statusCode != 200) {
+        throw StateError('Not sent: the page answered ${response.statusCode}');
+      }
+      final bytes = BytesBuilder(copy: false);
+      await for (final chunk in response.timeout(const Duration(seconds: 30))) {
+        bytes.add(chunk);
+        if (bytes.length > 20 << 20) throw StateError('Not sent: too large');
+      }
+      final data = bytes.takeBytes();
+      final type = imageMediaType(data);
+      if (type == null) throw StateError('Not sent: not a picture');
+      return ImageAttachment(bytes: data, mediaType: type);
+    } finally {
+      client.close(force: true);
+    }
   }
 
   /// The picture [bytes] as a bot's: its middle, square, no larger than

@@ -68,6 +68,7 @@ class ModelProviders extends ChangeNotifier {
   static const actionsKey = 'models.actions';
   static const quickAskKey = 'models.quickAsk';
   static const imageKey = 'models.image';
+  static const worldKey = 'models.world';
 
   /// [actionsModel] and [quickAskModel]'s value for the auxiliary model.
   static const followAuxiliary = 'auxiliary';
@@ -230,6 +231,15 @@ class ModelProviders extends ChangeNotifier {
 
   Future<void> setImageModel(String? model) => _write(imageKey, model);
 
+  /// The model the bots' world runs on (see bot_world.dart): who wakes
+  /// when, how everyone is; a [modelRef]. None, the app's own rules.
+  String? get worldModel => switch (_read(worldKey)) {
+    final String model when model.isNotEmpty => model,
+    _ => null,
+  };
+
+  Future<void> setWorldModel(String? model) => _write(worldKey, model);
+
   /// The image models the agents make pictures with: those turned on of the
   /// upstreams turned on, [imageModel] first, the others in order.
   List<({ModelProvider provider, ProviderModel model})> get imageModels {
@@ -317,6 +327,9 @@ class ModelProviders extends ChangeNotifier {
     }
     if (parseModelRef(imageModel)?.provider == id) {
       await setImageModel(null);
+    }
+    if (parseModelRef(worldModel)?.provider == id) {
+      await setWorldModel(null);
     }
     _errors.remove(id);
     try {

@@ -3087,6 +3087,7 @@ class IdeEditorState extends State<IdeEditor> with QuickAskTarget {
       highlight: DiffHighlight.lines,
       hideUnchanged: options.collapseUnchanged,
       unchangedLabel: context.l10n.diffUnchangedLines,
+      tabSize: _nativeController?.tabSize ?? 4,
       style: _editorStyle(colors),
       theme: theme,
       colors: DiffEditorColors.from(colors.get),

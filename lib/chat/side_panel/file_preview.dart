@@ -25,6 +25,7 @@ import '../../ide/ide_code_editor.dart';
 import '../../ide/ide_hover.dart';
 import '../../ide/ide_image_preview.dart';
 import '../../ide/ide_status_bar.dart' show IdeLanguageNames;
+import '../../ide/ide_view_state.dart';
 import '../../ide/language_mode.dart';
 import '../../ide/ide_dialog.dart';
 import '../../ide/ide_editor_placeholder.dart'
@@ -82,6 +83,8 @@ class FilePreview extends StatefulWidget {
     this.diffScroll,
     this.onDiffScrolled,
     this.openInDefaultApp = openExternal,
+    this.viewState = IdeViewState.empty,
+    this.onPreviewLeft,
   });
 
   final FileOpenRequest request;
@@ -102,6 +105,13 @@ class FilePreview extends StatefulWidget {
   /// there again; told [onDiffScrolled] as they scroll.
   final Offset? diffScroll;
   final ValueChanged<Offset>? onDiffScrolled;
+
+  /// Where the file's tab was left before: its edit, made anew, shows
+  /// there, its markdown preview too, unless lines are asked for.
+  final IdeViewState viewState;
+
+  /// Told the line at the top of its markdown preview as that goes.
+  final ValueChanged<int>? onPreviewLeft;
 
   /// The file's text as edited already (its tab's), to go on with: read
   /// anew in it where it is not changed.
@@ -502,6 +512,14 @@ class _FilePreviewState extends State<FilePreview> {
       files: widget.files,
       text: text,
     );
+    // Where it was left; the lines asked for, if any, shown after.
+    final view = widget.viewState;
+    if (view.selections case final kept?
+        when kept.isNotEmpty &&
+            kept.every((s) => s.isValid && s.end <= text.length)) {
+      edit.controller.setSelections(kept);
+    }
+    edit.controller.viewState = view.editor;
     _attach(edit);
     widget.onEdit?.call(edit);
   }
@@ -686,8 +704,9 @@ class _FilePreviewState extends State<FilePreview> {
   Widget? _notice(BuildContext context) {
     final l10n = context.l10n;
     final text = switch (_loaded) {
-      _ when _document && _documentOpenFailed =>
-        DocumentStrings(context).openFailed,
+      _ when _document && _documentOpenFailed => DocumentStrings(
+        context,
+      ).openFailed,
       _ when _edit?.error != null => localizedFileError(l10n, _edit!.error!),
       _Text(noOriginal: true) => l10n.sidePanelNoOriginal,
       _Diff(deleted: true) => l10n.sidePanelDeleted,
@@ -810,7 +829,10 @@ class _FilePreviewState extends State<FilePreview> {
       onEdited: edit?.controller.syncFromDocument,
       // Pictures and files pasted: copied beside it, linked to.
       onPaste: editable ? () => _markdownPaste().paste(_request.path) : null,
-      initialLine: _request.range?.start,
+      initialLine: _request.range?.start ?? widget.viewState.previewLine,
+      onLeave: (line) {
+        if (line != null) widget.onPreviewLeft?.call(line);
+      },
       onOpenFile: _openLinked,
       onOpenExternal: (uri) => unawaited(openExternal(uri.toString())),
       // This machine's files only, not a remote project's host's.

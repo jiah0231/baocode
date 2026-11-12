@@ -29,6 +29,25 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
+  group('BotSuggestions', () {
+    List<String> notes(bool wanted, bool? told, {bool suggested = false}) =>
+        BotSuggestions.notes(wanted: wanted, told: told, suggested: suggested);
+
+    test('turned on: told in full, then a word with each message', () {
+      expect(notes(true, null), [BotSuggestions.on]);
+      expect(notes(true, false), [BotSuggestions.on]);
+      expect(notes(true, true), [BotSuggestions.stillOn]);
+    });
+
+    test('turned off: told once, then nothing', () {
+      expect(notes(false, true), [BotSuggestions.off]);
+      expect(notes(false, false), isEmpty);
+      expect(notes(false, null), isEmpty);
+      // On before the app started again: its last reply still suggests.
+      expect(notes(false, null, suggested: true), [BotSuggestions.off]);
+    });
+  });
+
   group('BotPacer', () {
     final start = DateTime(2026, 10, 29, 14);
     BotEvent event(String chat, BotEventKind kind, DateTime at) => BotEvent(
@@ -173,7 +192,7 @@ void main() {
             chatOnly: true,
           ),
         ),
-        contains('You do not read or change files'),
+        contains('You do not change files nor run commands'),
       );
       expect(
         botAbilities(const Bot(id: 'q', name: 'Q', folder: '/bots/q')),
@@ -253,6 +272,13 @@ void main() {
         BotFiles.read('/bots/b1', BotFiles.cardText(bot({})))!.chatOnly,
         isFalse,
       );
+      // Writing first: on unless turned off, and only then said.
+      final plain = BotFiles.cardText(bot({}));
+      expect(plain, isNot(contains('writes_first')));
+      expect(BotFiles.read('/bots/b1', plain)!.writesFirst, isTrue);
+      final quiet = BotFiles.cardText(bot({}).copyWith(writesFirst: false));
+      expect(quiet, contains('writes_first: false'));
+      expect(BotFiles.read('/bots/b1', quiet)!.writesFirst, isFalse);
       // Its files not shown it: its tools keep them.
       final told = botInstructions(bot(BotAbility.values.toSet()), memory: '');
       expect(told, contains('bot_remember'));
@@ -272,6 +298,17 @@ void main() {
       expect(botChatStyle, contains('emoji'));
       expect(botChatStyle, isNot(contains('bot_send_sticker')));
       expect(botChatStyle, contains('bot_send_image'));
+    });
+
+    test('a chat from the bot_say tool\'s days is told it is gone', () {
+      expect(
+        botChatStyle,
+        contains(
+          'Earlier in this chat you may have sent messages with a '
+          'bot_say tool',
+        ),
+      );
+      expect(botChatStyle, contains('Those tools are gone'));
     });
   });
 
@@ -570,6 +607,77 @@ void main() {
       },
     );
 
+    test('a bot deleted: every session kept of it gone, its groups\' of '
+        'before too; not another\'s', () async {
+      final catalog = _KeptSessions({
+        '/bots/b1': ['s1', 's2'],
+        '/bots/b1/groups/g1': ['s3'],
+        '/bots/b10': ['s4'],
+        app: ['s5'],
+      });
+      final kept = Workspace(
+        kernels: [
+          KernelDescriptor(
+            id: 'claude-code',
+            label: 'Claude Code',
+            icon: Icons.auto_awesome_rounded,
+            description: '',
+            create: kernel.create,
+            catalog: catalog,
+          ),
+        ],
+        projects: [Project('app', app)],
+      );
+      addTearDown(kept.dispose);
+      final own = Bots(workspace: kept, folders: MemoryBotFolders());
+      Bots.stopping = Duration.zero;
+      addTearDown(() => Bots.stopping = const Duration(seconds: 3));
+      await own.forgetSessions('/bots/b1');
+      expect(catalog.deleted, unorderedEquals(['s1', 's2', 's3']));
+    });
+
+    test('what is said with the user, in its timeline once its turn is '
+        'done', () async {
+      final bot = bots.bots.single;
+      final session = bots.threadFor(bot).session;
+      session.send(const ComposerMessage(text: '在吗'));
+      for (var i = 0; i < 300 && !session.isStreaming; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      session.stop();
+      for (var i = 0; i < 300 && bots.timeline(bot).count == 0; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(bots.timeline(bot).lines.first, '- 14:00 [私聊] 用户: 在吗');
+      expect(bots.unread(bot), 0);
+    });
+
+    test('when its chat with the user went on: not when a group did', () async {
+      final bot = bots.bots.single;
+      final session = bots.threadFor(bot).session;
+      Future<void> told(String text) async {
+        final had = session.itemCount;
+        session.send(ComposerMessage(text: text));
+        for (var i = 0; i < 300 && session.itemCount == had; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        session.stop();
+        for (var i = 0; i < 300 && session.isStreaming; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      }
+
+      expect(bots.chattedAt(bot), isNull);
+      await told(
+        botEventMessage('[group g1] The group chat "Team": you.\nNew in it.'),
+      );
+      expect(bots.chattedAt(bot), isNull);
+      final before = DateTime.now();
+      await told('在吗');
+      expect(bots.chattedAt(bot), isNotNull);
+      expect(bots.chattedAt(bot)!.isBefore(before), isFalse);
+    });
+
     test('its agent is told who it is, with all an agent has', () async {
       final bot = bots.bots.single;
       bots.threadFor(bot).session.send(const ComposerMessage(text: '在吗'));
@@ -688,6 +796,7 @@ void main() {
           'bot_cancel_later',
           'bot_send_image',
           'bot_remember',
+          'bot_send',
           'bot_my_picture',
           'bot_user_picture',
           'bot_edit_me',
@@ -1398,6 +1507,7 @@ void main() {
         identity: current.identity,
         abilities: current.abilities,
         chatOnly: true,
+        writesFirst: false,
       );
       write(
         cardPath,
@@ -1405,6 +1515,8 @@ void main() {
       );
       bots.reload(by: restricted);
       expect(bots.byId(self.id)!.chatOnly, isTrue);
+      expect(bots.byId(self.id)!.writesFirst, isFalse);
+      expect(read(cardPath), contains('writes_first: false'));
       expect(read(cardPath), contains('chat_only: true'));
       write(
         cardPath,
@@ -1759,27 +1871,40 @@ void main() {
       expect(await offered(bot.folder), contains('bot_recent_events'));
     });
 
-    test('woken by the app, not writing until it says a word', () async {
+    test('at work in its chat, as it is: woken by the app too; not at a '
+        'group\'s', () async {
       final bot = toldOfAll();
       final session = bots.threadFor(bot).session;
+      Future<void> until(bool Function() done) async {
+        for (var i = 0; i < 300 && !done(); i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      }
+
+      expect(bots.atWork(bot), isNull);
       bots.later(bot, const Duration(minutes: 1), 'Ask how it went');
       now = now.add(const Duration(minutes: 2));
       bots.deliver();
-      for (var i = 0; i < 300 && !session.isStreaming; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-      }
+      await until(() => session.isStreaming);
       expect(bots.threadOf(bot)!.status, ThreadStatus.running);
-      expect(bots.typing(bot), isFalse);
-      session.stop();
-      for (var i = 0; i < 300 && session.isStreaming; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-      }
-      // The user's words: writing back.
-      session.send(const ComposerMessage(text: 'hi'));
-      for (var i = 0; i < 300 && !session.isStreaming; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-      }
       expect(bots.typing(bot), isTrue);
+      final work = bots.atWork(bot)!;
+      expect(work.group, isNull);
+      expect(work.since, isNotNull);
+      session.stop();
+      await until(() => !session.isStreaming);
+      expect(bots.typing(bot), isFalse);
+      // A group's news: at work there, not in its chat.
+      session.send(
+        ComposerMessage(
+          text: botEventMessage(
+            '[group g1] The group chat "Team": you.\nNew in it.',
+          ),
+        ),
+      );
+      await until(() => session.isStreaming);
+      expect(bots.typing(bot), isFalse);
+      expect(bots.atWork(bot)!.group, 'g1');
       session.stop();
     });
   });
@@ -1906,4 +2031,37 @@ class _Catalog implements SessionCatalog {
 
   @override
   Future<void> delete(String id) async {}
+}
+
+/// Sessions kept by folder; those deleted.
+class _KeptSessions implements SessionCatalog {
+  _KeptSessions(this.kept);
+
+  final Map<String, List<String>> kept;
+  final deleted = <String>[];
+
+  @override
+  Future<List<ProjectRecord>> projects() async => [
+    for (final MapEntry(key: path, value: ids) in kept.entries)
+      ProjectRecord(
+        path: path,
+        sessions: [
+          for (final id in ids)
+            SessionRecord(
+              id: id,
+              title: '',
+              updatedAt: DateTime(2026),
+              cwd: path,
+            ),
+        ],
+      ),
+  ];
+
+  @override
+  Future<List<SessionRecord>> sessionsIn(String cwd) async =>
+      (await projects()).where((p) => p.path == cwd).firstOrNull?.sessions ??
+      const [];
+
+  @override
+  Future<void> delete(String id) async => deleted.add(id);
 }

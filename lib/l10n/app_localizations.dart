@@ -21829,6 +21829,138 @@ abstract class AppLocalizations {
   /// **'Its quota starts over at once. The credit can\'t be given back, and whatever quota is left now is lost.'**
   String get modelsResetCreditConfirmDetail;
 
+  /// No description provided for @claudeResets.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 reset} other{{count} resets}}'**
+  String claudeResets(int count);
+
+  /// No description provided for @claudeResetsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Claude limit resets'**
+  String get claudeResetsTitle;
+
+  /// No description provided for @claudeResetsDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Granted by Anthropic. Using one sets the limits it lists back to nothing used. With more than one, they are used one at a time, in the order Anthropic sets.'**
+  String get claudeResetsDetail;
+
+  /// No description provided for @claudeResetClears.
+  ///
+  /// In en, this message translates to:
+  /// **'Clears {windows}'**
+  String claudeResetClears(String windows);
+
+  /// No description provided for @claudeResetWindowUsed.
+  ///
+  /// In en, this message translates to:
+  /// **'{window} ({percent}% used)'**
+  String claudeResetWindowUsed(String window, int percent);
+
+  /// No description provided for @claudeResetWeeklyOf.
+  ///
+  /// In en, this message translates to:
+  /// **'{model} weekly'**
+  String claudeResetWeeklyOf(String model);
+
+  /// No description provided for @claudeResetNext.
+  ///
+  /// In en, this message translates to:
+  /// **'Usable now'**
+  String get claudeResetNext;
+
+  /// No description provided for @claudeResetQueued.
+  ///
+  /// In en, this message translates to:
+  /// **'Waits its turn: usable once the one above is used'**
+  String get claudeResetQueued;
+
+  /// No description provided for @claudeResetUse.
+  ///
+  /// In en, this message translates to:
+  /// **'Use This One…'**
+  String get claudeResetUse;
+
+  /// No description provided for @claudeResetConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Use a Claude limit reset?'**
+  String get claudeResetConfirm;
+
+  /// No description provided for @claudeResetConfirmDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'“{label}” sets {windows} back to nothing used, at once. The reset can\'t be given back, and what is left of these limits now is lost.'**
+  String claudeResetConfirmDetail(String label, String windows);
+
+  /// No description provided for @claudeResetPaused.
+  ///
+  /// In en, this message translates to:
+  /// **'Paused'**
+  String get claudeResetPaused;
+
+  /// No description provided for @claudeResetCooldown.
+  ///
+  /// In en, this message translates to:
+  /// **'Usable again {time}'**
+  String claudeResetCooldown(String time);
+
+  /// No description provided for @claudeResetUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Not usable now ({reason})'**
+  String claudeResetUnavailable(String reason);
+
+  /// No description provided for @claudeResetSignedOut.
+  ///
+  /// In en, this message translates to:
+  /// **'The Claude.ai sign-in has expired; Claude Code renews it as it next runs.'**
+  String get claudeResetSignedOut;
+
+  /// No description provided for @claudeResetDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset: {windows}'**
+  String claudeResetDone(String windows);
+
+  /// No description provided for @claudeResetNotDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Not reset: {reason}'**
+  String claudeResetNotDone(String reason);
+
+  /// No description provided for @claudeResetNotNext.
+  ///
+  /// In en, this message translates to:
+  /// **'Another reset is the one usable now; nothing was used. Refresh and try again.'**
+  String get claudeResetNotNext;
+
+  /// No description provided for @claudeResetNotLimited.
+  ///
+  /// In en, this message translates to:
+  /// **'This reset can only be used once a limit is reached; nothing was used.'**
+  String get claudeResetNotLimited;
+
+  /// No description provided for @claudeResetAlreadyUsed.
+  ///
+  /// In en, this message translates to:
+  /// **'This reset was already used; nothing was used now.'**
+  String get claudeResetAlreadyUsed;
+
+  /// No description provided for @claudeResetCoolingDown.
+  ///
+  /// In en, this message translates to:
+  /// **'A reset was just used; wait a little before the next. Nothing was used.'**
+  String get claudeResetCoolingDown;
+
+  /// No description provided for @claudeResetsRefresh.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh'**
+  String get claudeResetsRefresh;
+
   /// No description provided for @resetCreditsHint.
   ///
   /// In en, this message translates to:
@@ -22854,6 +22986,89 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Could not hand off to Agent. Check the Agent conversation before retrying; it may already have received the request.'**
   String get quickAskAgentFailed;
+  /// No description provided for @rewindFilesTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Undo the file changes made after this message?'**
+  String get rewindFilesTitle;
+
+  /// No description provided for @rewindFilesChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'The agent changed {count, plural, =1{1 file} other{{count} files}} after this message:'**
+  String rewindFilesChanged(int count);
+
+  /// No description provided for @rewindFilesMore.
+  ///
+  /// In en, this message translates to:
+  /// **'…and {count} more'**
+  String rewindFilesMore(int count);
+
+  /// No description provided for @rewindFilesMerged.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 of them was} other{{count} of them were}} also changed elsewhere since: those changes are kept.'**
+  String rewindFilesMerged(int count);
+
+  /// No description provided for @rewindFilesConflicts.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 file can\'t} other{{count} files can\'t}} be undone cleanly and will stay as {count, plural, =1{it is} other{they are}}:'**
+  String rewindFilesConflicts(int count);
+
+  /// No description provided for @rewindFilesCommands.
+  ///
+  /// In en, this message translates to:
+  /// **'What commands changed (Bash) isn\'t tracked and stays.'**
+  String get rewindFilesCommands;
+
+  /// No description provided for @rewindFilesRevert.
+  ///
+  /// In en, this message translates to:
+  /// **'Undo and Send'**
+  String get rewindFilesRevert;
+
+  /// No description provided for @rewindFilesKeep.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep and Send'**
+  String get rewindFilesKeep;
+
+  /// No description provided for @rewindFilesRemember.
+  ///
+  /// In en, this message translates to:
+  /// **'Remember my choice'**
+  String get rewindFilesRemember;
+
+  /// No description provided for @generalSettingsRewindFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'Edited Messages'**
+  String get generalSettingsRewindFiles;
+
+  /// No description provided for @generalSettingsRewindFilesDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'When you edit an earlier message and send it again, what happens to the files the agent changed after it. Commands\' (Bash) changes are not tracked. Claude Code and BaoCode agent only.'**
+  String get generalSettingsRewindFilesDescription;
+
+  /// No description provided for @generalSettingsRewindAsk.
+  ///
+  /// In en, this message translates to:
+  /// **'Ask Each Time'**
+  String get generalSettingsRewindAsk;
+
+  /// No description provided for @generalSettingsRewindRevert.
+  ///
+  /// In en, this message translates to:
+  /// **'Undo the Changes'**
+  String get generalSettingsRewindRevert;
+
+  /// No description provided for @generalSettingsRewindKeep.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep the Changes'**
+  String get generalSettingsRewindKeep;
 }
 
 class _AppLocalizationsDelegate
