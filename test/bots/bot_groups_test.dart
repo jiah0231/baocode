@@ -79,7 +79,7 @@ void main() {
     expect(group.members, [mia.id, leo.id]);
     expect(group.name, 'Mia、Leo');
     final kept = jsonDecode(
-      utf8.decode(folders.files['/bots/groups/groups.json']!),
+      utf8.decode(folders.files[p.join(folders.root!, 'groups', 'groups.json')]!),
     ) as List;
     expect((kept.single as Map)['members'], [mia.id, leo.id]);
   });
@@ -213,14 +213,14 @@ void main() {
     expect(setup.instructions, contains('Your name is Mia.'));
     expect(setup.instructions, contains('<your_life>'));
     expect(setup.instructions, contains('<group_chats>'));
-    expect(setup.instructions, contains('/bots/WORLD.md'));
+    expect(setup.instructions, contains(p.join(folders.root!, 'WORLD.md')));
     expect(
       setup.instructions,
-      contains('/bots/${mia.id}/timeline/2026-11-12.md'),
+      contains(p.join(mia.folder, 'timeline/2026-11-12.md')),
     );
     expect(setup.tools, contains('Read'));
     // The world they share: everyone, and who is in which group.
-    final world = utf8.decode(folders.files['/bots/WORLD.md']!);
+    final world = utf8.decode(folders.files[p.join(folders.root!, 'WORLD.md')]!);
     expect(world, contains('- Mia'));
     expect(world, contains('[only chats]'));
     expect(
@@ -248,8 +248,9 @@ void main() {
       group.id,
     );
     groups.turnEnded(group.id, mia.id, '<bot_say>火锅！</bot_say>');
-    String timeline(Bot bot) =>
-        utf8.decode(folders.files['/bots/${bot.id}/timeline/2026-11-12.md']!);
+    String timeline(Bot bot) => utf8.decode(
+      folders.files[p.join(bot.folder, 'timeline/2026-11-12.md')]!,
+    );
     expect(timeline(mia), contains('- 14:00 [群·江湖 #1] 用户: @Mia 晚上吃啥'));
     expect(timeline(mia), contains('- 14:00 [群·江湖 #2] 我: 火锅！'));
     expect(timeline(leo), contains('- 14:00 [群·江湖 #2] Mia: 火锅！'));
@@ -365,7 +366,7 @@ void main() {
     expect(groups.groups, isEmpty);
     expect(
       folders.files.keys.where(
-        (k) => p.isWithin('/bots/groups/${group.id}', k),
+        (k) => p.isWithin(p.join(folders.root!, 'groups', group.id), k),
       ),
       isEmpty,
     );

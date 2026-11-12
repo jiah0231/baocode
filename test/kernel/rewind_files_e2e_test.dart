@@ -87,6 +87,7 @@ void main() {
   String read(String name) => File(file(name)).readAsStringSync();
 
   ChatSession conversation() {
+    final reviews = <ChangeReview>[];
     final session = ChatSession(
       kernel: KernelRegistry.claudeCode,
       kernels: [KernelRegistry.claudeCode],
@@ -95,12 +96,25 @@ void main() {
         settings: const {'mode': 'acceptEdits'},
       ),
       historyCount: 0,
-      openReview: (root, {session}) async =>
-          ChangeReview(BlobReviewStore.open(checkpoints), root: root),
+      openReview: (root, {session}) async {
+        final review = ChangeReview(
+          BlobReviewStore.open(checkpoints),
+          root: root,
+        );
+        reviews.add(review);
+        return review;
+      },
     );
     addTearDown(() async {
       session.dispose();
       await session.stopped.timeout(const Duration(seconds: 20));
+      // TurnEnded schedules review.look() without awaiting it. Stopping the
+      // kernel does not drain that main-isolate checkpoint IO. Once disposed,
+      // look queues a no-op after the work already accepted: wait for that
+      // barrier before tearDown deletes the fixture, including on Windows.
+      for (final review in reviews) {
+        await review.look().timeout(const Duration(seconds: 20));
+      }
     });
     return session..attach();
   }

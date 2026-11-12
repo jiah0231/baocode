@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:baocode/main.dart';
+import 'package:baocode/platform/app_platform.dart';
 import 'package:baocode/workspace/workspace.dart';
 
 void main() {
@@ -35,12 +36,15 @@ void main() {
     semantics.dispose();
   }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
-  testWidgets('a test targeting Windows from another host keeps them', (
+  testWidgets('Windows defaults follow the actual host', (
     tester,
   ) async {
     final semantics = tester.ensureSemantics();
     await pumpApp(tester);
-    expect(find.bySemanticsLabel('Open a project folder'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('Open a project folder'),
+      AppPlatform.isWindowsHost ? findsNothing : findsOneWidget,
+    );
     semantics.dispose();
   }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 

@@ -55,7 +55,7 @@ void main() {
 
   /// What [files] tell, by path relative to the project.
   Map<String, RewindOutcome> outcomes(List<RewindFile> files) => {
-    for (final file in files) file.name: file.outcome,
+    for (final file in files) p.split(file.name).join('/'): file.outcome,
   };
 
   /// The pending changes, by path relative to the project.
@@ -468,7 +468,12 @@ void main() {
         'a.txt': RewindOutcome.restore,
         'lib/c.txt': RewindOutcome.restore,
       });
-      expect(planned.firstWhere((f) => f.name == 'lib/c.txt').created, isTrue);
+      expect(
+        planned
+            .firstWhere((f) => p.split(f.name).join('/') == 'lib/c.txt')
+            .created,
+        isTrue,
+      );
       // Only planned: nothing written.
       expect(read('a.txt'), 'one\n2\n3\n4\nfive\n');
 
