@@ -77,10 +77,18 @@ void main() {
   });
 
   tearDown(() async {
-    ClaudeEnvironment.use(null);
-    ModelProviders.current = providers;
-    await api.close();
-    Directory(root).deleteSync(recursive: true);
+    try {
+      // The conversation's addTearDown has stopped the kernel and drained
+      // its review. Accepted HTTP requests can still be decoding their body:
+      // force-closing their sockets makes that legitimate work fail halfway.
+      // Drain them, as the other built-in-core E2E fixture does; a stalled or
+      // failed request still fails this test rather than being discarded.
+      await api.close(force: false).timeout(const Duration(seconds: 20));
+      Directory(root).deleteSync(recursive: true);
+    } finally {
+      ClaudeEnvironment.use(null);
+      ModelProviders.current = providers;
+    }
   });
 
   String file(String name) => p.join(cwd, name);
