@@ -22986,6 +22986,7 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Could not hand off to Agent. Check the Agent conversation before retrying; it may already have received the request.'**
   String get quickAskAgentFailed;
+
   /// No description provided for @rewindFilesTitle.
   ///
   /// In en, this message translates to:

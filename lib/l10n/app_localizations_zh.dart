@@ -13346,6 +13346,8 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get quickAskAgentFailed => '未能完成 Agent 交接。重试前请先检查 Agent 对话，请求可能已经收到。';
+
+  @override
   String get rewindFilesTitle => '撤回这条消息之后的文件改动？';
 
   @override

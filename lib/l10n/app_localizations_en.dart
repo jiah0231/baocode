@@ -14124,6 +14124,8 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get quickAskAgentFailed =>
       'Could not hand off to Agent. Check the Agent conversation before retrying; it may already have received the request.';
+
+  @override
   String get rewindFilesTitle =>
       'Undo the file changes made after this message?';
 
