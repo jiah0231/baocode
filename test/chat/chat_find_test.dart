@@ -235,8 +235,11 @@ void main() {
         child: const ColoredBox(color: Color(0xFF00FF00)),
       ),
     );
+    // No overlay is kept in the route while search is closed.
+    expect(find.byType(OverlayPortal), findsNothing);
     ChatHistoryView.find(_historyKey, query: 'Question');
     await tester.pump();
+    expect(find.byType(OverlayPortal), findsOneWidget);
     final bar = tester.getRect(find.byType(IdeFindWidget));
     final rail = Rect.fromLTWH(1000 - _railWidth, 0, _railWidth, 200);
     expect(bar.overlaps(rail), isTrue);
@@ -253,6 +256,7 @@ void main() {
     await tester.pump();
     expect(railTaps, 0);
     expect(find.byType(IdeFindWidget), findsNothing);
+    expect(find.byType(OverlayPortal), findsNothing);
     expect(closed, 1);
   });
 }

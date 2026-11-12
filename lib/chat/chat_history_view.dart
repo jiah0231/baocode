@@ -3023,7 +3023,18 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
                   top: 0,
                   left: _gutter,
                   right: _gutter,
-                  child: _inset > 0 ? _OverRail(child: _findBar()) : _findBar(),
+                  child: ListenableBuilder(
+                    listenable: _find,
+                    builder: (context, _) {
+                      // A hidden find bar needs no overlay. Keeping an empty
+                      // portal alive still changes the route's semantics
+                      // ownership as conversations are switched.
+                      if (!_find.visible) return const SizedBox.shrink();
+                      return _inset > 0
+                          ? _OverRail(child: _findBar())
+                          : _findBar();
+                    },
+                  ),
                 ),
               ],
             ),
