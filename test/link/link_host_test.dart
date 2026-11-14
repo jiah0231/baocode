@@ -168,6 +168,41 @@ void main() {
     expect(host.pending, isNull);
   });
 
+  test('a trusted retry does not confirm another phone', () async {
+    final trusted = await pair();
+    addTearDown(trusted.close);
+    await host.beginPairing();
+    final stranger = await connect(LinkIdentity.generate());
+    addTearDown(stranger.close);
+    await stranger.call(LinkMethods.hello, {'request': true});
+    final pending = host.pending;
+    await trusted.call(LinkMethods.confirm);
+    expect(host.pending, same(pending));
+    expect(host.pending!.approved, isFalse);
+    expect(host.phones, hasLength(1));
+  });
+
+  test('a known nearby phone still needs desktop approval', () async {
+    final first = await pair();
+    await first.close();
+    await host.beginPairing();
+    final peer = await connect(phone);
+    addTearDown(peer.close);
+    final hello = await peer.call(LinkMethods.hello, {'request': true}) as Map;
+    expect(hello['approval'], isTrue);
+    expect(host.pending!.needsApproval, isTrue);
+    var confirmed = false;
+    final confirm = peer
+        .call(LinkMethods.confirm)
+        .whenComplete(() => confirmed = true);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(confirmed, isFalse);
+    host.approvePending();
+    await confirm;
+    expect(host.phones, hasLength(1));
+    expect(host.isConnected(phone.id), isTrue);
+  });
+
   test('confirmation alone never admits an unknown phone', () async {
     await host.beginPairing();
     final peer = await connect(LinkIdentity.generate());

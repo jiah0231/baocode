@@ -740,8 +740,7 @@ class LinkHost extends ChangeNotifier {
       // A confirmation can be retried after its answer was lost, or sent
       // by a phone which already resumed its trusted connection. It must
       // never be forwarded to the workspace as an agent request.
-      if (method == LinkMethods.confirm &&
-          _phones.containsKey(connection.id)) {
+      if (method == LinkMethods.confirm && _phones.containsKey(connection.id)) {
         return {'device': _deviceInfo().toJson()};
       }
       if (method == LinkMethods.unpair) {
