@@ -482,7 +482,7 @@ jobs:
         run: >-
           flutter test
           test/base/mouse_navigation_test.dart
-          test/bots/bots_test.dart
+          test/bots
           test/chat/change_review_test.dart
           test/chat/checkpoints_tidy_test.dart
           test/chat/composer_draft_sync_test.dart

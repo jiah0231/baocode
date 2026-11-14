@@ -1,0 +1,4 @@
+{
+  "zh": "Bot 核心、消息协议和界面对齐上游，移除自定义内核切换。保留旧会话与文件；旧 Codex Bot 默认仅聊天，需要你在资料里明确开启代理能力。修复已配对手机重新扫码时的 confirm 错误和重复确认。保留现有桌面定制功能。服务商 HTTP 429 限流与 Edge PDF 取词问题不在本次修复范围。",
+  "en": "Aligns Bot runtime, messaging protocol and UI with upstream and removes custom kernel switching. Preserves old conversations and files; legacy Codex Bots remain chat-only until explicitly enabled in their profile. Fixes confirm errors when scanning again with a known phone and safely handles repeated confirmations. Preserves existing desktop customizations. Provider HTTP 429 rate limits and Edge PDF selection inaccuracies are not resolved by this update."
+}
