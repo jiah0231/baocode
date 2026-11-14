@@ -481,7 +481,7 @@ void main() {
         expect(migrated.chatOnly, isTrue);
         expect(migrated.legacyRestricted, isTrue);
         final access = kept.agentSetup!(migrated.folder)!.workspace();
-        expect(access.tools, isNot(contains('Read')));
+        expect(access.tools, isEmpty);
         expect(access.tools, isNot(contains('Bash')));
         expect(access.tools, isNot(contains('Write')));
         expect(access.userServers, isFalse);
@@ -489,6 +489,7 @@ void main() {
           id: migrated.id,
           name: migrated.name,
           identity: migrated.identity,
+          abilities: migrated.abilities,
           chatOnly: false,
         );
         expect(enabled.legacyRestricted, isFalse);

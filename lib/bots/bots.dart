@@ -515,10 +515,9 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
         // not at the computer.
         // Its files and its groups' chats read with Read, even one that
         // only chats.
-        tools: [
-          ...BotPermissions.tools(bot),
-          if (bot.chatOnly && !bot.legacyRestricted) 'Read',
-        ],
+        tools: bot.legacyRestricted
+            ? const []
+            : [...BotPermissions.tools(bot), if (bot.chatOnly) 'Read'],
         // An agent's has the user's MCP servers, as an agent does.
         userServers: !bot.chatOnly,
         approvesAll: true,
