@@ -10,7 +10,6 @@ import 'package:baocode/bots/bot_groups.dart';
 import 'package:baocode/bots/bots.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/claude_code/claude_code_kernel.dart';
-import 'package:baocode/kernel/claude_code/mock_claude_code_transport.dart';
 import 'package:baocode/link/chat_codec.dart';
 import 'package:baocode/link/workspace_bridge.dart';
 import 'package:baocode/workspace/workspace.dart';
