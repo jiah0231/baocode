@@ -20,7 +20,7 @@
 #include <cstdio>
 #define ACTION_TRACE(...) do { std::printf(__VA_ARGS__); std::fflush(stdout); } while (false)
 #define ACTION_STAGE(value) bounds_trace.stage = value
-#define ACTION_CHECK(label, expression) ([&] { const bool ok = (expression); ACTION_TRACE("ACTION_CHECK|stage=%s|ok=%d\n", label, ok ? 1 : 0); return ok; }())
+#define ACTION_CHECK(label, expression) bounds_trace.Check(label, (expression))
 #else
 #define ACTION_TRACE(...) ((void)0)
 #define ACTION_STAGE(value) ((void)0)
@@ -33,9 +33,41 @@ struct BoundsTrace {
   HWND source;
   ULONGLONG began = GetTickCount64();
   const char* stage = "start";
+  struct CheckEvent { const char* label; bool ok; ULONGLONG tick; };
+  CheckEvent checks[16]{};
+  unsigned check_count = 0;
+  translation_selection::SelectionTargetDiagnostics targets[2]{};
+  bool target_ok[2]{};
+  unsigned target_count = 0;
+  bool cold_observed = false, cold_known_type = false, cold_chromium = false;
+  bool cold_bound = false, cold_same_foreground = false, cold_retryable = false;
+  DWORD cold_pid = 0;
+  int cold_focused_pid = 0;
+  BOOL cold_password = TRUE, cold_focus = FALSE;
+  CONTROLTYPEID cold_type = 0;
+  bool Check(const char* label, bool ok) {
+    if (check_count < 16) checks[check_count++] = {label, ok, GetTickCount64()};
+    return ok;
+  }
+  void Target(bool ok, const translation_selection::SelectionTargetDiagnostics& value) {
+    if (target_count < 2) { targets[target_count] = value; target_ok[target_count++] = ok; }
+  }
   ~BoundsTrace() {
+    // Emit additional metadata only after all provider queries finish. No
+    // extra flush, allocation, provider call or screenshot inside the guards.
     ACTION_TRACE("ACTION_PROVIDER|source=%p|stage=%s|elapsedMs=%llu\n",
         static_cast<void*>(source), stage, GetTickCount64() - began);
+    if (cold_observed) ACTION_TRACE("ACTION_COLD_FOCUS|pid=%lu|focusedPid=%d|sensitiveControl=%d|focus=%d|typeKnown=%d|type=%d|chromium=%d|identityBound=%d|sameForeground=%d|retryable=%d\n",
+        cold_pid, cold_focused_pid, cold_password, cold_focus, cold_known_type,
+        cold_type, cold_chromium, cold_bound, cold_same_foreground, cold_retryable);
+    for (unsigned i = 0; i < target_count; ++i) {
+      const auto& d = targets[i];
+      ACTION_TRACE("ACTION_TARGET|index=%u|ok=%d|stage=%s|hr=%08lx|pid=%d|sensitiveControl=%d|offscreen=%d|focus=%d|same=%d|type=%d\n",
+          i, target_ok[i], d.stage, static_cast<unsigned long>(d.result), d.process,
+          d.password, d.offscreen, d.has_focus, d.same, d.type);
+    }
+    for (unsigned i = 0; i < check_count; ++i)
+      ACTION_TRACE("ACTION_CHECK|stage=%s|ok=%d|tick=%llu\n", checks[i].label, checks[i].ok, checks[i].tick);
   }
 };
 #endif
@@ -121,11 +153,15 @@ std::optional<RECT> SelectionBounds(HWND source,
         previous_element != nullptr, GetForegroundWindow() == source,
         static_cast<DWORD>(focused_pid) == pid, password == FALSE,
         has_focus == FALSE, known_type && initial_type == UIA_PaneControlTypeId, chromium);
-    ACTION_TRACE("ACTION_COLD_FOCUS|source=%p|pid=%lu|focusedPid=%d|sensitiveControl=%d|focus=%d|typeKnown=%d|type=%d|chromium=%d|identityBound=%d|sameForeground=%d|retryable=%d|remainingMs=%llu\n",
-        static_cast<void*>(source), pid, focused_pid, password, has_focus,
-        known_type ? 1 : 0, initial_type, chromium ? 1 : 0,
-        previous_element ? 1 : 0, GetForegroundWindow() == source ? 1 : 0,
-        retryable ? 1 : 0, deadline > GetTickCount64() ? deadline - GetTickCount64() : 0);
+#ifdef BAOCODE_TRANSLATION_ACTION_DIAGNOSTICS
+    bounds_trace.cold_observed = true;
+    bounds_trace.cold_pid = pid; bounds_trace.cold_focused_pid = focused_pid;
+    bounds_trace.cold_password = password; bounds_trace.cold_focus = has_focus;
+    bounds_trace.cold_known_type = known_type; bounds_trace.cold_type = initial_type;
+    bounds_trace.cold_chromium = chromium; bounds_trace.cold_bound = previous_element != nullptr;
+    bounds_trace.cold_same_foreground = GetForegroundWindow() == source;
+    bounds_trace.cold_retryable = retryable;
+#endif
     if (retryable) require_text_control = true;
     return std::nullopt;
   }
@@ -134,10 +170,7 @@ std::optional<RECT> SelectionBounds(HWND source,
     translation_selection::SelectionTargetDiagnostics diagnostics;
     const bool ok = selection_target.Resolve(automation.Get(), element, source,
         static_cast<DWORD>(focused_pid), ready, allow_transition, &diagnostics);
-    ACTION_TRACE("ACTION_TARGET|ok=%d|stage=%s|hr=%08lx|pid=%d|sensitiveControl=%d|offscreen=%d|focus=%d|same=%d|type=%d\n",
-        ok ? 1 : 0, diagnostics.stage, static_cast<unsigned long>(diagnostics.result),
-        diagnostics.process, diagnostics.password, diagnostics.offscreen,
-        diagnostics.has_focus, diagnostics.same, diagnostics.type);
+    bounds_trace.Target(ok, diagnostics);
     return ok;
 #else
     return selection_target.Resolve(automation.Get(), element, source,

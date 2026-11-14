@@ -1168,6 +1168,16 @@ int wmain(int argc, wchar_t** argv) {
       const POINT focus{from.x+static_cast<LONG>(30*pdf_scale), from.y};
       Mouse(window, focus, 0); Mouse(window, focus, MOUSEEVENTF_LEFTDOWN);
       Mouse(window, focus, MOUSEEVENTF_LEFTUP); Pump(GetDoubleClickTime()+100);
+      // Diagnostic-only A/B: allow page input to settle without ever touching
+      // accessibility. Both arms still have exactly one cold UIA gesture.
+      wchar_t settle[16]{};
+      if (GetEnvironmentVariableW(L"BAOCODE_PDF_DIAGNOSTIC_SETTLE_MS", settle, 16)) {
+        Check(wcscmp(settle, L"0") == 0 || wcscmp(settle, L"1000") == 0,
+            "Unexpected diagnostic settle duration");
+        const DWORD delay = wcscmp(settle, L"1000") == 0 ? 1000 : 0;
+        std::printf("DESKTOP_PDF_SETTLE|ms=%lu\n", delay);
+        if (delay) Pump(delay);
+      }
     } else {
       POINT origin{}; Check(ClientToScreen(window, &origin) != 0, "Console grid unavailable");
       from = POINT{origin.x+4*cell_x+cell_x/2, origin.y+2*cell_y+cell_y/2};
@@ -1183,14 +1193,6 @@ int wmain(int argc, wchar_t** argv) {
     const auto began = GetTickCount64();
     Drag(window, from, to);
     const auto released = GetTickCount64();
-    // Synthetic fixture pixels only; no accessibility query or warming.
-    // Distinguish a lost/failed OS drag from entry-discovery failure.
-    if (mode == L"edgePdf") {
-      const Frame released_frame = Frame::Read(window);
-      released_frame.Save(output+L"\\"+mode+L"-released.bmp");
-      std::printf("DESKTOP_PDF_RELEASE|tick=%llu|complete=%d\n", released,
-          CompletePdfSelection(before, released_frame, text_area, pdf_scale) ? 1 : 0);
-    }
     // Keep the real pointer on selected source text until entry readiness. The
     // production action, not this harness, makes the first provider/UIA call.
     Mouse(window, POINT{(from.x+to.x)/2, from.y}, 0);
