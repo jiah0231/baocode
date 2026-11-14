@@ -6,6 +6,23 @@ import 'package:baocode/link/chat_codec.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test(
+    'upstream bot messages stay separate from private work and suggestions',
+    () {
+      const text =
+          'private work<bot_say ref="74">Hello</bot_say>'
+          '<bot_suggest>Hi</bot_suggest><bot_next>Mia</bot_next>';
+      expect(ChatCodec.botParts(text), [('bot_say', 'Hello')]);
+      expect(ChatCodec.botPartsOf(text).single.ref, 74);
+      expect(ChatCodec.botSuggestions(text), ['Hi']);
+      expect(ChatCodec.botNext(text), 'Mia');
+      expect(
+        ChatCodec.botParts('untagged answer<bot_suggest>Hi</bot_suggest>'),
+        isEmpty,
+      );
+    },
+  );
+
   ToolCallItem roundTrip(ToolCallItem item) =>
       ChatCodec.decode(jsonDecode(jsonEncode(ChatCodec.encode(item))))!
           as ToolCallItem;

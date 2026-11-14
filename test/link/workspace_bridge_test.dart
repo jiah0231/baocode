@@ -12,8 +12,6 @@ import 'package:baocode/kernel/claude_code/claude_code_kernel.dart';
 import 'package:baocode/kernel/claude_code/mock_claude_code_transport.dart';
 import 'package:baocode/link/chat_codec.dart';
 import 'package:baocode/link/workspace_bridge.dart';
-import 'package:baocode/models/model_provider.dart';
-import 'package:baocode/models/model_providers.dart';
 import 'package:baocode/workspace/workspace.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -622,71 +620,6 @@ void main() {
     );
   });
 
-  test("the bots' world's model: those a bot's conversation may run on, "
-      'picked or turned off from the phone', () async {
-    final previous = ModelProviders.current;
-    ModelProviders.current = ModelProviders.memory(
-      providers: const [
-        ModelProvider(
-          id: 'up',
-          name: 'Up',
-          protocol: ProviderProtocol.anthropic,
-          models: [ProviderModel(id: 'fast')],
-        ),
-      ],
-    );
-    addTearDown(() => ModelProviders.current = previous);
-    late final KernelDescriptor claude;
-    claude = KernelDescriptor(
-      id: 'claude-code',
-      label: 'Claude Code',
-      icon: Icons.auto_awesome_rounded,
-      description: '',
-      create: (context) => ClaudeCodeKernel(
-        claude,
-        context,
-        start: MockClaudeCodeTransport.start,
-      ),
-    );
-    final app = Directory.systemTemp.createTempSync('world-app').path;
-    addTearDown(() => Directory(app).deleteSync(recursive: true));
-    final workspace = Workspace(
-      kernels: [claude],
-      projects: [Project('app', app)],
-    );
-    addTearDown(workspace.dispose);
-    final bots = Bots(workspace: workspace, folders: MemoryBotFolders());
-    await bots.start();
-    addTearDown(bots.dispose);
-    final (_, desktop) = await peers();
-    final bridge = WorkspaceBridge(
-      workspace: workspace,
-      peer: desktop,
-      device: () => const DeviceInfo(name: 'Mac', kind: 'mac', system: 'macOS'),
-      bots: bots,
-    )..start();
-    addTearDown(bridge.dispose);
-    Future<Map<String, Object?>> world() async =>
-        (await bridge.handle(LinkMethods.worldModel, {}))!
-            as Map<String, Object?>;
-    final off = await world();
-    expect(off['model'], isNull);
-    final ids = [
-      for (final option in off['options']! as List)
-        LinkOption.fromJson(option as Map<String, Object?>).id,
-    ];
-    expect(ids, contains('@up/fast'));
-    await bridge.handle(LinkMethods.setWorldModel, {'model': '@up/fast'});
-    expect((await world())['model'], '@up/fast');
-    expect(bots.world.on, isTrue);
-    await expectLater(
-      bridge.handle(LinkMethods.setWorldModel, {'model': '@up/none'}),
-      throwsA(isA<LinkRemoteException>()),
-    );
-    await bridge.handle(LinkMethods.setWorldModel, {});
-    expect((await world())['model'], isNull);
-  });
-
   test('a group: made, its messages sent and read, its new ones as they '
       'come to a phone that has it open', () async {
     final workspace = Workspace();
@@ -694,10 +627,7 @@ void main() {
     final bots = Bots(workspace: workspace, folders: MemoryBotFolders());
     await bots.start();
     addTearDown(bots.dispose);
-    bots.groups
-      ..quiet = Duration.zero
-      ..stagger = Duration.zero
-      ..tell = (_, _, _) {};
+    bots.groups.tell = (_, _, _) {};
     final mia = bots.save(name: 'Mia', identity: '', abilities: {});
     final (phone, desktop) = await peers();
     final withBots = WorkspaceBridge(
@@ -711,11 +641,13 @@ void main() {
       ((await withBots.handle(LinkMethods.saveGroup, {
                 'name': '江湖',
                 'members': ['assistant', mia.id],
+                'gap': 30,
               }))!
               as Map)['group']
           as Map<String, Object?>,
     );
     expect(made.members, ['assistant', mia.id]);
+    expect(made.gap, 30);
     expect(withBots.state().groups.single.name, '江湖');
     final png = base64.encode([137, 80, 78, 71]);
     final send = {
@@ -730,6 +662,10 @@ void main() {
     // Sent again, as when the link dropped: once.
     expect(await withBots.handle(LinkMethods.sendGroup, send), {'seq': 1});
     expect(withBots.state().groups.single.unread, 0);
+    // Mia has its conversation, as the phone sees.
+    final room = withBots.state().groups.single;
+    expect(['assistant', mia.id], contains(room.holder));
+    expect(room.passesLeft, BotGroups.passes);
     final opened =
         (await withBots.handle(LinkMethods.openGroup, {'group': made.id}))!
             as Map;

@@ -4,7 +4,6 @@ import 'package:bao_link/bao_link.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../bots/bots_kernel_settings.dart';
 import '../../ide/ide_button.dart';
 import '../../ide/ide_hover.dart';
 import '../../ide/ide_menu.dart';
@@ -127,7 +126,6 @@ class _MobileSettingsPageState extends State<MobileSettingsPage> {
       title: l10n.settingsSectionMobile,
       description: l10n.mobileSettingsDescription,
       children: [
-        if (host.bots case final bots?) BotsKernelSettings(bots: bots),
         // The app first: no phone pairs without it.
         SettingsGroup(
           title: l10n.mobileGetApp,

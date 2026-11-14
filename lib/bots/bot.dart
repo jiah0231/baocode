@@ -23,7 +23,6 @@ class Bot {
     this.abilities = const {},
     this.proactive = const BotProactive(),
     this.model,
-    this.kernel = 'claude-code',
     this.assistant = false,
     this.created,
     this.chatOnly = false,
@@ -61,9 +60,6 @@ class Bot {
   /// The model it runs on; none for the app's.
   final String? model;
 
-  /// Desktop-selected backend; old cards and mobile v1 keep Claude.
-  final String kernel;
-
   /// The one the app starts with, which is not deleted.
   final bool assistant;
 
@@ -92,8 +88,6 @@ class Bot {
     Set<BotAbility>? abilities,
     BotProactive? proactive,
     String? model,
-    String? kernel,
-    bool clearModel = false,
     bool? chatOnly,
     bool? writesFirst,
   }) => Bot(
@@ -107,8 +101,7 @@ class Bot {
     style: style ?? this.style,
     abilities: abilities ?? this.abilities,
     proactive: proactive ?? this.proactive,
-    model: clearModel ? null : model ?? this.model,
-    kernel: kernel ?? this.kernel,
+    model: model ?? this.model,
     assistant: assistant,
     created: created,
     chatOnly: chatOnly ?? this.chatOnly,

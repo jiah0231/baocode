@@ -58,6 +58,20 @@ abstract final class ChatCodec {
   /// its chat as a card that opens it.
   static const botCardTag = 'bot_show_chat';
 
+  /// The tag a bot that has a group's conversation wraps the name of the
+  /// one it passes it to in.
+  static const botNextTag = 'bot_next';
+
+  /// Whom a bot's reply [text] passes a group's conversation to
+  /// ([botNextTag]): the last it names, if it does.
+  static String? botNext(String text) => switch (RegExp(
+    '<$botNextTag>(.*?)</$botNextTag>',
+    dotAll: true,
+  ).allMatches(text).lastOrNull?[1]?.trim()) {
+    final name? when name.isNotEmpty => name,
+    _ => null,
+  };
+
   /// The tag a bot wraps each of what the user might say next in, at the
   /// end of its reply, when they turned that on: a tap away from sent.
   static const botSuggestTag = 'bot_suggest';
@@ -137,15 +151,34 @@ abstract final class ChatCodec {
   /// messages ([botSayTag]), its narration ([botNarrateTag]) and the
   /// agents it shows ([botCardTag], their ids). Its [voiceCue]s kept.
   static List<(String tag, String text)> botParts(String text) => [
-    for (final match in _botParts.allMatches(text))
-      if (match[2]!.trim() case final part when part.isNotEmpty)
-        (match[1]!, part),
+    for (final (:tag, :text, ref: _) in botPartsOf(text)) (tag, text),
   ];
 
+  /// [botParts], each with the message of its group's it answers, if it
+  /// says: `<bot_say ref="74">` ([botRefAttribute]), its number.
+  static List<({String tag, String text, int? ref})> botPartsOf(
+    String text,
+  ) => [
+    for (final match in _botParts.allMatches(text))
+      if (match[3]!.trim() case final part when part.isNotEmpty)
+        (
+          tag: match[1]!,
+          text: part,
+          ref: int.tryParse(_botRef.firstMatch(match[2] ?? '')?.group(1) ?? ''),
+        ),
+  ];
+
+  /// What a bot's message in a group answers, its number there:
+  /// `<bot_say ref="74">`.
+  static const botRefAttribute = 'ref';
+
   static final _botParts = RegExp(
-    '<($botSayTag|$botNarrateTag|$botCardTag)>(.*?)</\\1>',
+    '<($botSayTag|$botNarrateTag|$botCardTag)((?:\\s+[a-z]+="[^"]*")*)\\s*>'
+    '(.*?)</\\1>',
     dotAll: true,
   );
+
+  static final _botRef = RegExp('$botRefAttribute="\\s*#?(\\d+)\\s*"');
 
   /// What a bot's reply [text] suggests the user say next
   /// ([botSuggestTag]), each once closed: not among what it shows.

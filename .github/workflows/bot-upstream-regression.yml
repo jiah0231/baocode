@@ -1,0 +1,42 @@
+name: Bot upstream regression (no release)
+on:
+  push:
+    branches: ['validation/bot-upstream-*']
+permissions:
+  contents: read
+jobs:
+  regression:
+    if: github.repository == 'jiah0231/baocode'
+    runs-on: windows-2025
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.5'
+          cache: false
+      - id: iroh
+        uses: ./.github/actions/bao-iroh-prebuilt
+      - if: steps.iroh.outputs.hit != 'true'
+        uses: ./.github/actions/setup-rust
+      - name: Restore bundled assets
+        shell: pwsh
+        run: |
+          python tool/ci/reassemble_preview_assets.py
+          if ($LASTEXITCODE -ne 0) { throw 'Preview reconstruction failed' }
+          python tool/ci/reassemble_maple_font.py
+          if ($LASTEXITCODE -ne 0) { throw 'Font reconstruction failed' }
+      - name: Resolve packages
+        shell: pwsh
+        run: |
+          flutter pub get
+          if ($LASTEXITCODE -ne 0) { throw 'Package resolution failed' }
+      - name: Format changed files
+        run: dart format --output=none --set-exit-if-changed lib/bots lib/link/chat_codec.dart lib/link/workspace_bridge.dart lib/settings/pages/mobile_page.dart lib/workspace/session_tools.dart packages/bao_link/lib/src/groups.dart test/bots test/link/chat_codec_test.dart test/link/workspace_bridge_test.dart test/settings/mobile_page_test.dart
+      - name: Bot upstream regressions
+        run: flutter test --no-pub test/bots test/link/chat_codec_test.dart test/link/workspace_bridge_test.dart test/settings/mobile_page_test.dart
+      - name: Analyze
+        run: flutter analyze --no-pub --fatal-infos

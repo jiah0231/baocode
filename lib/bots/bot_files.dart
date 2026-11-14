@@ -43,11 +43,9 @@ abstract final class BotFiles {
     ('gender', bot.gender),
     ('signature', bot.signature),
     for (final ability in shownAbilities) (ability.name, '${bot.can(ability)}'),
-    // Codex's false is an explicit opt-in; keep it distinct from old cards.
-    if (bot.chatOnly || bot.kernel == 'codex') ('chat_only', '${bot.chatOnly}'),
+    if (bot.chatOnly) ('chat_only', 'true'),
     if (!bot.writesFirst) ('writes_first', 'false'),
     ('model', bot.model),
-    if (bot.kernel != 'claude-code') ('kernel', bot.kernel),
     if (bot.assistant) ('assistant', 'true'),
     (
       'created',
@@ -94,12 +92,15 @@ abstract final class BotFiles {
               (assistant && assistantAbilities.contains(ability)))
             ability,
       },
-      model: text('model').isEmpty ? null : text('model'),
-      kernel: text('kernel') == 'codex' ? 'codex' : 'claude-code',
+      // A removed custom backend's model is not a Claude model.
+      model: text('kernel') == 'codex' || text('model').isEmpty
+          ? null
+          : text('model'),
       assistant: assistant,
-      // Old Codex cards had only restricted tools. Missing is not consent
-      // to expand them; Claude follows the upstream full-agent default.
+      // Not said: all an agent has.
+      // Preserve the restrictions of legacy custom Codex cards.
       chatOnly: _yes(fields['chat_only']) ?? (text('kernel') == 'codex'),
+      // Not said: it may.
       writesFirst: _yes(fields['writes_first']) ?? true,
       created:
           DateTime.tryParse(text('created')) ?? createdIn(p.basename(folder)),

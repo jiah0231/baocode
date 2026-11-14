@@ -1,7 +1,6 @@
 import 'package:bao_link/bao_link.dart';
 import 'package:baocode/bots/bot_folders.dart';
 import 'package:baocode/bots/bots.dart';
-import 'package:baocode/bots/bots_kernel_settings.dart';
 import 'package:baocode/link/link_host.dart';
 import 'package:baocode/link/phone_downloads.dart';
 import 'package:baocode/link/qr_view.dart';
@@ -19,7 +18,9 @@ final _pairCode = find.byWidgetPredicate(
 );
 
 void main() {
-  testWidgets('new pairing keeps the custom bot backend controls', (tester) async {
+  testWidgets('pairing follows upstream without custom bot backend controls', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(900, 1600);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -41,11 +42,12 @@ void main() {
     });
     await host.load();
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: MobileSettingsPage(host: host))),
+      MaterialApp(
+        home: Scaffold(body: MobileSettingsPage(host: host)),
+      ),
     );
     await tester.pump();
-    expect(find.byType(BotsKernelSettings), findsOneWidget);
-    expect(find.text('Bot backends'), findsOneWidget);
+    expect(find.text('Bot backends'), findsNothing);
     expect(find.text('Get the Phone App'), findsOneWidget);
   });
 

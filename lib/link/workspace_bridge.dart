@@ -21,7 +21,6 @@ import '../customize/customizations.dart';
 import '../ide/file_service.dart';
 import '../kernel/agent_kernel.dart' show KernelChoiceKind;
 import '../kernel/kernel_types.dart';
-import '../models/model_providers.dart';
 import '../remote/project_host.dart';
 import '../remote/ssh_host.dart';
 import '../workspace/workspace.dart';
@@ -300,6 +299,11 @@ class WorkspaceBridge {
       unread: groups.unread(group.id),
       last: last,
       updatedAt: last?.at ?? group.created,
+      holder: groups.relay(group.id).holder,
+      passesLeft: groups.relay(group.id).left,
+      passes: group.passes,
+      rules: group.rules,
+      gap: group.gap,
     );
   }
 
@@ -384,15 +388,6 @@ class WorkspaceBridge {
   Bots _bots() =>
       bots ??
       (throw const LinkRemoteException(LinkErrors.unsupported, 'No bots'));
-
-  /// The models the bots' world may run on: a bot's conversation's (the
-  /// assistant's).
-  List<KernelOption> _worldModels() {
-    final bots = _bots();
-    final assistant = bots.bots.where((bot) => bot.assistant).firstOrNull;
-    if (assistant == null) return const [];
-    return bots.threadFor(assistant).session.models?.options ?? const [];
-  }
 
   Bot _bot(Object? id) =>
       switch (id) {
@@ -776,22 +771,6 @@ class WorkspaceBridge {
       case LinkMethods.setBotMemory:
         _bots().setMemory(_bot(params['bot']), params['text'] as String? ?? '');
         return null;
-      case LinkMethods.worldModel:
-        if (workspace.loading) await workspace.loaded;
-        return {
-          'model': ?_bots().world.model,
-          'options': [
-            for (final option in _worldModels())
-              _Follow._option(option).toJson(),
-          ],
-        };
-      case LinkMethods.setWorldModel:
-        final model = params['model'] as String?;
-        if (model != null && !_worldModels().any((o) => o.id == model)) {
-          throw LinkRemoteException(LinkErrors.notFound, 'No model $model');
-        }
-        await ModelProviders.current.setWorldModel(model);
-        return null;
       case LinkMethods.setBotSelf:
         _bots().setSelfNotes(
           _bot(params['bot']),
@@ -807,6 +786,9 @@ class WorkspaceBridge {
             for (final member in (params['members'] as List?) ?? const [])
               if (member is String) member,
           ],
+          passes: (params['passes'] as num?)?.toInt(),
+          rules: params['rules'] as String?,
+          gap: (params['gap'] as num?)?.toInt(),
         );
         return {'group': _linkGroup(_groups(), group).toJson()};
       case LinkMethods.deleteGroup:
@@ -841,7 +823,12 @@ class WorkspaceBridge {
           if (_taken[key] case final taken?) return taken;
         }
         final answer = Future<Object?>.value({
-          'seq': _groups().send(group.id, text: text, images: images),
+          'seq': _groups().send(
+            group.id,
+            text: text,
+            images: images,
+            ref: (params['ref'] as num?)?.toInt(),
+          ),
         });
         if (key != null) {
           _taken[key] = answer;
