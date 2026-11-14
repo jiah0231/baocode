@@ -119,6 +119,11 @@ std::optional<RECT> SelectionBounds(HWND source,
         previous_element != nullptr, GetForegroundWindow() == source,
         static_cast<DWORD>(focused_pid) == pid, password == FALSE,
         has_focus == FALSE, known_type && initial_type == UIA_PaneControlTypeId, chromium);
+    ACTION_TRACE("ACTION_COLD_FOCUS|source=%p|pid=%lu|focusedPid=%d|password=%d|focus=%d|typeKnown=%d|type=%d|chromium=%d|identityBound=%d|sameForeground=%d|retryable=%d|remainingMs=%llu\n",
+        static_cast<void*>(source), pid, focused_pid, password, has_focus,
+        known_type ? 1 : 0, initial_type, chromium ? 1 : 0,
+        previous_element ? 1 : 0, GetForegroundWindow() == source ? 1 : 0,
+        retryable ? 1 : 0, deadline > GetTickCount64() ? deadline - GetTickCount64() : 0);
     if (retryable) require_text_control = true;
     return std::nullopt;
   }

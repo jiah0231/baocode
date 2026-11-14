@@ -1,0 +1,31 @@
+name: PDF cold selection diagnostic
+on:
+  push:
+    branches: ['diagnostic/pdf-cold-focus-*']
+permissions:
+  contents: read
+jobs:
+  cold:
+    if: github.repository == 'jiah0231/baocode'
+    runs-on: windows-2025
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        sample: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: One cold gesture, no provider warmup or retry
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+        run: ./tool/ci/windows_translation_desktop_entry_smoke.ps1 -OutputDirectory build/pdf-cold-diagnostic
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: pdf-cold-${{ matrix.sample }}
+          if-no-files-found: error
+          path: build/pdf-cold-diagnostic/

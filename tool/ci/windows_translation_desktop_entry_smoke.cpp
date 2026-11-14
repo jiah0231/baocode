@@ -1183,6 +1183,14 @@ int wmain(int argc, wchar_t** argv) {
     const auto began = GetTickCount64();
     Drag(window, from, to);
     const auto released = GetTickCount64();
+    // Synthetic fixture pixels only; no accessibility query or warming.
+    // Distinguish a lost/failed OS drag from entry-discovery failure.
+    if (mode == L"edgePdf") {
+      const Frame released_frame = Frame::Read(window);
+      released_frame.Save(output+L"\\"+mode+L"-released.bmp");
+      std::printf("DESKTOP_PDF_RELEASE|tick=%llu|complete=%d\n", released,
+          CompletePdfSelection(before, released_frame, text_area, pdf_scale) ? 1 : 0);
+    }
     // Keep the real pointer on selected source text until entry readiness. The
     // production action, not this harness, makes the first provider/UIA call.
     Mouse(window, POINT{(from.x+to.x)/2, from.y}, 0);
