@@ -20,9 +20,11 @@
 #include <cstdio>
 #define ACTION_TRACE(...) do { std::printf(__VA_ARGS__); std::fflush(stdout); } while (false)
 #define ACTION_STAGE(value) bounds_trace.stage = value
+#define ACTION_CHECK(label, expression) ([&] { const bool ok = (expression); ACTION_TRACE("ACTION_CHECK|stage=%s|ok=%d\n", label, ok ? 1 : 0); return ok; }())
 #else
 #define ACTION_TRACE(...) ((void)0)
 #define ACTION_STAGE(value) ((void)0)
+#define ACTION_CHECK(label, expression) (expression)
 #endif
 
 namespace {
@@ -119,7 +121,7 @@ std::optional<RECT> SelectionBounds(HWND source,
         previous_element != nullptr, GetForegroundWindow() == source,
         static_cast<DWORD>(focused_pid) == pid, password == FALSE,
         has_focus == FALSE, known_type && initial_type == UIA_PaneControlTypeId, chromium);
-    ACTION_TRACE("ACTION_COLD_FOCUS|source=%p|pid=%lu|focusedPid=%d|password=%d|focus=%d|typeKnown=%d|type=%d|chromium=%d|identityBound=%d|sameForeground=%d|retryable=%d|remainingMs=%llu\n",
+    ACTION_TRACE("ACTION_COLD_FOCUS|source=%p|pid=%lu|focusedPid=%d|sensitiveControl=%d|focus=%d|typeKnown=%d|type=%d|chromium=%d|identityBound=%d|sameForeground=%d|retryable=%d|remainingMs=%llu\n",
         static_cast<void*>(source), pid, focused_pid, password, has_focus,
         known_type ? 1 : 0, initial_type, chromium ? 1 : 0,
         previous_element ? 1 : 0, GetForegroundWindow() == source ? 1 : 0,
@@ -241,14 +243,16 @@ std::optional<RECT> SelectionBounds(HWND source,
   ACTION_STAGE("finalFocus");
   ComPtr<IUIAutomationElement> final_focus;
   BOOL still_same = FALSE;
-  if (!ready() || GetForegroundWindow() != source ||
-      FAILED(automation->GetFocusedElement(&final_focus)) || !final_focus || !ready() ||
-      FAILED(automation->CompareElements(focused.Get(), final_focus.Get(), &still_same)) || !still_same ||
-      !selection_target.Resolve(automation.Get(), final_focus.Get(), source,
-          static_cast<DWORD>(focused_pid), ready, false) ||
+  if (!ACTION_CHECK("finalReady", ready()) || !ACTION_CHECK("finalForeground", GetForegroundWindow() == source) ||
+      !ACTION_CHECK("finalGetFocus", SUCCEEDED(automation->GetFocusedElement(&final_focus))) ||
+      !ACTION_CHECK("finalFocusPresent", final_focus.Get() != nullptr) || !ACTION_CHECK("finalReadyAfterFocus", ready()) ||
+      !ACTION_CHECK("finalCompare", SUCCEEDED(automation->CompareElements(focused.Get(), final_focus.Get(), &still_same))) ||
+      !ACTION_CHECK("finalIdentity", still_same != FALSE) ||
+      !ACTION_CHECK("finalTarget", selection_target.Resolve(automation.Get(), final_focus.Get(), source,
+          static_cast<DWORD>(focused_pid), ready, false)) ||
       (static_cast<DWORD>(focused_pid) != pid &&
-       !console_binding.Verify(source, pid, static_cast<DWORD>(focused_pid), automation.Get(),
-           final_focus.Get(), stopped, deadline))) {
+       !ACTION_CHECK("finalConsole", console_binding.Verify(source, pid, static_cast<DWORD>(focused_pid), automation.Get(),
+           final_focus.Get(), stopped, deadline)))) {
     result.reset();
     retryable = false;
   }
