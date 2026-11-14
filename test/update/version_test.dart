@@ -76,9 +76,9 @@ void main() {
       expect(v('1.2.0') == v('1.2.0+0'), isTrue);
     });
 
-    test('Upstream 1.9.5 and Agent mode fix upgrade the published +53 build', () {
-      expect(currentAppVersion, v('1.9.5+54'));
-      expect(currentAppVersion > v('1.9.2+53'), isTrue);
+    test('Bot parity and repeat-pairing fix upgrade the published +54 build', () {
+      expect(currentAppVersion, v('1.9.5+55'));
+      expect(currentAppVersion > v('1.9.5+54'), isTrue);
     });
 
     test("is pubspec.yaml's version", () {
