@@ -467,9 +467,10 @@ class WorkspaceBridge {
         'No agent nor project',
       );
     }
-    // Some phone versions address an existing Bot by its session, not its
-    // Bot ID. Both routes need the same public-reply protocol reminder.
-    if (bots?.botAt(thread.project.path) != null) {
+    // Bot sessions may also be addressed by session ID. Both routes need
+    // the same public-reply reminder, but not a group conversation.
+    final directBot = bots?.botAt(thread.project.path);
+    if (directBot != null && directBot.folder == thread.project.path) {
       notes = [...notes, botReplyProtocolReminder];
     }
     final session = thread.session;
