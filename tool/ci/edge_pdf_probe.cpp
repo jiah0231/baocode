@@ -153,7 +153,9 @@ namespace {
   int Selected(ComPtr<IUIAutomation> uia,bool read,int documentLimit=8,bool focusParentsOnly=false) {
     Scoped();
     ComPtr<IUIAutomationElement> root;
-    Check(SUCCEEDED(uia->ElementFromHandle(browser,&root)),"UIA root unavailable");
+    const HRESULT rootHr=uia->ElementFromHandle(browser,&root);
+    printf("UIA_ROOT_HRESULT|0x%08lX|hasRoot=%d\n",static_cast<unsigned long>(rootHr),root.Get()!=nullptr);
+    Check(SUCCEEDED(rootHr)&&root.Get()!=nullptr,"UIA root unavailable");
     HRESULT hr=E_FAIL;
     int found=0;
     std::vector<ComPtr<IUIAutomationElement>> chosen;
@@ -365,6 +367,7 @@ int wmain(int argc,wchar_t** argv) {
     }
     const bool warm=_wtoi(argv[7])==1;
     printf("PROBE_MODE|warm=%d|diagnostic_only_not_cold_gate\n",warm);
+    Screenshot(std::wstring(argv[6])+L"-before-warm.bmp");
     if(warm) {
       Selected(uia,false);
       Pump(1500);
