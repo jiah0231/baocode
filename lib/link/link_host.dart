@@ -737,6 +737,13 @@ class LinkHost extends ChangeNotifier {
     Map<String, Object?> params,
   ) async {
     if (connection.bridge case final bridge?) {
+      // A confirmation can be retried after its answer was lost, or sent
+      // by a phone which already resumed its trusted connection. It must
+      // never be forwarded to the workspace as an agent request.
+      if (method == LinkMethods.confirm &&
+          _phones.containsKey(connection.id)) {
+        return {'device': _deviceInfo().toJson()};
+      }
       if (method == LinkMethods.unpair) {
         if (connection.phone case final phone?) {
           _phones.remove(phone.id);
@@ -756,7 +763,11 @@ class LinkHost extends ChangeNotifier {
       case LinkMethods.hello:
         final name = params['name'] as String? ?? '';
         final system = params['system'] as String? ?? '';
-        if (_phones[connection.id] case final phone?) {
+        // Scanning a new QR code is an explicit pairing attempt, even
+        // for a known key. Show the same safety code on both screens and
+        // validate the current offer instead of silently resuming.
+        if (_phones[connection.id] case final phone?
+            when !params.containsKey('token') && params['request'] != true) {
           _phones[phone.id] = phone.copyWith(
             name: name.isEmpty ? null : name,
             system: system.isEmpty ? null : system,
