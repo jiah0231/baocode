@@ -8,6 +8,8 @@ import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/bots/bot_folders.dart';
 import 'package:baocode/bots/bot_groups.dart';
 import 'package:baocode/bots/bots.dart';
+import 'package:baocode/bots/bot_prompt.dart' show botReplyProtocolReminder;
+import 'package:baocode/kernel/claude_code/claude_code_transport.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/claude_code/claude_code_kernel.dart';
 import 'package:baocode/link/chat_codec.dart';
@@ -496,6 +498,68 @@ void main() {
       );
     });
   });
+
+  for (final bySession in [false, true]) {
+    test(
+      'Bot reply protocol reaches transport via ${bySession ? 'session' : 'bot'}',
+      () async {
+        final sent = FakeCli();
+        ClaudeLaunch? launch;
+        late final KernelDescriptor descriptor;
+        descriptor = KernelDescriptor(
+          id: 'claude-code',
+          label: 'Claude Code',
+          icon: Icons.auto_awesome_rounded,
+          description: '',
+          create: (context) => ClaudeCodeKernel(
+            descriptor,
+            context,
+            start: (options) async {
+              launch = options;
+              return sent;
+            },
+          ),
+        );
+        final workspace = Workspace(kernels: [descriptor]);
+        addTearDown(workspace.dispose);
+        final bots = Bots(workspace: workspace, folders: MemoryBotFolders());
+        await bots.start();
+        addTearDown(bots.dispose);
+        final (_, desktop) = await peers();
+        final bridge = WorkspaceBridge(
+          workspace: workspace,
+          peer: desktop,
+          device: () =>
+              const DeviceInfo(name: 'Test', kind: 'mac', system: 'macOS'),
+          bots: bots,
+        );
+        addTearDown(bridge.dispose);
+        final bot = bots.bots.single;
+        final thread = bots.threadFor(bot);
+        await bridge.handle(LinkMethods.send, {
+          if (bySession)
+            'session': WorkspaceBridge.idOf(thread)
+          else
+            'bot': bot.id,
+          'text': '在吗',
+          'suggest': true,
+        });
+        for (var i = 0; i < 100 && sent.users.isEmpty; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+        expect(sent.users, isNotEmpty);
+        expect(launch!.ownPrompt, isTrue);
+        expect(launch!.instructions, contains('<bot_say>'));
+        expect(jsonEncode(sent.users), contains(botReplyProtocolReminder));
+        // The reminder travels as a note, not as text in the user's bubble.
+        final user = [
+          for (var i = 0; i < thread.session.itemCount; i++)
+            thread.session.itemAt(i),
+        ].whereType<UserMessageItem>().last;
+        expect(user.text, '在吗');
+      },
+    );
+  }
 
   test('a bot\'s agent: its model the user picks, not how it asks', () async {
     late final KernelDescriptor descriptor;

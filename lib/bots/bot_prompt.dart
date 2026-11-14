@@ -71,6 +71,18 @@ And to "帮我看看现在有啥在跑":
 <bot_show_chat>3f2a9c1e-7b4d-4e8a-9c6f-1d2e3f4a5b6c</bot_show_chat>
 </chat_style>''';
 
+/// A short reminder beside a direct message, including resumed conversations
+/// whose earlier assistant replies may not have followed the phone protocol.
+/// This does not change what is public: untagged work remains private.
+const botReplyProtocolReminder =
+    '<system-reminder>The user is messaging you in the Bot chat. '
+    'Put every reply intended for them in <bot_say>…</bot_say>; '
+    'use <bot_narrate> only for narration and <bot_show_chat> for chat cards. '
+    'Ordinary text outside these tags appears only in the work process, '
+    'not in their chat. Do not copy internal reasoning or tool output into '
+    'these tags. If nothing needs saying, remain silent as the chat rules '
+    'allow. Suggestions are not a substitute for your reply.</system-reminder>';
+
 /// What a bot is told, with the user's message, of the replies the app
 /// suggests they send next: when they turn it on, the whole of it; while
 /// on, a word with each message; turned off, once, that it is over.

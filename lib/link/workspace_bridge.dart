@@ -11,6 +11,7 @@ import '../bots/bot.dart';
 import '../bots/bot_group_prompt.dart' show BotGroup;
 import '../bots/bot_groups.dart';
 import '../bots/bots.dart';
+import '../bots/bot_prompt.dart' show botReplyProtocolReminder;
 import '../chat/chat_models.dart';
 import '../chat/chat_session.dart';
 import '../chat/composer/composer_files.dart' show fileReferenceText;
@@ -465,6 +466,11 @@ class WorkspaceBridge {
         LinkErrors.notFound,
         'No agent nor project',
       );
+    }
+    // Some phone versions address an existing Bot by its session, not its
+    // Bot ID. Both routes need the same public-reply protocol reminder.
+    if (bots?.botAt(thread.project.path) != null) {
+      notes = [...notes, botReplyProtocolReminder];
     }
     final session = thread.session;
     if (!session.canSend) {
