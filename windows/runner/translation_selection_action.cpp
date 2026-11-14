@@ -129,9 +129,23 @@ std::optional<RECT> SelectionBounds(HWND source,
     if (retryable) require_text_control = true;
     return std::nullopt;
   }
+  const auto resolve_target = [&](IUIAutomationElement* element, bool allow_transition) {
+#ifdef BAOCODE_TRANSLATION_ACTION_DIAGNOSTICS
+    translation_selection::SelectionTargetDiagnostics diagnostics;
+    const bool ok = selection_target.Resolve(automation.Get(), element, source,
+        static_cast<DWORD>(focused_pid), ready, allow_transition, &diagnostics);
+    ACTION_TRACE("ACTION_TARGET|ok=%d|stage=%s|hr=%08lx|pid=%d|sensitiveControl=%d|offscreen=%d|focus=%d|same=%d|type=%d\n",
+        ok ? 1 : 0, diagnostics.stage, static_cast<unsigned long>(diagnostics.result),
+        diagnostics.process, diagnostics.password, diagnostics.offscreen,
+        diagnostics.has_focus, diagnostics.same, diagnostics.type);
+    return ok;
+#else
+    return selection_target.Resolve(automation.Get(), element, source,
+        static_cast<DWORD>(focused_pid), ready, allow_transition);
+#endif
+  };
   ACTION_STAGE("resolveTarget");
-  if (!selection_target.Resolve(automation.Get(), focused.Get(), source,
-          static_cast<DWORD>(focused_pid), ready, !previous_range)) return std::nullopt;
+  if (!resolve_target(focused.Get(), !previous_range)) return std::nullopt;
   if (!previous_range) previous_element = focused;
   ComPtr<IUIAutomationElement> target = selection_target.Get();
   CONTROLTYPEID control_type = 0;
@@ -248,8 +262,7 @@ std::optional<RECT> SelectionBounds(HWND source,
       !ACTION_CHECK("finalFocusPresent", final_focus.Get() != nullptr) || !ACTION_CHECK("finalReadyAfterFocus", ready()) ||
       !ACTION_CHECK("finalCompare", SUCCEEDED(automation->CompareElements(focused.Get(), final_focus.Get(), &still_same))) ||
       !ACTION_CHECK("finalIdentity", still_same != FALSE) ||
-      !ACTION_CHECK("finalTarget", selection_target.Resolve(automation.Get(), final_focus.Get(), source,
-          static_cast<DWORD>(focused_pid), ready, false)) ||
+      !ACTION_CHECK("finalTarget", resolve_target(final_focus.Get(), false)) ||
       (static_cast<DWORD>(focused_pid) != pid &&
        !ACTION_CHECK("finalConsole", console_binding.Verify(source, pid, static_cast<DWORD>(focused_pid), automation.Get(),
            final_focus.Get(), stopped, deadline)))) {
