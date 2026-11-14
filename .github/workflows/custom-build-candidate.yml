@@ -1,0 +1,632 @@
+# Isolated exact-SHA candidate build. No signing or publication job.
+# Publishing requires owner creation of an exact-SHA release request branch,
+# or explicit manual dispatch. Ordinary code pushes never publish updates.
+name: Custom Windows candidate build (never publishes)
+on:
+  create:
+  workflow_dispatch:
+    inputs:
+      expected_commit:
+        description: 'Exact reviewed source commit SHA (must match selected branch)'
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  # Ordinary branch creation must not occupy (or replace a pending run in)
+  # the real release queue. The jobs below apply the same release gate.
+  group: >-
+    ${{ (github.event_name == 'workflow_dispatch' ||
+         (github.event.ref_type == 'branch' && startsWith(github.event.ref, 'custom-build/v') &&
+          endsWith(github.event.ref, format('/{0}', github.sha)))) &&
+        'custom-candidate-build' || format('custom-candidate-noop-{0}', github.run_id) }}
+  cancel-in-progress: false
+jobs:
+  build:
+    if: >-
+      github.repository == 'jiah0231/baocode' && github.actor == 'jiah0231' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.ref_type == 'branch' && startsWith(github.event.ref, 'custom-build/v') &&
+        endsWith(github.event.ref, format('/{0}', github.sha))))
+    runs-on: windows-2025
+    timeout-minutes: 90
+    env:
+      BAOCODE_CUSTOM_UPDATE_KEY: ${{ vars.BAOCODE_CUSTOM_UPDATE_KEY }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - name: Restore exact offline preview bundles and corresponding source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python tool/ci/test_reassemble_preview_assets.py
+          if ($LASTEXITCODE -ne 0) { throw 'Preview transport unit tests failed' }
+          python tool/ci/reassemble_preview_assets.py
+          if ($LASTEXITCODE -ne 0) { throw 'Preview original-byte reconstruction failed' }
+          git diff --quiet HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Preview reconstruction changed tracked source' }
+      - name: Verify and reassemble the unchanged Maple font
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python tool/ci/test_reassemble_maple_font.py
+          if ($LASTEXITCODE -ne 0) { throw 'Font reconstruction unit tests failed' }
+          python tool/ci/reassemble_maple_font.py
+          if ($LASTEXITCODE -ne 0) { throw 'Original font reconstruction failed' }
+          git diff --quiet HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Font reconstruction changed tracked source' }
+      - uses: ./.github/actions/bao-iroh-prebuilt
+      - uses: ./.github/actions/setup-rust
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.5
+          cache: true
+      - name: Verify requested source identity
+        env:
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+          CREATED_REF: ${{ github.event.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = create ]; then
+            version=$(sed -n 's/^version: //p' pubspec.yaml)
+            test "$CREATED_REF" = "custom-build/v$version/$GITHUB_SHA"
+          else
+            test "$GITHUB_SHA" = "$EXPECTED_COMMIT"
+          fi
+      - run: flutter pub get
+      - run: flutter gen-l10n
+      - name: Verify generated source matches reviewed commit
+        shell: pwsh
+        run: |
+          git diff --quiet HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Generated source differs from reviewed commit' }
+      - run: flutter analyze --no-pub
+        id: analyze
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Verify cross-app translation selection privacy
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+        run: ./tool/ci/windows_translation_smoke.ps1
+      - name: Test guarded explicit selection copying
+        shell: pwsh
+        run: ./tool/ci/windows_translation_clipboard_smoke.ps1
+      - name: Test nonactivating selection action entry
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+        run: ./tool/ci/windows_translation_action_smoke.ps1
+      - name: Test default Edge selection capture
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+        run: |
+          1..3 | ForEach-Object {
+            Write-Host "Fresh Edge cold-start verification $_ / 3"
+            ./tool/ci/windows_translation_browser_smoke.ps1
+            if ($LASTEXITCODE -ne 0) { throw 'Fresh Edge selection verification failed' }
+          }
+      - name: Verify real desktop application coverage observations
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+        run: ./tool/ci/windows_translation_desktop_smoke.ps1 -OutputDirectory build/translation-desktop-coverage -RequireExactCapture @('notepad', 'edgePdf')
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: translation-desktop-release-coverage
+          if-no-files-found: warn
+          path: build/translation-desktop-coverage/
+      - name: Verify real Windows Terminal selection
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+        run: ./tool/ci/windows_translation_terminal_smoke.ps1
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: translation-terminal-release-coverage
+          if-no-files-found: warn
+          path: build/translation-terminal-coverage/
+      - name: Verify real desktop translation entry clicks
+        shell: pwsh
+        env:
+          BAOCODE_DISPOSABLE_UI_TEST: '1'
+        run: ./tool/ci/windows_translation_desktop_entry_smoke.ps1 -OutputDirectory build/translation-desktop-entry
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: translation-desktop-entry-release
+          if-no-files-found: warn
+          path: build/translation-desktop-entry/
+      - name: Check translation source formatting
+        run: dart format --output=none --set-exit-if-changed lib/translation test/translation lib/settings/pages/language_page.dart lib/settings/pages/stash_hotkey_field.dart lib/settings/app_settings.dart
+      - name: Test translation routing, cancellation and theme layouts
+        run: flutter test --no-pub --reporter expanded --timeout 2m test/translation
+      - name: Check Quick Ask source formatting
+        run: >-
+          dart format --output=none --set-exit-if-changed
+          lib/chat/chat_history_view.dart
+          lib/chat/composer/composer.dart
+          lib/ide/ide_code_editor.dart
+          lib/ide/ide_editor.dart
+          lib/keybindings/window_keybindings.dart
+          lib/l10n/app_localizations.dart
+          lib/l10n/app_localizations_en.dart
+          lib/l10n/app_localizations_zh.dart
+          lib/l10n/command_titles.dart
+          lib/models/auxiliary_model_menu.dart
+          lib/models/model_providers.dart
+          lib/quick_ask
+          lib/settings/pages/models_page.dart
+          lib/workbench.dart
+          lib/update/version.dart
+          test/chat/history_selection_test.dart
+          test/composer_test.dart
+          test/keybindings/window_keybindings_test.dart
+          test/models/models_test.dart
+          test/quick_ask
+          test/claude_haiku_test.dart
+          test/kernel/claude_haiku_test.dart
+          test/models/proxy/quick_ask_streaming_test.dart
+          test/settings/models_page_test.dart
+      - name: Test global Quick Ask context, routing and safe editing
+        run: >-
+          flutter test --no-pub --reporter expanded --timeout 2m
+          test/quick_ask
+          test/ide/lsp_ui/workbench_features_test.dart
+          test/ide/ide_menu_test.dart
+          test/ide/ide_input_test.dart
+          test/claude_haiku_test.dart
+          test/kernel/claude_haiku_test.dart
+          test/models/proxy/quick_ask_streaming_test.dart
+          test/keybindings/window_keybindings_test.dart
+          test/models/models_test.dart
+          test/settings/models_page_test.dart
+          test/chat/history_selection_test.dart
+          test/chat/history_stream_batch_test.dart
+          test/composer_test.dart
+          test/chat/chat_find_test.dart
+          test/update/version_test.dart
+          packages/bao_editor/test/monaco/flutter/editor_surface_view_test.dart
+          packages/bao_markdown/test/md_editor_test.dart
+      - name: Check formatting of combined lag and model fixes
+        run: >-
+          dart format --output=none --set-exit-if-changed
+          lib/chat/chat_history_view.dart
+          lib/chat/chat_session.dart
+          lib/kernel/codex/codex_kernel.dart
+          lib/models/proxy/translate/claude_from_responses_request.dart
+          lib/models/upstream.dart
+          lib/update/version.dart
+          test/chat/files_seen_test.dart
+          test/chat/history_stream_batch_test.dart
+          test/kernel/codex_model_picker_test.dart
+          test/kernel_test.dart
+          test/models/models_test.dart
+          test/models/proxy/model_proxy_test.dart
+          test/models/proxy/translate/claude_from_responses_request_test.dart
+      - name: Test combined lag, model picker and Ultra regressions
+        run: >-
+          flutter test --no-pub --reporter expanded --timeout 2m
+          test/chat/chat_history_rebuild_test.dart
+          test/chat/history_stream_batch_test.dart
+          test/chat/history_paging_test.dart
+          test/chat/history_scroll_test.dart
+          test/chat/history_selection_test.dart
+          test/chat/streamed_words_test.dart
+          test/chat/step_folds_test.dart
+          test/chat/fold_view_test.dart
+          test/chat/files_seen_test.dart
+          test/kernel/codex_model_picker_test.dart
+          test/chat/model_picker_test.dart
+          test/kernel/codex_provider_route_test.dart
+          test/models/models_test.dart
+          test/models/codex_test.dart
+          test/models/proxy/model_proxy_test.dart
+          test/models/proxy/translate/claude_from_responses_request_test.dart
+      # Every test file added or changed between the +39 upstream base and e92b7cf.
+      # Additional model/usage/window suites cover the related production changes.
+      - name: Test v1.9.1 chat, sidebar, model, window and agent regressions
+        run: >-
+          flutter test --no-pub --reporter expanded --timeout 2m
+          test/chat/message_edit_visibility_test.dart
+          test/chat/side_panel/side_panel_test.dart
+          test/chat/step_folds_test.dart
+          test/composer_test.dart
+          test/ide/git/log_details_layout_test.dart
+          test/kernel/subagent_model_kernel_test.dart
+          test/kernel_test.dart
+          test/keybindings/window_keybindings_test.dart
+          test/models/models_test.dart
+          test/models/model_welcome_test.dart
+          test/settings/models_page_test.dart
+          test/sidebar_test.dart
+          test/usage_panel_test.dart
+          test/usage/usage_calls_list_test.dart
+          test/window
+          test/workspace/window_agent_draft_test.dart
+          packages/bao_agent/test/engine/edges_test.dart
+          packages/bao_agent/test/engine/turns_test.dart
+      - name: Test upstream v1.9.2 application regressions
+        run: >-
+          flutter test --no-pub --reporter expanded --timeout 2m
+          packages/bao_agent/test/engine/tools_test.dart
+          packages/bao_agent/test/units/utils_test.dart
+          test/chat/change_tree_test.dart
+          test/chat/history_scroll_test.dart
+          test/chat_grid_test.dart
+          test/kernel_test.dart
+          test/models/magpie_test.dart
+          test/models/models_test.dart
+          test/models/proxy/model_proxy_test.dart
+          test/models/proxy/opencode_routing_test.dart
+          test/platform/open_requests_test.dart
+          test/remote/remote_binaries_test.dart
+          test/remote/remote_server_test.dart
+          test/remote/ssh_launcher_test.dart
+          test/settings/models_page_test.dart
+          test/steps_test.dart
+          test/workspace_test.dart
+          test/workspace/window_pane_restore_test.dart
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.12.0'
+      - name: Verify unchanged NoteBoard source, licenses and offline bundles
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location tool/office_preview
+          try {
+            npm ci --ignore-scripts
+            if ($LASTEXITCODE -ne 0) { throw 'Pinned preview package resolution failed' }
+            npm run build
+            if ($LASTEXITCODE -ne 0) { throw 'Offline preview bundle reconstruction failed' }
+            node test-upstream.mjs
+            if ($LASTEXITCODE -ne 0) { throw 'Unchanged NoteBoard Node regressions failed' }
+            node --test test_vendor_integrity.mjs
+            if ($LASTEXITCODE -ne 0) { throw 'Preview source, license or bundle integrity failed' }
+          } finally {
+            Pop-Location
+          }
+          python tool/ci/reassemble_preview_assets.py --verify-only
+          if ($LASTEXITCODE -ne 0) { throw 'Rebuilt preview bytes differ from pinned originals' }
+          git diff --quiet HEAD -- assets/office_preview tool/office_preview
+          if ($LASTEXITCODE -ne 0) { throw 'Preview reconstruction changed the exact candidate source' }
+          python tool/office_preview/test/verify_fixtures.py
+          if ($LASTEXITCODE -ne 0) { throw 'Preview fixture provenance or geometry failed' }
+      - name: Test full kernel integration and current phone protocol
+        run: flutter test test/kernel_test.dart test/link
+      - name: Test newly merged workbench and host regressions
+        run: >-
+          flutter test --no-pub --reporter expanded
+          packages/bao_editor/test/monaco/flutter/editor_document_model_test.dart
+          packages/bao_markdown/test/md_editor_test.dart
+          test/chat/chat_width_test.dart
+          test/chat/resume_after_reset_test.dart
+          test/diagnostics/input_lag_test.dart
+          test/ide/editor_status_test.dart
+          test/ide/git/git_service_test.dart
+          test/ide/terminal/pty_test.dart
+          test/ide/workbench/color_theme_picker_test.dart
+          test/ide/workbench/find_status_test.dart
+          test/ide/workbench/global_keys_test.dart
+          test/ide/workbench/open_at_test.dart
+          test/ide/workbench/parts/parts_test.dart
+          test/ide/workbench/services/bridge_test.dart
+          test/ide/workbench/services/debug_view_test.dart
+          test/ide/workbench/services/editor_commands_test.dart
+          test/ide/workbench/services/editors_test.dart
+          test/ide/workbench/services/explorer_lists_test.dart
+          test/ide/workbench/services/extensions_view_test.dart
+          test/ide/workbench/services/infrastructure_test.dart
+          test/ide/workbench/services/keybindings_test.dart
+          test/ide/workbench/services/language_services_test.dart
+          test/ide/workbench/services/layout_test.dart
+          test/ide/workbench/services/markdown_preview_service_test.dart
+          test/ide/workbench/services/navigation_history_test.dart
+          test/ide/workbench/services/quick_input_service_test.dart
+          test/ide/workbench/services/scm_service_test.dart
+          test/ide/workbench/services/search_view_test.dart
+          test/ide/workbench/services/storage_keep_test.dart
+          test/ide/workbench/services/terminal_view_test.dart
+          test/ide/workbench/services/workspace_binding_test.dart
+          test/models/codex_import_test.dart
+          test/notifications/attention_service_test.dart
+          test/platform/app_binding_test.dart
+          test/preference_store_test.dart
+          test/remote/local_tools_test.dart
+          test/remote/ports_view_test.dart
+          test/settings/models_page_test.dart
+          test/settings/settings_entry_test.dart
+          test/settings/ssh_page_test.dart
+          test/sidebar_hosts_test.dart
+          test/steps_test.dart
+          test/theme/auto_color_theme_test.dart
+          test/theme/theme_transition_test.dart
+          test/tips/feature_tips_controller_test.dart
+          test/window_material_test.dart
+          test/remote/remote_host_settings_test.dart
+          test/browser/extension_permissions_test.dart
+          test/ide/workbench/document_editor_panes_test.dart
+          test/ide/workbench/theme_preview_auto_test.dart
+          test/ide/workbench/theme_preview_session_test.dart
+          test/ide/workbench/color_theme_gallery_test.dart
+          test/theme/pebrel_theme_test.dart
+      - name: Test local Office document previews
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
+        run: >-
+          flutter test --no-pub --reporter expanded --timeout 2m
+          test/ide/document/document_reader_test.dart
+          test/ide/document/faithful_office_preview_test.dart
+          test/ide/document/office_preflight_test.dart
+          test/ide/preview_binary_guard_test.dart
+          test/settings/about_page_test.dart
+          test/floating_test.dart
+          test/ide/ide_hover_test.dart
+          test/workspace/chat_button_tooltips_test.dart
+          test/ide/workbench/button_tooltips_test.dart
+          test/ide/document/document_byte_read_test.dart
+          test/ide/document_preview_test.dart
+          test/chat/side_panel/file_preview_document_test.dart
+          test/chat/side_panel/file_preview_default_app_test.dart
+          test/chat/side_panel/file_preview_agent_test.dart
+          test/chat/side_panel/side_panel_test.dart
+      - name: Test original font asset and typography
+        run: >-
+          flutter test
+          test/theme/maple_font_asset_test.dart
+          test/theme/pebrel_typography_test.dart
+          test/settings/appearance_code_font_test.dart
+          test/theme/code_font_test.dart
+          test/theme/code_text_scale_test.dart
+      - name: Test Pebrel reading hierarchy, session identity and atomic state
+        run: >-
+          flutter test --no-pub --reporter expanded --timeout 2m
+          test/theme/pebrel_render_palette_test.dart
+          test/theme/pebrel_app_colors_test.dart
+          test/theme/pebrel_visual_test.dart
+          test/icons/agent_brand_mark_test.dart
+          test/theme/icon_registry_test.dart
+          test/extensions/json_state_store_test.dart
+          test/markdown_test.dart
+      - name: Build and test owned Windows Codex launcher
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S windows/codex_launcher -B build/codex-launcher-fixture -A x64 -DBAOCODE_LAUNCHER_TESTS=ON
+          if ($LASTEXITCODE -ne 0) { throw 'Owned launcher configure failed' }
+          cmake --build build/codex-launcher-fixture --config Release
+          if ($LASTEXITCODE -ne 0) { throw 'Owned launcher build failed' }
+          $fixture = Join-Path $PWD 'build/codex-launcher-fixture/Release'
+          $helper = Join-Path $fixture 'BaocodeCodexLauncher.exe'
+          if (-not (Test-Path -LiteralPath $helper)) { throw 'Owned launcher fixture missing' }
+          "BAOCODE_TEST_LAUNCHER=$helper" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          python tool/test_codex_owned_launcher.py --helper $helper --reject-job-helper (Join-Path $fixture 'BaocodeCodexLauncherRejectJob.exe') --reject-membership-helper (Join-Path $fixture 'BaocodeCodexLauncherRejectMembership.exe')
+          if ($LASTEXITCODE -ne 0) { throw 'Owned launcher process isolation tests failed' }
+      - name: Test Codex provider MCP and shutdown regressions early
+        run: >-
+          flutter test
+          test/kernel/codex_provider_route_test.dart
+          test/kernel/codex_owned_process_test.dart
+          test/kernel/codex_transport_shutdown_test.dart
+          test/kernel/codex_transport_decode_test.dart
+          test/kernel/codex_path_setting_test.dart
+          test/kernel/codex_bot_kernel_test.dart
+          test/kernel/codex_writer_lifecycle_test.dart
+      - name: Test Codex installer HTTP diagnostics
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
+        run: flutter test test/kernel/codex_install_http_diagnostics_test.dart
+      - name: Test original browser regressions
+        if: ${{ !cancelled() && steps.analyze.outcome == 'success' }}
+        run: >-
+          flutter test
+          test/browser/browser_analysis_test.dart
+          test/browser/browser_bridge_test.dart
+          test/browser/browser_numbers_test.dart
+          test/browser/browser_steps_test.dart
+          test/browser/extension_store_test.dart
+          test/browser/source_map_test.dart
+      - name: Test Codex approval and edit-review UI early
+        run: flutter test test/kernel_ui_test.dart --plain-name "a Codex agent asks leave, and its work can be undone"
+      - name: Test selected cross-kernel session retrieval
+        run: flutter test test/chat/session_query_test.dart test/chat/session_query_queue_test.dart test/chat/session_query_claude_lifecycle_test.dart test/chat/session_mentions_test.dart test/chat/composer_intercept_test.dart test/chat/composer_draft_sync_test.dart test/workspace/session_query_workspace_test.dart
+      - name: Test updater and quit protections
+        run: flutter test test/update test/workspace/quit_confirmation_test.dart test/workspace/usage_shutdown_test.dart
+      - name: Test custom build configuration
+        run: flutter test test/update/custom_update_channel_test.dart --dart-define=BAOCODE_CUSTOM_UPDATES=true --dart-define=BAOCODE_CUSTOM_UPDATE_KEY=$env:BAOCODE_CUSTOM_UPDATE_KEY
+      - name: Repeat writer lifecycle regression with randomized order
+        run: |
+          foreach ($seed in 101, 211, 307, 401, 503) {
+            flutter test test/kernel/codex_writer_lifecycle_test.dart --test-randomize-ordering-seed=$seed
+            if ($LASTEXITCODE -ne 0) { throw "Writer lifecycle regression failed (seed $seed)" }
+          }
+      - name: Test preserved Codex and performance functionality
+        run: flutter test test/kernel test/usage test/models/proxy test/models/codex_test.dart test/codex_fork_test.dart test/chat/streamed_words_test.dart
+      - name: Test upstream edit ledger and legacy SSH compatibility
+        run: >-
+          flutter test
+          test/chat/change_review_test.dart
+          test/chat/checkpoints_tidy_test.dart
+          test/chat/legacy_review_import_test.dart
+          test/chat/line_diff_test.dart
+          test/chat/session_review_test.dart
+          test/remote/remote_review_compat_test.dart
+          test/remote/remote_server_test.dart
+          packages/bao_agent/test/engine/host_hooks_test.dart
+      - name: Test upstream chat, usage UI, search and editor integration
+        run: >-
+          flutter test
+          test/chat/composer_intercept_test.dart
+          test/chat/reset_credits_hint_test.dart
+          test/chat/side_panel/file_preview_agent_test.dart
+          test/chat/side_panel/side_panel_test.dart
+          test/ide/editor/ide_editor_agent_edits_test.dart
+          test/ide/git/log_details_copy_test.dart
+          test/ide/git/log_diff_test.dart
+          test/ide/search/text_search_test.dart
+          test/ide/workbench/ide_units_test.dart
+          test/usage_panel_test.dart
+          test/workspace/aside_test.dart
+          test/workspace/chat_branch_bar_test.dart
+          test/workspace/chat_quota_bar_test.dart
+      - name: Test all upstream changed regressions
+        run: >-
+          flutter test
+          test/base/mouse_navigation_test.dart
+          test/bots
+          test/chat/change_review_test.dart
+          test/chat/checkpoints_tidy_test.dart
+          test/chat/composer_draft_sync_test.dart
+          test/chat/composer_intercept_test.dart
+          test/chat/goal_panel_test.dart
+          test/chat/history_selection_test.dart
+          test/chat/session_mentions_test.dart
+          test/chat/side_panel/side_panel_reopen_diff_test.dart
+          test/chat/side_panel/side_panel_test.dart
+          test/chat/streamed_words_test.dart
+          test/chat_split_test.dart
+          test/claude_haiku_test.dart
+          test/customize/customize_view_test.dart
+          test/diagnostics/frame_watch_test.dart
+          test/forge/forge_test.dart
+          test/forge/forge_tls_test.dart
+          test/ide/editor/ide_editor_agent_edits_test.dart
+          test/ide/git/log_diff_test.dart
+          test/ide/lsp/catalog/bundled_lsp_catalog_test.dart
+          test/ide/lsp/core/lsp_manager_test.dart
+          test/ide/lsp/core/vue_language_tools_test.dart
+          test/ide/lsp/packs/lsp_settings_template_test.dart
+          test/ide/lsp/smoke/vue_language_server_smoke_test.dart
+          test/ide/search/search_view_test.dart
+          test/ide/terminal/links/terminal_links_test.dart
+          test/ide/workbench/navigation_history_test.dart
+          test/kernel/claude_haiku_test.dart
+          test/kernel/claude_sdk_tools_test.dart
+          test/kernel/dart_core_e2e_test.dart
+          test/kernel_test.dart
+          test/kernel_ui_test.dart
+          test/keybindings/key_chord_test.dart
+          test/link/link_host_test.dart
+          test/link/workspace_bridge_test.dart
+          test/markdown_test.dart
+          test/models/proxy/model_proxy_test.dart
+          test/remote/remote_project_test.dart
+          test/remote/remote_server_test.dart
+          test/settings/mobile_page_test.dart
+          test/telemetry/telemetry_service_test.dart
+          test/update/update_service_test.dart
+          test/usage/claude_usage_meter_test.dart
+          test/usage/usage_calls_list_test.dart
+          test/usage/usage_ledger_test.dart
+          test/usage/usage_pricing_rules_test.dart
+          test/usage/usage_proxy_test.dart
+          test/usage/usage_shots_test.dart
+          test/window/code_args_test.dart
+          test/window_header_test.dart
+          test/ide/textmate_tokenizer_lifecycle_test.dart
+          test/workspace/chat_branch_bar_test.dart
+          test/workspace_test.dart
+      - name: Test restored native transport and pairing packages
+        run: flutter test packages/bao_iroh/test packages/bao_link/test --timeout 5m
+      # Requires a developer's live upstream account and is intentionally
+      # skipped when BAOCODE_LIVE_SETTINGS is unset in these offline builds.
+      - name: Load optional live review regression
+        run: flutter test test/e2e_review_real_test.dart
+      - run: choco install innosetup --no-progress -y
+      - name: Verify original font bytes before Windows build
+        shell: pwsh
+        run: |
+          python tool/ci/reassemble_maple_font.py --verify-only
+          if ($LASTEXITCODE -ne 0) { throw 'Original font changed before Windows build' }
+      - run: dart run tool/build_windows.dart --arch x64 --custom-updates --remote-release 1.9.0.26-75ba74c4f0cd
+      - name: Verify bundled original Maple font bytes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $font = 'build/windows/x64/runner/Release/data/flutter_assets/assets/fonts/maple/MapleMonoNormal-NF-CN-Regular.ttf'
+          if ((Get-Item -LiteralPath $font).Length -ne 20563672) { throw 'Bundled font size mismatch' }
+          if ((Get-FileHash -LiteralPath $font -Algorithm SHA256).Hash.ToLowerInvariant() -ne '9ae0c348a44a681fa8fa20a34e782e95316cec880102295a128b65760944c0f5') { throw 'Bundled font SHA-256 mismatch' }
+      - name: Test packaged Codex process ownership
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixture = Join-Path $PWD 'build/codex-launcher-fixture/Release'
+          python tool/test_codex_owned_launcher.py --helper 'build/windows/x64/runner/Release/BaocodeCodexLauncher.exe' --reject-job-helper (Join-Path $fixture 'BaocodeCodexLauncherRejectJob.exe') --reject-membership-helper (Join-Path $fixture 'BaocodeCodexLauncherRejectMembership.exe')
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged owned launcher process isolation tests failed' }
+      - name: Verify taskbar task and real multiwindow lifecycle
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          ./tool/ci/windows_taskbar_smoke.ps1 -Executable build/windows/x64/runner/Release/baocode.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Taskbar task verification failed' }
+          ./tool/ci/windows_multiwindow_smoke.ps1 -Executable build/windows/x64/runner/Release/baocode.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Real multiwindow verification failed' }
+      - name: Verify independent floating translation window
+        timeout-minutes: 6
+        shell: pwsh
+        run: ./tool/ci/windows_translation_window_smoke.ps1 -Executable build/windows/x64/runner/Release/baocode.exe
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: translation-window-release-screenshots
+          if-no-files-found: warn
+          path: build/translation-window-previews/*
+      - name: Smoke-test startup
+        shell: pwsh
+        run: |
+          $env:BAOCODE_DATA_DIR = Join-Path $env:RUNNER_TEMP 'custom-smoke'
+          $app = Start-Process 'build/windows/x64/runner/Release/baocode.exe' -PassThru
+          Start-Sleep -Seconds 15
+          $app.Refresh()
+          if ($app.HasExited) { throw "Startup failed: $($app.ExitCode)" }
+          Stop-Process -Id $app.Id
+      - name: Test native Windows session-end shutdown and relaunch
+        timeout-minutes: 5
+        shell: pwsh
+        run: ./tool/ci/windows_session_end_smoke.ps1 -Executable build/windows/x64/runner/Release/baocode.exe
+      - name: Fetch permanent pinned release for isolated upgrade test
+        shell: pwsh
+        run: |
+          # Public versioned URL + verified hash and size; no expiring Actions artifact.
+          # Source: 470e651edca224042acdb24c9b638ef47e657932, release custom-v1.9.1+42.
+          $baseline = Join-Path $env:RUNNER_TEMP 'baseline-installer'
+          New-Item -ItemType Directory -Force $baseline | Out-Null
+          $setup = Join-Path $baseline 'BaoCode-1.9.1-setup.exe'
+          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.9.1%2B42/BaoCode-1.9.1-setup.exe' -OutFile $setup
+          if ((Get-Item $setup).Length -ne 36833911) { throw 'Pinned release Setup size mismatch' }
+          if ((Get-FileHash $setup -Algorithm SHA256).Hash.ToLower() -ne 'cf3cb07e0b497bd6529b8e256266002ed1dd029de89109b988131b2ec3362e0f') { throw 'Pinned release Setup checksum mismatch' }
+      - name: Install pinned release then replace in isolated per-user directory
+        shell: pwsh
+        run: |
+          $old = (Get-ChildItem (Join-Path $env:RUNNER_TEMP 'baseline-installer') -Filter '*-setup.exe').FullName
+          $new = @(Get-ChildItem build/installers -Filter '*-setup.exe')
+          if ($new.Count -ne 1) { throw 'Expected one new Setup' }
+          $version = (Select-String -Path pubspec.yaml -Pattern '^version: (.+)$').Matches[0].Groups[1].Value
+          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.9.1+42
+      - name: Install latest pinned custom release then upgrade
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Also exercise the user's latest published build, preserving +42 coverage.
+          # Source: 1d305d7b9c5902a9aaee701e5a6f8f75ced2e2ae, custom-v1.9.1+48.
+          $old = Join-Path $env:RUNNER_TEMP 'baocode-baseline-48.exe'
+          Invoke-WebRequest 'https://github.com/jiah0231/baocode/releases/download/custom-v1.9.1%2B48/BaoCode-1.9.1-setup.exe' -OutFile $old
+          if ((Get-Item $old).Length -ne 36889987) { throw 'Latest pinned Setup size mismatch' }
+          if ((Get-FileHash $old -Algorithm SHA256).Hash.ToLowerInvariant() -ne '11a08cadbc1d24400450e46e2f2226f6fc58e9bb089e3caaf12666bc8cd16b4e') { throw 'Latest pinned Setup checksum mismatch' }
+          $new = @(Get-ChildItem build/installers -Filter '*-setup.exe')
+          if ($new.Count -ne 1) { throw 'Expected one new Setup' }
+          $version = (Select-String -Path pubspec.yaml -Pattern '^version: (.+)$').Matches[0].Groups[1].Value
+          ./tool/ci/windows_update_smoke.ps1 -OldInstaller $old -NewInstaller $new[0].FullName -NewBundle build/windows/x64/runner/Release -Version $version -OldVersion 1.9.1+48
+      - uses: actions/upload-artifact@v6
+        with:
+          name: custom-installer
+          if-no-files-found: error
+          path: build/installers/*.exe

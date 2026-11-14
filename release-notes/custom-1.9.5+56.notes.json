@@ -1,0 +1,4 @@
+{
+  "zh": "手机 Bot 私聊通过两种入口发送时补充上游公开回复格式提示，减少正文只落入工作过程的可能。群聊、内核、权限、UI 与标签筛选保持不变，不会把工作过程全文当作回复。此为兼容改进，需实测，不能保证模型始终遵守协议；不解除服务商限流。保留 +55 的重复配对修复和桌面定制功能。",
+  "en": "Adds the upstream public-reply format reminder to both phone Bot direct-message routes. Group chats, runtime, permissions, UI and tag filtering remain unchanged; work-process text is not exposed as a reply. This compatibility improvement needs real-device testing and cannot guarantee model protocol compliance or remove provider rate limits. Preserves +55 repeat-pairing fixes and desktop customizations."
+}
