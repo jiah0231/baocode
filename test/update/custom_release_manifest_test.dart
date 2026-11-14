@@ -12,8 +12,14 @@ void main() {
   test('manifest uses notes for the exact current version', () {
     final notes = readCustomReleaseNotes(Directory.current, currentAppVersion);
     expect(notes.keys, containsAll(['zh', 'en']));
-    expect(notes['zh'], contains('窗口'));
-    expect(notes['en'], contains('v1.9.5'));
+    final expected = jsonDecode(
+      File('release-notes/custom-$currentAppVersion.notes.json')
+          .readAsStringSync(),
+    ) as Map<String, dynamic>;
+    for (final language in ['zh', 'en']) {
+      expect(notes[language], expected[language].trim());
+      expect(notes[language], isNotEmpty);
+    }
     expect(
       () =>
           readCustomReleaseNotes(Directory.current, AppVersion.parse('0.0.0')),
