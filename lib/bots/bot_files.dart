@@ -44,6 +44,7 @@ abstract final class BotFiles {
     ('signature', bot.signature),
     for (final ability in shownAbilities) (ability.name, '${bot.can(ability)}'),
     if (bot.chatOnly) ('chat_only', 'true'),
+    if (bot.legacyRestricted) ('legacy_restricted', 'true'),
     if (!bot.writesFirst) ('writes_first', 'false'),
     ('model', bot.model),
     if (bot.assistant) ('assistant', 'true'),
@@ -99,7 +100,13 @@ abstract final class BotFiles {
       assistant: assistant,
       // Not said: all an agent has.
       // Preserve the restrictions of legacy custom Codex cards.
-      chatOnly: _yes(fields['chat_only']) ?? (text('kernel') == 'codex'),
+      chatOnly:
+          text('kernel') == 'codex' ||
+          _yes(fields['legacy_restricted']) == true ||
+          (_yes(fields['chat_only']) ?? false),
+      legacyRestricted:
+          text('kernel') == 'codex' ||
+          _yes(fields['legacy_restricted']) == true,
       // Not said: it may.
       writesFirst: _yes(fields['writes_first']) ?? true,
       created:

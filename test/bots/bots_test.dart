@@ -47,7 +47,9 @@ void main() {
         '/bots/legacy',
         '---\nname: Old\nkernel: codex\nchat_only: false\n---\n',
       )!;
-      expect(explicit.chatOnly, isFalse);
+      expect(explicit.chatOnly, isTrue);
+      expect(explicit.legacyRestricted, isTrue);
+      expect(BotFiles.read('/bots/legacy', card)!.legacyRestricted, isTrue);
     },
   );
 
@@ -450,6 +452,52 @@ void main() {
       expect(card, contains('assistant: true'));
       expect(store.preferences, isNot(contains('bots')));
     });
+
+    test(
+      'legacy Codex cards do not inherit unrestricted Claude file access',
+      () async {
+        final kept = Workspace(
+          kernels: [kernel],
+          projects: [Project('app', app)],
+        );
+        final legacyFolders = MemoryBotFolders()
+          ..writeFile(
+            '/bots/legacy/BOT.md',
+            utf8.encode(
+              '---\nname: Legacy\nkernel: codex\nchat_only: false\n---\n',
+            ),
+          );
+        final own = Bots(
+          workspace: kept,
+          folders: legacyFolders,
+          computer: () async => 'Test',
+        );
+        addTearDown(() {
+          own.dispose();
+          kept.dispose();
+        });
+        await own.start();
+        final migrated = own.bots.firstWhere((b) => b.name == 'Legacy');
+        expect(migrated.chatOnly, isTrue);
+        expect(migrated.legacyRestricted, isTrue);
+        final access = kept.agentSetup!(migrated.folder)!.workspace();
+        expect(access.tools, isNot(contains('Read')));
+        expect(access.tools, isNot(contains('Bash')));
+        expect(access.tools, isNot(contains('Write')));
+        expect(access.userServers, isFalse);
+        final enabled = own.save(
+          id: migrated.id,
+          name: migrated.name,
+          identity: migrated.identity,
+          chatOnly: false,
+        );
+        expect(enabled.legacyRestricted, isFalse);
+        expect(
+          kept.agentSetup!(enabled.folder)!.workspace().tools,
+          contains('Bash'),
+        );
+      },
+    );
 
     test('legacy Codex threads are kept but not resumed as Claude bots', () {
       late final KernelDescriptor codex;

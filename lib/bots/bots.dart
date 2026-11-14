@@ -308,6 +308,7 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
           abilities: had?.abilities ?? const {},
           model: bot.model,
           chatOnly: had?.chatOnly ?? true,
+          legacyRestricted: had?.legacyRestricted ?? bot.legacyRestricted,
           writesFirst: had?.writesFirst ?? true,
           assistant: had?.assistant ?? false,
           created: bot.created ?? had?.created ?? _clock(),
@@ -514,7 +515,10 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
         // not at the computer.
         // Its files and its groups' chats read with Read, even one that
         // only chats.
-        tools: [...BotPermissions.tools(bot), if (bot.chatOnly) 'Read'],
+        tools: [
+          ...BotPermissions.tools(bot),
+          if (bot.chatOnly && !bot.legacyRestricted) 'Read',
+        ],
         // An agent's has the user's MCP servers, as an agent does.
         userServers: !bot.chatOnly,
         approvesAll: true,
@@ -524,7 +528,11 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
         queuedMessages: QueuedMessages.duringTurn,
         queuedInPlace: true,
       ),
-      settings: {...settings, 'model': ?bot.model},
+      settings: {
+        ...settings,
+        if (bot.legacyRestricted) 'model': 'default',
+        'model': ?bot.model,
+      },
       kernel: KernelRegistry.claudeCode.id,
     ),
     null => null,
@@ -876,6 +884,9 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
       abilities: abilities,
       proactive: proactive,
       chatOnly: chatOnly,
+      // Only the user's explicit profile change may opt this migrated
+      // contact into the upstream Claude agent's permissions.
+      legacyRestricted: chatOnly == false ? false : had.legacyRestricted,
       writesFirst: writesFirst,
     );
     // What it was to be told, dropped with being told of the agents.

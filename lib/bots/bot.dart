@@ -26,6 +26,7 @@ class Bot {
     this.assistant = false,
     this.created,
     this.chatOnly = false,
+    this.legacyRestricted = false,
     this.writesFirst = true,
   });
 
@@ -71,6 +72,9 @@ class Bot {
   /// agent has, and works wherever the conversation takes it.
   final bool chatOnly;
 
+  /// Old custom Codex permissions are not consent to Claude file access.
+  final bool legacyRestricted;
+
   /// Whether it may write to the user first, as a person might (the
   /// laws of the bots' world aside): on unless the user turned it off.
   final bool writesFirst;
@@ -89,6 +93,7 @@ class Bot {
     BotProactive? proactive,
     String? model,
     bool? chatOnly,
+    bool? legacyRestricted,
     bool? writesFirst,
   }) => Bot(
     id: id,
@@ -105,6 +110,7 @@ class Bot {
     assistant: assistant,
     created: created,
     chatOnly: chatOnly ?? this.chatOnly,
+    legacyRestricted: legacyRestricted ?? this.legacyRestricted,
     writesFirst: writesFirst ?? this.writesFirst,
   );
 }
