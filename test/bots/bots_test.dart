@@ -1621,7 +1621,10 @@ void main() {
         expect((png.width, png.height), (4, 2));
         session.stop();
         // By its path from its folder.
-        await call(mia, 'bot_edit_me', {'picture': 'received/image-3.png'});
+        final changed = await call(mia, 'bot_edit_me', {
+          'picture': Bots.receivedPicture(3),
+        });
+        expect(changed['isError'], isNot(isTrue));
         expect(isAvatarImage(bots.byId(mia.id)!.avatar), isTrue);
       },
     );
