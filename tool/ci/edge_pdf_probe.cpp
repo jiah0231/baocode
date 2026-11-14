@@ -3,6 +3,7 @@
 #include <dwmapi.h>
 #include <wrl/client.h>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
@@ -464,6 +465,58 @@ int wmain(int argc,wchar_t** argv) {
 #endif
     printf("RESULT|selectedRanges=%d|iconVisible=%d|expectedPhraseMatch=%d|diagnostic_only\n",selected,visible,phraseMatched);
     action.reset();
+    // Separate native-Copy experiment, after UIA/IA2 snapshots; test runner only.
+    Guard(); Scoped();
+    auto seedClipboard=[&]() {
+      Check(OpenClipboard(dispatch)!=0,"Disposable clipboard open failed");
+      if(!EmptyClipboard()) { CloseClipboard(); throw std::runtime_error("Clipboard clear failed"); }
+      const wchar_t sentinel[]=L"BAOCODE_PUBLIC_PDF_TEST_SENTINEL";
+      HGLOBAL memory=GlobalAlloc(GMEM_MOVEABLE,sizeof(sentinel));
+      if(!memory) { CloseClipboard(); throw std::runtime_error("Clipboard allocation failed"); }
+      void* dst=GlobalLock(memory);
+      if(!dst) { GlobalFree(memory); CloseClipboard(); throw std::runtime_error("Clipboard lock failed"); }
+      memcpy(dst,sentinel,sizeof(sentinel)); GlobalUnlock(memory);
+      if(!SetClipboardData(CF_UNICODETEXT,memory)) { GlobalFree(memory); CloseClipboard(); throw std::runtime_error("Clipboard seed failed"); }
+      CloseClipboard();
+    };
+    seedClipboard(); // Never read pre-existing clipboard, even on disposable runner.
+    puts("COPY_BEFORE|known_test_sentinel|private_clipboard_never_read");
+    Screenshot(std::wstring(argv[6])+L"-before-copy.bmp");
+    const DWORD priorSequence=GetClipboardSequenceNumber();
+    Scoped();
+    INPUT keys[4]{};
+    for(auto& key:keys) key.type=INPUT_KEYBOARD;
+    keys[0].ki.wVk=VK_CONTROL; keys[1].ki.wVk='C';
+    keys[2].ki.wVk='C'; keys[2].ki.dwFlags=KEYEVENTF_KEYUP;
+    keys[3].ki.wVk=VK_CONTROL; keys[3].ki.dwFlags=KEYEVENTF_KEYUP;
+    const UINT sent=SendInput(4,keys,sizeof(INPUT));
+    if(sent!=4) { SendInput(2,keys+2,sizeof(INPUT)); seedClipboard(); throw std::runtime_error("Native copy key injection incomplete"); }
+    const auto copyDeadline=GetTickCount64()+2000;
+    while(GetClipboardSequenceNumber()==priorSequence && GetTickCount64()<copyDeadline) Pump(20);
+    Scoped();
+    bool nativeMatch=false;
+    if(GetClipboardSequenceNumber()!=priorSequence) {
+      Check(OpenClipboard(dispatch)!=0,"Copy result open failed");
+      HANDLE data=GetClipboardData(CF_UNICODETEXT);
+      if(data) {
+        const SIZE_T units=GlobalSize(data)/sizeof(wchar_t);
+        const auto* value=static_cast<const wchar_t*>(GlobalLock(data));
+        if(value) {
+          std::wstring copy;
+          for(SIZE_T i=0;i<units&&i<32768&&value[i];++i)copy.push_back(value[i]);
+          GlobalUnlock(data);
+          printf("NATIVE_COPY_UTF16|");
+          for(wchar_t unit:copy)printf("\\u%04X",static_cast<unsigned>(unit));
+          puts(""); nativeMatch=copy==L"VAD method";
+        }
+      }
+      CloseClipboard();
+    } else puts("NATIVE_COPY_TIMEOUT|no_new_clipboard_sequence");
+    seedClipboard();
+    puts("COPY_AFTER|restored_known_test_sentinel");
+    Screenshot(std::wstring(argv[6])+L"-after-copy.bmp");
+    puts("RAW_UIA_PHASE|AFTER_NATIVE_COPY"); Selected(uia,true,1,true);
+    printf("COPY_COMPARISON|nativeExpectedMatch=%d|uiaExpectedMatch=%d|diagnostic_only\n",nativeMatch,phraseMatched);
     DestroyWindow(dispatch);
     return selected>0&&phraseMatched&&visible&&clickedPhraseMatched?0:1;
   }

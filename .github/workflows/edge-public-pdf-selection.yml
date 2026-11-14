@@ -1,14 +1,18 @@
 name: Edge public PDF selection diagnostic
 on:
   push:
-    branches: ['test/edge-public-pdf-selection-20261111']
+    branches: ['test/edge-native-copy-20261114']
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   pdf:
     if: github.repository == 'jiah0231/baocode'
-    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
@@ -40,7 +44,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v6
         with:
-          name: edge-public-pdf-${{ github.sha }}
-          retention-days: 3
+          name: edge-native-copy-${{ matrix.os }}-${{ github.sha }}
+          retention-days: 7
           if-no-files-found: error
           path: ${{ runner.temp }}/edge-public-pdf-evidence/
