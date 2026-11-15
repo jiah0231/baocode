@@ -21,17 +21,17 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-TAGS = re.compile(r'<(bot_say|bot_narrate|bot_show_chat)(?:\s+[a-z]+="[^"]*")*\s*>([\s\S]*?)(?:</\1\s*>|$)')
+TAGS = re.compile(r'<(bot_say|bot_narrate|bot_show_chat)(?:\s+[a-z]+="[^"]*")*\s*>([\s\S]*?)</\1>')
 
 
 def counts(text):
-    tags = list(TAGS.finditer(text))
+    tags = [m for m in TAGS.finditer(text) if m[2].strip()]
     return {'characters': len(text), 'public_parts': len(tags),
             'say_parts': sum(m[1] == 'bot_say' and bool(m[2].strip()) for m in tags)}
 
 
 def constants():
-    source = (Path(__file__).resolve().parents[2] / 'lib/bots/bot_prompt.dart').read_text()
+    source = (Path(__file__).resolve().parents[2] / 'lib/bots/bot_prompt.dart').read_text(encoding='utf-8')
     style = re.search(r"const botChatStyle = '''(.*?)''';", source, re.S)[1]
     definition = re.search(r'const botReplyProtocolReminder =\s*(.*?);\n', source, re.S)[1]
     reminder = ''.join(re.findall(r"'([^']*)'", definition))
@@ -42,12 +42,12 @@ def call(args, messages, system, key):
     if args.protocol == 'chat':
         path = '/chat/completions'
         body = {'model': args.model, 'messages': [{'role': 'system', 'content': system}, *messages],
-                'stream': False, 'max_tokens': 256}
+                'stream': False, 'max_tokens': args.max_tokens}
         headers = {'Authorization': 'Bearer ' + key}
     else:
         path = '/messages'
         body = {'model': args.model, 'system': system, 'messages': messages,
-                'stream': False, 'max_tokens': 256}
+                'stream': False, 'max_tokens': args.max_tokens}
         headers = {'x-api-key': key, 'anthropic-version': '2023-06-01'}
     headers['Content-Type'] = 'application/json'
     request = urllib.request.Request(args.base_url.rstrip('/') + path,
@@ -62,8 +62,8 @@ def call(args, messages, system, key):
         text = result['choices'][0]['message'].get('content')
         if not isinstance(text, str):
             raise ValueError('No text content')
-        return text
-    return ''.join(x['text'] for x in result['content'] if x.get('type') == 'text')
+        return text, result['choices'][0].get('finish_reason')
+    return ''.join(x['text'] for x in result['content'] if x.get('type') == 'text'), result.get('stop_reason')
 
 
 def main():
@@ -73,6 +73,7 @@ def main():
     parser.add_argument('--api-key-env', default='PROBE_API_KEY')
     parser.add_argument('--protocol', choices=['chat', 'anthropic'], default='chat')
     parser.add_argument('--turns', type=int, default=24)
+    parser.add_argument('--max-tokens', type=int, default=1024)
     parser.add_argument('--self-test', action='store_true')
     args = parser.parse_args()
     style, reminder = constants()
@@ -82,9 +83,12 @@ def main():
         assert counts('<bot_say>Hello</bot_say>')['say_parts'] == 1
         assert counts('private<bot_suggest>continue</bot_suggest>')['public_parts'] == 0
         assert counts('<bot_narrate>story</bot_narrate>')['say_parts'] == 0
+        assert counts('<bot_say>cut off')['say_parts'] == 0
+        assert counts('<bot_say>empty close</bot_say >')['say_parts'] == 0
+        assert counts('<bot_say> </bot_say>')['public_parts'] == 0
         print('self-test passed (no network)')
         return 0
-    if not args.base_url or not args.model or not 1 <= args.turns <= 100:
+    if not args.base_url or not args.model or not 1 <= args.turns <= 100 or not 1 <= args.max_tokens <= 8192:
         parser.error('provide base URL, model, and 1–100 turns')
     url = urllib.parse.urlparse(args.base_url)
     if url.username or url.password or url.query or url.fragment or url.scheme != 'https':
@@ -95,11 +99,12 @@ def main():
     for reinforced in [False, True]:
         history = []
         failures = 0
+        incomplete = 0
         for turn in range(args.turns):
-            prompt = f'Synthetic protocol check {turn + 1}. Reply to me with only the number {turn + 1}, using the chat message format. This is not a request to work on files or call tools.'
+            prompt = f'Synthetic check {turn + 1}. What is {turn + 1} plus one? Please answer briefly. This is not a request to work on files or call tools.'
             history.append({'role': 'user', 'content': (reminder + '\n' if reinforced else '') + prompt})
             try:
-                reply = call(args, history, style, key)
+                reply, reason = call(args, history, style, key)
             except urllib.error.HTTPError as error:
                 print(json.dumps({'arm': 'reminder' if reinforced else 'baseline', 'turn': turn + 1, 'http_error': error.code}))
                 return 2
@@ -107,10 +112,14 @@ def main():
                 print(json.dumps({'error_type': type(error).__name__}))
                 return 2
             metrics = counts(reply)
-            failures += metrics['say_parts'] == 0
-            print(json.dumps({'arm': 'reminder' if reinforced else 'baseline', 'turn': turn + 1, **metrics}), flush=True)
+            completed = reason in ('stop', 'end_turn', 'stop_sequence')
+            incomplete += not completed
+            failures += completed and metrics['say_parts'] == 0
+            # The provider may return arbitrary strings: print only known labels.
+            finish = reason if reason in ('stop', 'end_turn', 'stop_sequence', 'length', 'max_tokens', 'tool_calls', 'tool_use', 'content_filter') else 'other'
+            print(json.dumps({'arm': 'reminder' if reinforced else 'baseline', 'turn': turn + 1, 'finish': finish, **metrics}), flush=True)
             history.append({'role': 'assistant', 'content': reply})
-        print(json.dumps({'arm': 'reminder' if reinforced else 'baseline', 'turns': args.turns, 'missing_say_turns': failures}), flush=True)
+        print(json.dumps({'arm': 'reminder' if reinforced else 'baseline', 'turns': args.turns, 'complete_turns_missing_say': failures, 'incomplete_turns': incomplete}), flush=True)
     return 0
 
 

@@ -34,6 +34,8 @@ jobs:
         run: |
           flutter pub get
           if ($LASTEXITCODE -ne 0) { throw 'Package resolution failed' }
+      - name: Synthetic protocol probe self-test (no network)
+        run: python tool/diagnostics/bot_reply_protocol.py --self-test
       - name: Format changed files
         run: dart format --output=none --set-exit-if-changed lib/bots lib/link/link_host.dart lib/link/chat_codec.dart lib/link/workspace_bridge.dart lib/settings/pages/mobile_page.dart lib/workspace/session_tools.dart packages/bao_link/lib/src/groups.dart test/bots test/link/link_host_test.dart test/link/chat_codec_test.dart test/link/workspace_bridge_test.dart test/settings/mobile_page_test.dart
       - name: Bot upstream regressions
