@@ -33,7 +33,7 @@ def counts(text):
 def constants():
     source = (Path(__file__).resolve().parents[2] / 'lib/bots/bot_prompt.dart').read_text()
     style = re.search(r"const botChatStyle = '''(.*?)''';", source, re.S)[1]
-    definition = re.search(r'const botReplyProtocolReminder =\s*(.*?);', source, re.S)[1]
+    definition = re.search(r'const botReplyProtocolReminder =\s*(.*?);\n', source, re.S)[1]
     reminder = ''.join(re.findall(r"'([^']*)'", definition))
     return style, reminder
 
@@ -77,7 +77,8 @@ def main():
     args = parser.parse_args()
     style, reminder = constants()
     if args.self_test:
-        assert '<bot_say>' in style and '<system-reminder>' in reminder
+        assert '<bot_say>' in style and reminder.startswith('<system-reminder>')
+        assert reminder.endswith('</system-reminder>')
         assert counts('<bot_say>Hello</bot_say>')['say_parts'] == 1
         assert counts('private<bot_suggest>continue</bot_suggest>')['public_parts'] == 0
         assert counts('<bot_narrate>story</bot_narrate>')['say_parts'] == 0
