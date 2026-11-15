@@ -501,7 +501,7 @@ void main() {
 
   for (final bySession in [false, true]) {
     test(
-      'Bot reply protocol reaches transport via ${bySession ? 'session' : 'bot'}',
+      'Bot reply protocol survives 24 mixed turns via ${bySession ? 'session' : 'bot'}',
       () async {
         final sent = FakeCli();
         ClaudeLaunch? launch;
@@ -536,27 +536,72 @@ void main() {
         addTearDown(bridge.dispose);
         final bot = bots.bots.single;
         final thread = bots.threadFor(bot);
-        await bridge.handle(LinkMethods.send, {
-          if (bySession)
-            'session': WorkspaceBridge.idOf(thread)
-          else
-            'bot': bot.id,
-          'text': '在吗',
-          'suggest': true,
-        });
-        for (var i = 0; i < 100 && sent.users.isEmpty; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 20));
+        // Continuous history deliberately includes noncompliant output. A
+        // single successful prompted turn must not be mistaken for stability.
+        for (var turn = 0; turn < 24; turn++) {
+          final text = 'Synthetic check $turn: answer with the next number.';
+          await bridge.handle(LinkMethods.send, {
+            if (bySession)
+              'session': WorkspaceBridge.idOf(thread)
+            else
+              'bot': bot.id,
+            'text': text,
+            'suggest': turn.isEven,
+          });
+          for (var i = 0; i < 100 && sent.users.length <= turn; i++) {
+            await Future<void>.delayed(const Duration(milliseconds: 20));
+          }
+          expect(sent.users, hasLength(turn + 1));
+          expect(launch!.ownPrompt, isTrue);
+          expect(launch!.instructions, contains('<bot_say>'));
+          final outgoing = jsonEncode(sent.users.last);
+          expect(outgoing, contains(botReplyProtocolReminder));
+          expect(botReplyProtocolReminder.allMatches(outgoing), hasLength(1));
+          // The reminder travels as a note, not in the user's bubble.
+          final user = [
+            for (var i = 0; i < thread.session.itemCount; i++)
+              thread.session.itemAt(i),
+          ].whereType<UserMessageItem>().last;
+          expect(user.text, text);
+
+          final tagged = turn % 3 != 1;
+          final reply = tagged
+              ? '<bot_say>Answer $turn</bot_say>'
+              : 'PRIVATE_SYNTHETIC_WORK_$turn<bot_suggest>Continue</bot_suggest>';
+          sent.push({
+            'type': 'assistant',
+            'uuid': 'answer-$turn',
+            'message': {
+              'id': 'message-$turn',
+              'role': 'assistant',
+              'content': [
+                {'type': 'text', 'text': reply},
+              ],
+            },
+          });
+          sent.push({
+            'type': 'result',
+            'subtype': 'success',
+            'is_error': false,
+          });
+          await pumpEventQueue();
+          expect(thread.session.isStreaming, isFalse);
+          final assistant = [
+            for (var i = 0; i < thread.session.itemCount; i++)
+              thread.session.itemAt(i),
+          ].whereType<AssistantTextItem>().last;
+          expect(assistant.text, reply);
+          expect(
+            ChatCodec.botSays(assistant.text),
+            tagged ? ['Answer $turn'] : isEmpty,
+          );
+          // Reopening the phone view must not reset reminder coverage.
+          if (turn % 6 == 5) {
+            final session = WorkspaceBridge.idOf(thread);
+            await bridge.handle(LinkMethods.open, {'session': session});
+            await bridge.handle(LinkMethods.close, {'session': session});
+          }
         }
-        expect(sent.users, isNotEmpty);
-        expect(launch!.ownPrompt, isTrue);
-        expect(launch!.instructions, contains('<bot_say>'));
-        expect(jsonEncode(sent.users), contains(botReplyProtocolReminder));
-        // The reminder travels as a note, not as text in the user's bubble.
-        final user = [
-          for (var i = 0; i < thread.session.itemCount; i++)
-            thread.session.itemAt(i),
-        ].whereType<UserMessageItem>().last;
-        expect(user.text, '在吗');
       },
     );
   }
