@@ -178,7 +178,8 @@ void main() {
       write('work/app/self.md', 'Loops @self.md');
       final files = MemoryLoader(paths).load(p.join(root.path, 'work', 'app'));
       final byName = {
-        for (final f in files) p.relative(f.path, from: root.path): f,
+        for (final f in files)
+          p.relative(f.path, from: root.path).replaceAll('\\', '/'): f,
       };
       expect(byName.keys, [
         'home/.claude/CLAUDE.md',
@@ -309,7 +310,7 @@ void main() {
       expect(settings.model, 'haiku');
       settings.addDirectories(['/extra'], SettingsSource.local);
       settings.reload();
-      expect(settings.additionalDirectories, contains('/extra'));
+      expect(settings.additionalDirectories, contains(p.normalize('/extra')));
       expect(SettingsSource.parse('localSettings'), SettingsSource.local);
       expect(SettingsSource.parse('nope'), isNull);
     });

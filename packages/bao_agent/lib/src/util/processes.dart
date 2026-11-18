@@ -213,7 +213,8 @@ class Shell {
           when exists(set)) {
         return Shell(set, windows: true);
       }
-      if (bao != null && exists(bao)) return Shell(bao, baoBash: true, windows: true);
+      if (bao != null && exists(bao))
+        return Shell(bao, baoBash: true, windows: true);
       if (gitBash(environment, exists: exists) case final git?) {
         return Shell(git, windows: true);
       }
