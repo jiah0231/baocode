@@ -426,6 +426,16 @@ void main() {
       expect(windows({}, {}).executable, 'cmd.exe');
     });
 
+    test('Git Bash records its working directory as a native Windows path', () {
+      final bash = windows(
+        {'CLAUDE_CODE_GIT_BASH_PATH': r'D:\git\bash.exe'},
+        {r'D:\git\bash.exe'},
+      );
+      final args = bash.arguments('cd sub', r'C:\Temp\cwd');
+      expect(args[1], contains(r'cygpath -w -- "$(pwd -P)"'));
+      expect(args.sublist(3), ['cd sub', r'C:\Temp\cwd']);
+    });
+
     test('on Windows: BaoCode Bash, where the app installed it, before '
         'Git\'s; the one set before both', () {
       const bao =

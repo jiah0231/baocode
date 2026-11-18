@@ -143,6 +143,7 @@ class Shell {
     this.executable, {
     this.kind = ShellKind.posix,
     this.baoBash = false,
+    this.windows = false,
   });
 
   /// The variable the app names BaoCode Bash's `bash.exe` in
@@ -186,6 +187,9 @@ class Shell {
   /// Whether it is BaoCode Bash, its tools there whatever is installed.
   final bool baoBash;
 
+  /// Whether shell working directories need Windows-native paths.
+  final bool windows;
+
   /// The shell for [environment]'s user, on Windows when [windows] (where
   /// this runs, when not given); [exists] says whether a file is there.
   static Shell find(
@@ -202,15 +206,16 @@ class Shell {
           chosen,
           kind: ShellKind.of(chosen),
           baoBash: chosen == bao,
+          windows: true,
         );
       }
       if (environment['CLAUDE_CODE_GIT_BASH_PATH'] case final set?
           when exists(set)) {
-        return Shell(set);
+        return Shell(set, windows: true);
       }
-      if (bao != null && exists(bao)) return Shell(bao, baoBash: true);
+      if (bao != null && exists(bao)) return Shell(bao, baoBash: true, windows: true);
       if (gitBash(environment, exists: exists) case final git?) {
-        return Shell(git);
+        return Shell(git, windows: true);
       }
       return Shell(environment['COMSPEC'] ?? 'cmd.exe', kind: ShellKind.cmd);
     }
@@ -265,9 +270,11 @@ class Shell {
   List<String> arguments(String command, String cwdFile) {
     if (kind == ShellKind.cmd) return run(command);
     if (kind == ShellKind.powershell) return _powershell(command, cwdFile);
-    const script =
+    final cwd = windows ? r'cygpath -w -- "$(pwd -P)"' : 'pwd -P';
+    final script =
         r'eval "$1" < /dev/null; __bao_status=$?; '
-        r'pwd -P >| "$2" 2>/dev/null; exit $__bao_status';
+        '$cwd'
+        r' >| "$2" 2>/dev/null; exit $__bao_status';
     return ['-c', script, p.basename(executable), command, cwdFile];
   }
 
