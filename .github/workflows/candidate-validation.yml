@@ -198,6 +198,8 @@ jobs:
             'test/window/app_windows_test.dart',
             'test/workspace/session_tools_test.dart',
             'test/ide/file_index_store_test.dart',
+            'test/quick_ask/quick_ask_agent_test.dart',
+            'test/update/version_test.dart',
             'packages/bao_agent/test/units/utils_test.dart',
             'test/codex_fork_test.dart',
             'test/chat/session_query_test.dart',

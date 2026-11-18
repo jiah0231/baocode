@@ -131,7 +131,13 @@ void main() {
     expect(runs.first.sent, isEmpty);
     expect(runs.last.sent.single.text, 'Bounded selection prompt');
     expect(runs.last.sent.single.mentions, isEmpty);
-    expect(runs.last.sent.single.notes, isEmpty);
+    // An upstream reply-suggestion reminder is not source conversation history.
+    expect(
+      runs.last.sent.single.notes.every(
+        (note) => note.contains('<reply_suggestion>'),
+      ),
+      isTrue,
+    );
     expect(handoff.submit('Do not send twice'), isNull);
     expect(runs.last.sent, hasLength(1));
   });
