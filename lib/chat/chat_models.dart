@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import 'reply_suggestions.dart';
+
 /// UI-only view models for the conversation history.
 sealed class ChatItem {
   const ChatItem();
@@ -17,6 +19,7 @@ class UserMessageItem extends ChatItem {
     this.stopped = false,
     this.sentAt,
     this.fromAgent,
+    this.fromSession,
   });
 
   final String text;
@@ -24,6 +27,10 @@ class UserMessageItem extends ChatItem {
   /// Sent by a subagent (SendMessage), not typed: what it was given to do,
   /// else its id. Shown as its, and not to be edited.
   final String? fromAgent;
+
+  /// Sent by another conversation of the user's (session_send, a report
+  /// back): its session's id, to open it by; with [fromAgent] its title.
+  final String? fromSession;
 
   /// Pictures sent with it (screenshots, mockups…).
   final List<ImageAttachment> images;
@@ -59,6 +66,7 @@ class UserMessageItem extends ChatItem {
     stopped: stopped ?? this.stopped,
     sentAt: sentAt,
     fromAgent: fromAgent,
+    fromSession: fromSession,
   );
 }
 
@@ -139,9 +147,17 @@ final imageReferencePattern = RegExp(r'\[Image #(\d+)\]');
 
 /// Plain assistant prose. Supports `inline code` and `- ` bullet lines.
 class AssistantTextItem extends ChatItem {
-  const AssistantTextItem(this.text);
+  const AssistantTextItem(this.raw);
 
-  final String text;
+  /// All of it, as the agent wrote it.
+  final String raw;
+
+  /// What it said: without what it suggests the user send next, at its end
+  /// ([suggestions]).
+  String get text => ReplySuggestions.strip(raw);
+
+  /// What it suggests the user send next (see [ReplySuggestions]).
+  List<String> get suggestions => ReplySuggestions.of(raw);
 }
 
 /// [text] (what an agent said, or asks) on one line, its markup's marks
@@ -282,6 +298,7 @@ class AgentItem extends ChatItem {
     this.children = const [],
     this.result,
     this.background = false,
+    this.ranBefore,
   });
 
   final String description;
@@ -303,8 +320,12 @@ class AgentItem extends ChatItem {
   /// When it started, while it runs (live sessions only).
   final DateTime? startedAt;
 
-  /// How long it took, once done.
+  /// How long it took, once done: this time it ran (see [ranBefore]).
   final Duration? duration;
+
+  /// How long it ran the times before, continued once it had ended (sent
+  /// a message, SendMessage): null for none.
+  final Duration? ranBefore;
   final String? model;
   final List<ChatItem> children;
 
@@ -344,6 +365,29 @@ class AgentItem extends ChatItem {
     children: children ?? this.children,
     result: result ?? this.result,
     background: background ?? this.background,
+    ranBefore: ranBefore,
+  );
+
+  /// At work again from [at], continued once it had ended: how long it
+  /// ran so far kept in [ranBefore].
+  AgentItem continuedAt(DateTime at) => AgentItem(
+    description: description,
+    id: id,
+    agentType: agentType,
+    prompt: prompt,
+    tokens: tokens,
+    toolUses: toolUses,
+    lastTool: lastTool,
+    activity: activity,
+    startedAt: at,
+    model: model,
+    children: children,
+    result: result,
+    background: background,
+    ranBefore: switch ((ranBefore, duration)) {
+      (final before?, final ran?) => before + ran,
+      (final before, final ran) => before ?? ran,
+    },
   );
 }
 

@@ -9,6 +9,7 @@ import '../kernel/agent_kernel.dart';
 import '../kernel/kernel_event.dart';
 import '../kernel/kernel_registry.dart';
 import '../kernel/kernel_types.dart';
+import '../kernel/prompt_suggestions.dart';
 import '../kernel/transcript.dart';
 import '../remote/remote_location.dart';
 import 'chat_feed.dart';
@@ -18,6 +19,7 @@ import 'composer/paste_store.dart';
 import 'mock_conversation.dart';
 import 'open_editor.dart';
 import 'session_query.dart';
+import 'reply_suggestions.dart';
 import 'review/change_review.dart';
 import 'review/review_store.dart';
 
@@ -411,6 +413,19 @@ class ChatSession extends ChangeNotifier
     _ => false,
   };
 
+  /// The model answering in place of the one picked ([models]' selected),
+  /// by name, since its safeguards flagged a message; null while the
+  /// picked one answers.
+  String? get fallbackModel => switch (_kernel) {
+    final ReportsModelFallback kernel => kernel.fallbackModel,
+    _ => null,
+  };
+
+  /// Back to the model picked, from [fallbackModel].
+  void endModelFallback() {
+    if (_kernel case final ReportsModelFallback kernel) kernel.endFallback();
+  }
+
   KernelChoice? get modes => switch (_kernel) {
     final SelectsMode kernel => _choice(kernel.mode),
     _ => null,
@@ -500,10 +515,11 @@ class ChatSession extends ChangeNotifier
     _ => null,
   };
 
-  /// Asks for the account's limits now (see [ReportsUsage.refreshUsage]).
-  void refreshUsage() {
+  /// Asks for the account's limits now (see [ReportsUsage.refreshUsage]);
+  /// done once they came.
+  Future<void> refreshUsage() async {
     if (_kernel case final ReportsUsage kernel) {
-      unawaited(kernel.refreshUsage());
+      await kernel.refreshUsage();
     }
   }
 
@@ -532,14 +548,32 @@ class ChatSession extends ChangeNotifier
 
   bool get acceptsImages => _kernel is AcceptsImages;
 
-  /// What the user would likely send next: offered while the agent waits
-  /// for them.
-  String? get promptSuggestion => switch (_kernel) {
-    final SuggestsPrompts kernel
-        when !isStreaming && pendingInteraction == null =>
-      kernel.promptSuggestion,
-    _ => null,
-  };
+  /// What the agent suggests the user send next, at the end of its last
+  /// turn (see [ReplySuggestions]): offered while it waits for them, if
+  /// they have them on.
+  List<String> get replySuggestions {
+    if (isStreaming ||
+        pendingInteraction != null ||
+        !PromptSuggestions.current()) {
+      return const [];
+    }
+    return _lastSuggestions;
+  }
+
+  /// The suggestions of the agent's last text, if its turn ended with it:
+  /// none once the user has written since.
+  List<String> get _lastSuggestions {
+    for (var i = _transcript.length - 1; i >= 0; i--) {
+      switch (_transcript.itemAt(i)) {
+        case UserMessageItem():
+          return const [];
+        case final AssistantTextItem text:
+          return text.suggestions;
+        default:
+      }
+    }
+    return const [];
+  }
 
   /// The kernel's MCP servers; null when it has none to manage, empty
   /// until first reported.
@@ -1176,6 +1210,24 @@ class ChatSession extends ChangeNotifier
     return [from.note];
   }
 
+  /// Whether the agent was last told to suggest replies, once told this
+  /// run (see [_suggestionNotes]).
+  bool? _toldToSuggest;
+
+  /// What the agent is told of suggesting what the user sends next, as
+  /// they have it on or off ([ReplySuggestions.notes]): with what the user
+  /// writes, not what the app or another agent sends.
+  List<String> _suggestionNotes() {
+    final wanted = PromptSuggestions.current();
+    final notes = ReplySuggestions.notes(
+      wanted: wanted,
+      told: _toldToSuggest,
+      suggested: _toldToSuggest == null && _lastSuggestions.isNotEmpty,
+    );
+    if (notes.isNotEmpty) _toldToSuggest = wanted;
+    return notes;
+  }
+
   /// What the agent is told of [editor], the file open beside the chat now:
   /// nothing where it was told so already, nor of no file before any.
   List<String> _editorNotes(OpenEditor? editor) {
@@ -1301,6 +1353,7 @@ class ChatSession extends ChangeNotifier
         ..._sessionQueryNotes(message, turnId),
         ..._placeNotes(from),
         if (editor != null) ..._editorNotes(editor()),
+        if (from != null) ..._suggestionNotes(),
       ],
     );
     _dispatchingSessionQueries.add(turnId);

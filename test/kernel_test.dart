@@ -59,6 +59,34 @@ Map<String, Object?> recordedResponse(String name, bool Function(Map) match) {
   throw StateError('no such response in $name');
 }
 
+/// A CLI that can hold `get_context_usage` answers until [answerContexts].
+class _DelayedContextCli extends FakeCli {
+  _DelayedContextCli({super.answers});
+
+  bool delayed = false;
+  final _pending = <Map<String, Object?>>[];
+
+  @override
+  void write(Map<String, Object?> message) {
+    final request = message['request'];
+    if (delayed &&
+        request is Map &&
+        request['subtype'] == 'get_context_usage') {
+      _pending.add(message);
+      return;
+    }
+    super.write(message);
+  }
+
+  void answerContexts() {
+    delayed = false;
+    for (final message in _pending) {
+      super.write(message);
+    }
+    _pending.clear();
+  }
+}
+
 /// Claude Code as the test speaks it: answers control requests the way the
 /// CLI does (from recordings), and records what the kernel wrote.
 /// A CLI that answers nothing: one that exits before it does.
@@ -196,11 +224,17 @@ class _SlowStartCli extends FakeCli {
 
 /// A kernel on [cli], with its events applied to a transcript.
 ({ClaudeCodeKernel kernel, Transcript transcript, List<KernelEvent> events})
-claude(FakeCli cli, {KernelContext context = const KernelContext(cwd: '/p')}) {
+claude(
+  FakeCli cli, {
+  KernelContext context = const KernelContext(cwd: '/p'),
+  ModelProviders? providers,
+}) {
   final kernel = ClaudeCodeKernel(
     MockKernels.claudeCode,
     context,
     start: (_) async => cli,
+    providers: providers,
+    providerEnvironment: (_, _) async => const {},
   );
   final transcript = Transcript();
   final events = <KernelEvent>[];
@@ -617,6 +651,87 @@ void main() {
         object: 'List empty',
         detail: null,
       ));
+    });
+
+    test('a workflow is a card, its subagents in it as they go (#836)', () {
+      final transcript = Transcript();
+      var seq = 0;
+      final translator = ClaudeTranslator(
+        emit: transcript.apply,
+        nextSeq: () => ++seq,
+      )..turnId = '11111111-1111-4111-8111-111111111111';
+      AgentItem card() =>
+          [for (var i = 0; i < transcript.length; i++) transcript.itemAt(i)]
+              .whereType<AgentItem>()
+              .single;
+      var queued = false;
+      for (final message in recorded('workflow')) {
+        translator.translate(message);
+        if (message['subtype'] == 'task_progress' &&
+            message['workflow_progress'] != null &&
+            !queued) {
+          // The first look: one started, the other waiting its turn.
+          queued = true;
+          final [a, b] = card().children.cast<AgentItem>();
+          expect(a.status, CommandStatus.running);
+          expect(a.startedAt, isNotNull);
+          expect(a.prompt, startsWith('Read the file at /p/a.txt'));
+          expect(b.activity, 'Queued');
+        }
+      }
+      expect(queued, isTrue);
+      final workflow = card();
+      expect(workflow.agentType, ClaudeTranslator.workflowAgentType);
+      expect(
+        workflow.description,
+        'Fan out two agents in parallel to read a.txt and b.txt and return '
+        'their contents',
+      );
+      expect(workflow.background, isTrue);
+      expect(workflow.status, CommandStatus.succeeded);
+      expect(workflow.duration, const Duration(milliseconds: 14722));
+      expect(workflow.prompt, contains('export const meta'));
+      expect(
+        [
+          for (final agent in workflow.children.cast<AgentItem>())
+            (agent.description, agent.status, agent.result?.trim()),
+        ],
+        [
+          ('read:a.txt', CommandStatus.succeeded, 'hello'),
+          ('read:b.txt', CommandStatus.succeeded, 'world'),
+        ],
+      );
+      expect(transcript.tasks.single.background, isTrue);
+    });
+
+    test('a subagent continued once it ended counts the time it ran '
+        'before (#751)', () {
+      final done = AgentItem(
+        description: 'Read',
+        status: CommandStatus.succeeded,
+        duration: const Duration(seconds: 40),
+        startedAt: DateTime(2026),
+      );
+      final again = done.continuedAt(DateTime(2026, 1, 1, 0, 10));
+      expect(again.status, CommandStatus.running);
+      expect(again.ranBefore, const Duration(seconds: 40));
+      expect(
+        AgentStep.elapsed(again, now: DateTime(2026, 1, 1, 0, 10, 5)),
+        const Duration(seconds: 45),
+      );
+      final ended = again.copyWith(
+        status: CommandStatus.succeeded,
+        duration: const Duration(seconds: 20),
+      );
+      expect(AgentStep.elapsed(ended), const Duration(seconds: 60));
+      expect(
+        AgentStep.elapsed(
+          ended
+              .continuedAt(DateTime(2026, 1, 2))
+              .copyWith(duration: const Duration(seconds: 1)),
+        ),
+        const Duration(seconds: 61),
+      );
     });
 
     test('a subagent shows the model its messages ran on, as it runs; '
@@ -1593,6 +1708,50 @@ void main() {
         event({'type': 'message_stop'});
         expect(shown(transcript), ['text: The answer']);
       });
+
+      test('a text block only blank never shows; one that goes on to say '
+          'something shows from then, all of it', () {
+        event({
+          'type': 'message_start',
+          'message': {'id': 'msg-1'},
+        });
+        streamText('msg-1', 0, '\n\n');
+        expect(shown(transcript), isEmpty);
+        event({
+          'type': 'content_block_start',
+          'index': 1,
+          'content_block': {'type': 'text', 'text': ''},
+        });
+        event({
+          'type': 'content_block_delta',
+          'index': 1,
+          'delta': {'type': 'text_delta', 'text': '\n'},
+        });
+        expect(shown(transcript), isEmpty);
+        event({
+          'type': 'content_block_delta',
+          'index': 1,
+          'delta': {'type': 'text_delta', 'text': 'Hi'},
+        });
+        event({
+          'type': 'content_block_delta',
+          'index': 1,
+          'delta': {'type': 'text_delta', 'text': ' there'},
+        });
+        event({'type': 'content_block_stop', 'index': 1});
+        expect(transcript.length, 1);
+        expect(transcript.itemAt(0), isA<AssistantTextItem>());
+        expect((transcript.itemAt(0) as AssistantTextItem).text, '\nHi there');
+        translator.translate(
+          whole('u-1', 'msg-1', [
+            {'type': 'text', 'text': '\n\n'},
+            {'type': 'text', 'text': '\nHi there'},
+          ]),
+        );
+        event({'type': 'message_stop'});
+        expect(transcript.length, 1);
+        expect((transcript.itemAt(0) as AssistantTextItem).text, '\nHi there');
+      });
     });
   });
 
@@ -1906,6 +2065,130 @@ void main() {
         'text': 'ApprovalDecision.allowAlways',
       });
       kernel.dispose();
+    });
+
+    test("in full access one of the app's tools that asks is answered "
+        'without asking', () async {
+      ClaudeSdkTools.register(
+        ClaudeSdkTool(
+          name: 'ask_me',
+          description: 'Asks.',
+          inputSchema: const {'type': 'object'},
+          asksItself: true,
+          run: (input, call) async =>
+              '${await call.ask!(const ApprovalRequest(id: '', title: 'Run it here?', toolName: 'mcp__baocode__ask_me'))}',
+        ),
+      );
+      addTearDown(() => ClaudeSdkTools.unregister('ask_me'));
+      final cli = FakeCli();
+      final (:kernel, :transcript, events: _) = claude(
+        cli,
+        context: const KernelContext(
+          cwd: '/p',
+          settings: {'permission': 'bypassPermissions'},
+        ),
+      );
+      kernel.send(const KernelTurn(id: 'u1', text: 'go'));
+      await pumpEventQueue();
+      cli.push({
+        'type': 'control_request',
+        'request_id': 'm1',
+        'request': {
+          'subtype': 'mcp_message',
+          'server_name': 'baocode',
+          'message': {
+            'jsonrpc': '2.0',
+            'id': 5,
+            'method': 'tools/call',
+            'params': {'name': 'ask_me', 'arguments': <String, Object?>{}},
+          },
+        },
+      });
+      await pumpEventQueue();
+      expect(transcript.pendingInteraction, isNull);
+      final mcp = cli.responses.last['mcp_response']! as Map;
+      expect(((mcp['result'] as Map)['content'] as List).single, {
+        'type': 'text',
+        'text': 'ApprovalDecision.allowOnce',
+      });
+      kernel.dispose();
+    });
+
+    test("the picked model's safeguards flag a message: the one answering "
+        'instead is shown until the picked one is switched back to', () async {
+      final cli = FakeCli();
+      final (:kernel, :transcript, events: _) = claude(
+        cli,
+        context: const KernelContext(cwd: '/p', settings: {'model': 'opus'}),
+      );
+      kernel.send(const KernelTurn(id: 'u1', text: 'go'));
+      await pumpEventQueue();
+      expect(kernel.model.selected, 'opus');
+      expect(kernel.fallbackModel, isNull);
+
+      // A subagent's alone leaves the session's model as it is.
+      cli.push({
+        'type': 'system',
+        'subtype': 'model_refusal_fallback',
+        'direction': 'retry',
+        'scope': 'local',
+        'original_model': 'claude-opus-5-5',
+        'fallback_model': 'claude-opus-4-8',
+        'uuid': 'f0',
+      });
+      await pumpEventQueue();
+      expect(kernel.fallbackModel, isNull);
+
+      cli.push({
+        'type': 'system',
+        'subtype': 'model_refusal_fallback',
+        'direction': 'retry',
+        'scope': 'session',
+        'original_model': 'claude-opus-5-5',
+        'fallback_model': 'claude-opus-4-8',
+        'content': 'Switched to Opus 4.8.',
+        'uuid': 'f1',
+      });
+      await pumpEventQueue();
+      expect(kernel.fallbackModel, 'Opus 4.8');
+      // Still the one picked, the one to go back to.
+      expect(kernel.model.selected, 'opus');
+      expect(
+        shown(transcript),
+        contains('notice warning: Switched to Opus 4.8.'),
+      );
+
+      // Picking it again switches back, though it is the one picked.
+      final asked = cli.requests('set_model').length;
+      kernel.model.select('opus');
+      await pumpEventQueue();
+      expect(cli.requests('set_model'), hasLength(asked + 1));
+      expect(cli.requests('set_model').last['model'], 'opus');
+      expect(kernel.fallbackModel, isNull);
+
+      // As endFallback does.
+      cli.push({
+        'type': 'system',
+        'subtype': 'model_refusal_fallback',
+        'scope': 'session',
+        'fallback_model': 'claude-opus-4-8',
+        'uuid': 'f2',
+      });
+      await pumpEventQueue();
+      expect(kernel.fallbackModel, 'Opus 4.8');
+      kernel.endFallback();
+      await pumpEventQueue();
+      expect(cli.requests('set_model'), hasLength(asked + 2));
+      expect(kernel.fallbackModel, isNull);
+      kernel.dispose();
+    });
+
+    test('Claude model ids as names', () {
+      expect(claudeModelName('claude-opus-4-8'), 'Opus 4.8');
+      expect(claudeModelName('claude-sonnet-4-5-20250929'), 'Sonnet 4.5');
+      expect(claudeModelName('claude-opus-5-5[1m]'), 'Opus 5.5');
+      expect(claudeModelName('claude-haiku-5'), 'Haiku 5');
+      expect(claudeModelName('gpt-5'), 'gpt-5');
     });
 
     test('a tool asks leave; always allowing sends its rules', () async {
@@ -3627,6 +3910,272 @@ void main() {
       expect(usage.used, 4000);
       expect(tokens('Messages'), 3000);
       kernel.dispose();
+    });
+
+    Future<void> checkContextSequence({
+      required int provisional,
+      required Map<String, Object?> finalUsage,
+      required int finalTotal,
+      required int resultTotal,
+      bool custom = false,
+      bool finalAfterStop = false,
+      bool nextRequest = false,
+    }) async {
+      Map<String, Object?> counted(int total) => {
+        'totalTokens': total,
+        'maxTokens': 200000,
+        'categories': [
+          {'name': 'Messages', 'tokens': total},
+          {'name': 'Free space', 'tokens': 200000 - total, 'kind': 'free'},
+        ],
+      };
+      final answers = {'get_context_usage': counted(1000)};
+      final cli = _DelayedContextCli(answers: answers);
+      final providers = custom
+          ? ModelProviders.memory(
+              providers: [
+                ModelProvider.fromJson({
+                  'id': 'od',
+                  'name': 'open-design',
+                  'protocol': 'anthropic',
+                  'baseUrl': 'https://example.com',
+                  'models': [
+                    {'id': 'kimi-k3.1-pro', 'label': 'Kimi'},
+                  ],
+                })!,
+              ],
+            )
+          : null;
+      final (:kernel, :transcript, events: _) = claude(
+        cli,
+        providers: providers,
+        context: custom
+            ? const KernelContext(
+                cwd: '/p',
+                settings: {'model': '@od/kimi-k3.1-pro'},
+              )
+            : const KernelContext(cwd: '/p'),
+      );
+      kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
+      await pumpEventQueue();
+      expect(transcript.usage!.used, 1000);
+
+      Future<void> push(Map<String, Object?> message) async {
+        cli.push(message);
+        await pumpEventQueue();
+      }
+
+      await push({
+        'type': 'stream_event',
+        'parent_tool_use_id': null,
+        'event': {
+          'type': 'message_start',
+          'message': {
+            'id': 'm1',
+            'model': 'claude-opus-5-5',
+            'usage': {'input_tokens': provisional, 'output_tokens': 0},
+          },
+        },
+      });
+      final provisionalUsage = {
+        'input_tokens': provisional,
+        'output_tokens': 0,
+      };
+      Map<String, Object?> reply(
+        Map<String, Object?> usage, {
+        String? stopReason,
+      }) => {
+        'type': 'assistant',
+        'parent_tool_use_id': null,
+        'message': {
+          'id': 'm1',
+          'model': 'claude-opus-5-5',
+          'role': 'assistant',
+          'content': const [],
+          'stop_reason': stopReason,
+          'usage': usage,
+        },
+      };
+      await push(reply(provisionalUsage));
+      expect(
+        transcript.usage!.used,
+        1000,
+        reason: 'a streamed provisional snapshot does not move the total',
+      );
+
+      await push({
+        'type': 'stream_event',
+        'parent_tool_use_id': null,
+        'event': {
+          'type': 'message_delta',
+          'delta': {'stop_reason': 'end_turn'},
+          'usage': finalAfterStop ? const {'output_tokens': 0} : finalUsage,
+        },
+      });
+      if (!finalAfterStop) {
+        expect(
+          transcript.usage!.used,
+          finalTotal,
+          reason: 'the final merged request replaces its provisional usage',
+        );
+      }
+      await push({
+        'type': 'stream_event',
+        'parent_tool_use_id': null,
+        'event': {'type': 'message_stop'},
+      });
+      await push(
+        finalAfterStop
+            ? reply(finalUsage, stopReason: 'end_turn')
+            : reply(provisionalUsage, stopReason: 'end_turn'),
+      );
+      expect(
+        transcript.usage!.used,
+        finalTotal,
+        reason: finalAfterStop
+            ? 'a late final assistant replaces its provisional usage'
+            : 'a late provisional snapshot cannot undo the final usage',
+      );
+      answers['get_context_usage'] = counted(resultTotal);
+      cli.delayed = true;
+      await push({'type': 'result', 'subtype': 'success'});
+      if (nextRequest) {
+        await push({
+          'type': 'stream_event',
+          'parent_tool_use_id': null,
+          'event': {
+            'type': 'message_start',
+            'message': {
+              'id': 'm2',
+              'model': 'claude-opus-5-5',
+              'usage': {'input_tokens': 7000, 'output_tokens': 0},
+            },
+          },
+        });
+        cli.answerContexts();
+        await pumpEventQueue();
+        expect(
+          transcript.usage!.used,
+          finalTotal,
+          reason: 'the previous result cannot clear the next request',
+        );
+        await push({
+          'type': 'stream_event',
+          'parent_tool_use_id': null,
+          'event': {
+            'type': 'message_delta',
+            'delta': {'stop_reason': 'end_turn'},
+            'usage': {
+              'input_tokens': 2000,
+              'cache_read_input_tokens': 10000,
+              'output_tokens': 100,
+            },
+          },
+        });
+        expect(transcript.usage!.used, 12100);
+      } else {
+        await push({
+          'type': 'user',
+          'parent_tool_use_id': null,
+          'message': {
+            'role': 'user',
+            'content': [
+              {'type': 'tool_result', 'tool_use_id': 'tool1', 'content': 'ok'},
+            ],
+          },
+        });
+        expect(
+          transcript.usage!.used,
+          finalTotal,
+          reason: 'a result waiting for fresh CLI usage keeps the final total',
+        );
+        cli.answerContexts();
+        await pumpEventQueue();
+        expect(
+          transcript.usage!.used,
+          custom ? finalTotal : resultTotal,
+          reason: custom
+              ? 'a proxy result keeps the model total, not the proxy estimate'
+              : 'the result lets the CLI recalibrate the completed request',
+        );
+      }
+      kernel.dispose();
+    }
+
+    test('final streamed usage corrects a provisional context below it, '
+        'then the result recalibrates it', () async {
+      await checkContextSequence(
+        provisional: 51981,
+        finalUsage: {
+          'input_tokens': 6359,
+          'cache_read_input_tokens': 148480,
+          'cache_creation_input_tokens': 0,
+          'output_tokens': 5613,
+        },
+        finalTotal: 160452,
+        resultTotal: 160000,
+      );
+    });
+
+    test('final streamed usage corrects a provisional context above it, '
+        'then the result recalibrates it', () async {
+      await checkContextSequence(
+        provisional: 200000,
+        finalUsage: {
+          'input_tokens': 1000,
+          'cache_read_input_tokens': 50000,
+          'cache_creation_input_tokens': 0,
+          'output_tokens': 100,
+        },
+        finalTotal: 51100,
+        resultTotal: 50000,
+      );
+    });
+
+    test('custom upstream final usage survives the result', () async {
+      await checkContextSequence(
+        custom: true,
+        provisional: 51981,
+        finalUsage: {
+          'input_tokens': 6359,
+          'cache_read_input_tokens': 148480,
+          'cache_creation_input_tokens': 0,
+          'output_tokens': 5613,
+        },
+        finalTotal: 160452,
+        resultTotal: 3400000,
+      );
+    });
+
+    test('a late final assistant after message_stop replaces provisional '
+        'usage', () async {
+      await checkContextSequence(
+        finalAfterStop: true,
+        provisional: 51981,
+        finalUsage: {
+          'input_tokens': 6359,
+          'cache_read_input_tokens': 148480,
+          'cache_creation_input_tokens': 0,
+          'output_tokens': 5613,
+        },
+        finalTotal: 160452,
+        resultTotal: 160000,
+      );
+    });
+
+    test('a delayed result does not clear the next request', () async {
+      await checkContextSequence(
+        nextRequest: true,
+        provisional: 51981,
+        finalUsage: {
+          'input_tokens': 6359,
+          'cache_read_input_tokens': 148480,
+          'cache_creation_input_tokens': 0,
+          'output_tokens': 5613,
+        },
+        finalTotal: 160452,
+        resultTotal: 160000,
+      );
     });
 
     group("the tools' results are counted here, an image as one", () {
@@ -5709,31 +6258,6 @@ void main() {
       });
     });
 
-    test(
-      'suggests the next prompt once a turn ends, until one is sent',
-      () async {
-        final cli = FakeCli();
-        final (:kernel, :transcript, events: _) = claude(cli);
-        kernel.send(const KernelTurn(id: 'u1', text: 'hi'));
-        await pumpEventQueue();
-        expect(cli.requests('initialize').single['promptSuggestions'], isTrue);
-        cli
-          ..push({'type': 'result', 'subtype': 'success', 'is_error': false})
-          ..push({'type': 'prompt_suggestion', 'suggestion': 'Run the tests'});
-        await pumpEventQueue();
-        expect(transcript.activeTurn, isNull);
-        expect(kernel.promptSuggestion, 'Run the tests');
-
-        kernel.send(const KernelTurn(id: 'u2', text: 'something else'));
-        expect(kernel.promptSuggestion, isNull);
-        // Late, for a turn now past: not offered.
-        cli.push({'type': 'prompt_suggestion', 'suggestion': 'Stale'});
-        await pumpEventQueue();
-        expect(kernel.promptSuggestion, isNull);
-        kernel.dispose();
-      },
-    );
-
     test('lists MCP servers; toggling and signing in go to the CLI', () async {
       final cli = FakeCli(
         answers: {
@@ -5941,6 +6465,38 @@ void main() {
     final theirs = arguments(userServers: true);
     expect(theirs[theirs.indexOf('--tools') + 1], 'Bash,Read');
     expect(theirs, isNot(contains('--strict-mcp-config')));
+  });
+
+  test('the system prompt in a file: not on the command line, whose length '
+      'Windows limits', () {
+    const own = ClaudeLaunch(
+      cwd: '/p',
+      instructions: 'a bot',
+      ownPrompt: true,
+      tools: ['Read'],
+      userServers: true,
+    );
+    final filed = own.withPromptFile('/t/prompt.md');
+    expect(
+      filed.arguments,
+      containsAllInOrder(['--system-prompt-file', '/t/prompt.md']),
+    );
+    expect(filed.arguments, isNot(contains('a bot')));
+    expect(filed.arguments, isNot(contains('--system-prompt')));
+    expect(filed.systemPrompt, 'a bot');
+    // Copied whole: its MCP servers kept.
+    expect(filed.arguments, isNot(contains('--strict-mcp-config')));
+    const appended = ClaudeLaunch(cwd: '/p', instructions: 'a workspace');
+    final arguments = appended.withPromptFile('/t/prompt.md').arguments;
+    expect(
+      arguments,
+      containsAllInOrder(['--append-system-prompt-file', '/t/prompt.md']),
+    );
+    expect(arguments, isNot(contains('--append-system-prompt')));
+    expect(
+      appended.systemPrompt,
+      '${ClaudeLaunch.appendedSystemPrompt}\n\na workspace',
+    );
   });
 
   group('commit attribution', () {

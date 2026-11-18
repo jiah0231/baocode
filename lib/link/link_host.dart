@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:async';
 
 import 'package:bao_link/bao_link.dart';
@@ -7,6 +8,8 @@ import '../bots/bots.dart';
 import '../customize/customization_store.dart';
 import '../workspace/workspace.dart';
 import 'link_platform.dart';
+import 'link_quota.dart';
+import 'phone_push.dart';
 import 'workspace_bridge.dart';
 
 /// The UDP port the desktop takes if it is free (another if not): the same
@@ -21,6 +24,7 @@ class PairedPhone {
     required this.system,
     required this.pairedAt,
     this.lastSeen,
+    this.push,
   });
 
   factory PairedPhone.fromJson(Map<String, Object?> json) => PairedPhone(
@@ -34,6 +38,10 @@ class PairedPhone {
       final int ms => DateTime.fromMillisecondsSinceEpoch(ms),
       _ => null,
     },
+    push: switch (json['push']) {
+      final Map<String, Object?> push => PhonePush.fromJson(push),
+      _ => null,
+    },
   );
 
   /// Its public key: what it is known by.
@@ -45,6 +53,9 @@ class PairedPhone {
   final DateTime pairedAt;
   final DateTime? lastSeen;
 
+  /// What it asked to be pushed while away; none, nothing is.
+  final PhonePush? push;
+
   String get id => deviceIdOf(key);
   String get fingerprint => fingerprintOf(key);
 
@@ -55,7 +66,18 @@ class PairedPhone {
         system: system ?? this.system,
         pairedAt: pairedAt,
         lastSeen: lastSeen ?? this.lastSeen,
+        push: push,
       );
+
+  /// With [push] in place of what it asked before.
+  PairedPhone withPush(PhonePush? push) => PairedPhone(
+    key: key,
+    name: name,
+    system: system,
+    pairedAt: pairedAt,
+    lastSeen: lastSeen,
+    push: push,
+  );
 
   Map<String, Object?> toJson() => {
     'key': encodeKey(key),
@@ -63,6 +85,7 @@ class PairedPhone {
     'system': system,
     'pairedAt': pairedAt.millisecondsSinceEpoch,
     'lastSeen': ?lastSeen?.millisecondsSinceEpoch,
+    'push': ?push?.toJson(),
   };
 }
 
@@ -195,6 +218,7 @@ class LinkHost extends ChangeNotifier {
     this.offerLifetime = const Duration(minutes: 10),
     this.customizations,
     this.bots,
+    this.quota,
     this.filesOf = hostFilesOf,
     this.reachHost = reachProjectHost,
     this.pathSettle = const Duration(seconds: 15),
@@ -207,6 +231,9 @@ class LinkHost extends ChangeNotifier {
 
   /// The user's bots, for the phones to chat with and edit.
   final Bots? bots;
+
+  /// The conversations' quota, for the phones to show.
+  final LinkQuota? quota;
 
   /// A project's files, for the phones to browse.
   final ProjectFiles Function(Project project) filesOf;
@@ -395,6 +422,7 @@ class LinkHost extends ChangeNotifier {
     if (save) await _save();
     notifyListeners();
     if (_enabled) await _start();
+    _syncPush();
   }
 
   Map<String, Object?> _toJson() => {
@@ -432,11 +460,92 @@ class LinkHost extends ChangeNotifier {
 
   // --- Settings ---------------------------------------------------------------
 
+  // --- Pushes -----------------------------------------------------------------
+
+  PushWatcher? _push;
+
+  /// Telling the phones that are away of what happens, while the link is
+  /// on and a phone asked to be.
+  void _syncPush() {
+    final wanted =
+        _loaded &&
+        _enabled &&
+        !_disposed &&
+        _phones.values.any((phone) => phone.push != null);
+    if (wanted && _push == null) {
+      _push = PushWatcher(
+        workspace: workspace,
+        bots: bots,
+        desktopId: () => id,
+        desktopName: () => _deviceInfo().name,
+        away: _awayPhones,
+        send: _sendPush,
+      )..start();
+    } else if (!wanted) {
+      _push?.dispose();
+      _push = null;
+    }
+  }
+
+  /// The phones to push to: those with a token, unless connected and in
+  /// front.
+  List<PhonePush> _awayPhones() => [
+    for (final phone in _phones.values)
+      if (phone.push case final push?
+          when !_connections.any(
+            (connection) =>
+                connection.phone?.id == phone.id && !connection.away,
+          ))
+        push,
+  ];
+
+  Future<bool> _sendPush(PhonePush push, PushMessage message) async {
+    final platform = this.platform;
+    if (platform == null) return true;
+    try {
+      final (status, _) = await platform.postJson(pushEndpoint, {
+        'token': push.token,
+        if (push.sandbox) 'sandbox': true,
+        'id': notificationIdOf(message.key),
+        'key': message.key,
+        'title': message.title,
+        'body': message.body,
+      });
+      if (status != 410) return true;
+      // The app gone from the phone, or another build in its place: asked
+      // again when it connects.
+      for (final phone in [..._phones.values]) {
+        if (phone.push?.token == push.token) {
+          _phones[phone.id] = phone.withPush(null);
+        }
+      }
+      unawaited(_save());
+      _syncPush();
+      return false;
+    } on Object catch (error) {
+      debugPrint('push not sent: $error');
+      return true;
+    }
+  }
+
+  /// [phone] asked to be pushed [params] ([LinkMethods.push]); none, no
+  /// more.
+  void _setPush(PairedPhone phone, Map<String, Object?> params) {
+    final push = PhonePush.fromJson(params);
+    final had = _phones[phone.id];
+    if (had == null) return;
+    if (jsonEncode(had.push?.toJson()) == jsonEncode(push?.toJson())) return;
+    _phones[phone.id] = had.withPush(push);
+    unawaited(_save());
+    _syncPush();
+  }
+
   Future<void> setEnabled(bool enabled) async {
     if (!_loaded || enabled == _enabled) return;
     _enabled = enabled;
     unawaited(_save());
     notifyListeners();
+    _syncPush();
     if (enabled) {
       await _start();
     } else {
@@ -679,6 +788,7 @@ class LinkHost extends ChangeNotifier {
       }
     }
     unawaited(_save());
+    _syncPush();
     notifyListeners();
   }
 
@@ -743,10 +853,19 @@ class LinkHost extends ChangeNotifier {
       if (method == LinkMethods.confirm && _phones.containsKey(connection.id)) {
         return {'device': _deviceInfo().toJson()};
       }
+      if (method == LinkMethods.push) {
+        if (connection.phone case final phone?) _setPush(phone, params);
+        return null;
+      }
+      if (method == LinkMethods.away) {
+        connection.away = params['away'] == true;
+        return null;
+      }
       if (method == LinkMethods.unpair) {
         if (connection.phone case final phone?) {
           _phones.remove(phone.id);
           unawaited(_save());
+          _syncPush();
           notifyListeners();
         }
         // After the answer has gone.
@@ -889,6 +1008,7 @@ class LinkHost extends ChangeNotifier {
         reachHost: reachHost,
         customizations: customizations,
         bots: bots,
+        quota: quota,
       )..start());
     notifyListeners();
   }
@@ -994,6 +1114,7 @@ class LinkHost extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _expiry?.cancel();
+    _syncPush();
     unawaited(_stop());
     _syncAdvert();
     super.dispose();
@@ -1012,6 +1133,9 @@ class _Connection {
   /// Once paired, or known.
   PairedPhone? phone;
   WorkspaceBridge? bridge;
+
+  /// Its app in the background ([LinkMethods.away]): pushed to.
+  bool away = false;
 
   /// The path to it now.
   LinkPath path = LinkPath.none;

@@ -33,7 +33,7 @@ class _Harness {
   }) : host = FakeWindowHost(tester.view, available: available),
        store = MemoryPreferenceStore(kept),
        workspace = Workspace.mock(),
-       directories = const {'/w/a', '/w/b', '/w/c'} {
+       directories = {'/w/a', '/w/b', '/w/c'} {
     windows = AppWindows(
       host: host,
       workspace: workspace,
@@ -211,6 +211,29 @@ void main() {
       expect(harness.host.created.first.title, 'Welcome — BaoCode');
     });
 
+    testWidgets('a workspace window is named by its workspace, not its folder '
+        'id', (tester) async {
+      final harness = _Harness(tester);
+      await harness.start();
+      final workspace = harness.workspace.createWorkspace('中台综合项目', [
+        '/w/a',
+        '/w/b',
+      ])!;
+      harness.directories.add(workspace.path);
+      final window = (await harness.windows.showFolder(workspace.path))!;
+      String menuTitle() => harness.host.menu
+          .firstWhere((entry) => entry.viewId == window.viewId)
+          .title;
+      expect(harness.host.created.last.title, '中台综合项目 — BaoCode');
+      expect(menuTitle(), '中台综合项目');
+
+      // Renamed, its window and its menu entry follow.
+      harness.workspace.updateWorkspace(workspace, name: '综合项目管理');
+      await tester.pump();
+      expect(harness.host.titles[window.viewId], '综合项目管理 — BaoCode');
+      expect(menuTitle(), '综合项目管理');
+    });
+
     testWidgets('window.newWindowDimensions: inherit, below and right of the '
         'one in front; maximized', (tester) async {
       final harness = _Harness(tester);
@@ -368,6 +391,41 @@ void main() {
       await code(harness, []);
       expect(harness.host.created, hasLength(2));
       expect(harness.order.first, '/w/a');
+    });
+
+    testWidgets('code in a remote host\'s terminal: its folders and files '
+        'there, told apart by the host', (tester) async {
+      final harness = await started(tester);
+      const types = {
+        '/srv/app': 'directory',
+        '/srv/app/x.vue': 'file',
+        '/srv/app/y.txt': 'file',
+      };
+      Future<String?> remote(List<String> args) =>
+          harness.windows.handleRemoteCode(
+            'dev@box',
+            '/srv',
+            args,
+            stat: (path) async => types[path],
+          );
+
+      expect(await remote(['app']), isNull);
+      await tester.pump();
+      expect(harness.folders, ['ssh://dev@box/srv/app']);
+
+      // `file:line:col` without -g, as launch-editor gives it.
+      expect(await remote(['app/x.vue:58:11', 'app/y.txt']), isNull);
+      await tester.pump();
+      expect(harness.delegateOf('ssh://dev@box/srv/app').opened, [
+        [
+          const CodeTarget('ssh://dev@box/srv/app/x.vue', line: 58, column: 11),
+          const CodeTarget('ssh://dev@box/srv/app/y.txt'),
+        ],
+      ]);
+
+      // Said back to the terminal, nothing opened.
+      expect(await remote(['--version']), contains('only opens'));
+      expect(harness.host.created, hasLength(1));
     });
 
     testWidgets('requests: the marker and arguments (Windows), the script\'s '

@@ -74,3 +74,9 @@ tool/office_preview/node_modules/
 /assets/office_preview/pdf.js
 /tool/office_preview/corresponding_source/dwf-viewer-0.6.7.tar.gz
 /tool/office_preview/corresponding_source/libredwg-web-0.7.9.tar.gz
+# Wrangler (the site's deploys): its cache names the Cloudflare account it
+# last ran as; local secrets for it go in .dev.vars or .env.
+.wrangler/
+.dev.vars*
+.env
+.env.*

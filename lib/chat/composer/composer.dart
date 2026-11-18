@@ -23,6 +23,7 @@ import '../stop_confirmation.dart';
 import '../floating/floating_layer.dart';
 import '../floating/floating_placement.dart';
 import '../floating/floating_registry.dart';
+import '../../diagnostics/input_lag.dart';
 import '../../workspace/window_controls.dart';
 import '../widgets/context_meter.dart';
 import '../widgets/hover_builder.dart';
@@ -43,8 +44,10 @@ import 'suggestion_menu.dart';
 import '../../ide/ide_hover.dart';
 import '../../ide/ide_spinning.dart';
 import '../../theme/codicons.dart';
-import '../../ide/file_service.dart' show IdeFileService;
+import '../../ide/file_service.dart'
+    show IdeFileService, TransferCancelledException;
 import '../../ide/ide_notifications.dart';
+import '../../ide/transfer_progress.dart';
 import 'remote_drops.dart';
 
 /// An open query: a /command's (a slash starting a word), or a mention's
@@ -156,6 +159,18 @@ class ChatComposerState extends State<ChatComposer>
   final FocusNode _focusNode = FocusNode(debugLabel: 'Composer');
   final ScrollController _scrollController = ScrollController();
   final GlobalKey<MarkdownEditorState> _editorKey = GlobalKey();
+
+  /// Keys and edits, timed to the frame that shows them: typing fast
+  /// stuck for seconds on an Intel Mac with no frame or hang written
+  /// (E0A7T8YQ).
+  late final InputLag _lag = InputLag(
+    'chat input',
+    describe: () => [
+      'text ${_controller.length} chars, '
+          '${_controller.lines.lineCount} lines',
+      if (_pool.isNotEmpty) '${_pool.length} images',
+    ].join('; '),
+  );
   final GlobalKey _boxKey = GlobalKey();
   final GlobalKey<ComposerPickerState> _modePickerKey = GlobalKey();
   final GlobalKey<ComposerPickerState> _modelPickerKey = GlobalKey();
@@ -495,8 +510,10 @@ class ChatComposerState extends State<ChatComposer>
 
   // --- Images --------------------------------------------------------------
 
-  /// At most this many per message.
-  static const _maxImages = 20;
+  /// At most this many per message: the API takes 100 a request on its
+  /// 200K-context models (600 on the others), each made small enough
+  /// ([prepareImage]) for its limit on requests of over 20.
+  static const _maxImages = 100;
 
   /// The numbers of the images the text refers to, in its order, with
   /// where each reference is.
@@ -606,46 +623,27 @@ class ChatComposerState extends State<ChatComposer>
   Future<List<ComposerFile>?> _copyToHost(List<ComposerFile> files) async {
     final notifications = IdeNotificationsScope.maybeOf(context);
     final l10n = context.l10n;
-    var done = 0;
-    var total = files.length;
-    IdeNotification? shown;
-    IdeNotificationProgress progress() =>
-        IdeNotificationProgress(done.toDouble(), total: total.toDouble());
-    final timer = notifications == null
-        ? null
-        : Timer(const Duration(milliseconds: 300), () {
-            shown = notifications.notify(
-              IdeSeverity.info,
-              l10n.explorerUploading(done, total),
-              progress: progress(),
-              sticky: true,
-            );
-          });
     try {
-      return await RemoteDrops.copy(
-        widget.hostFiles!,
-        files,
-        onProgress: (worked, of) {
-          done = worked;
-          total = of;
-          if (shown case final shown?) {
-            notifications!.update(
-              shown,
-              message: l10n.explorerUploading(done, total),
-              progress: progress(),
-            );
-          }
-        },
+      return await withTransferProgress(
+        context,
+        l10n.explorerUploading,
+        (transfer) => RemoteDrops.copy(
+          widget.hostFiles!,
+          files,
+          onProgress: transfer.onProgress,
+          onFile: transfer.onFile,
+          cancel: transfer.cancel,
+        ),
+        cancellable: true,
       );
+    } on TransferCancelledException {
+      return null;
     } on Object catch (error) {
       notifications?.notify(
         IdeSeverity.error,
         l10n.composerCopyToHostFailed('$error'),
       );
       return null;
-    } finally {
-      timer?.cancel();
-      if (shown case final shown?) notifications!.close(shown);
     }
   }
 
@@ -715,22 +713,11 @@ class ChatComposerState extends State<ChatComposer>
 
   bool get _canSend => _hasContent || _images.isNotEmpty;
 
-  // --- Suggested prompt ----------------------------------------------------
+  // --- Suggested reply -----------------------------------------------------
 
-  /// What the agent suggests sending next, shown as the placeholder of an
-  /// empty dock composer; Tab takes it.
+  /// The first of what the agent suggests sending next, shown over an empty
+  /// dock composer (see ReplySuggestionBar); Tab takes it.
   String? _suggestion;
-
-  /// The key that takes it, as the keybindings have it now: shown after
-  /// it; none when unbound.
-  String? _suggestionKey;
-
-  /// The context keys where the suggested prompt's key applies.
-  static const _suggestionKeyContext = {
-    ChatContextKeys.inChatInput: true,
-    ChatContextKeys.hasPromptSuggestion: true,
-    ChatContextKeys.inputHasText: false,
-  };
 
   void _acceptSuggestion() {
     final suggestion = MdAtoms.strip(_suggestion ?? '');
@@ -973,12 +960,14 @@ class ChatComposerState extends State<ChatComposer>
   int? _wordsVersion;
   bool _words = false;
 
-  void _handleEditorChanged() {
+  void _handleEditorChanged() => _lag.time('edit', _editorChanged);
+
+  void _editorChanged() {
     // The placeholder of a drag coming and going: not the user's edit.
     if (_ghosting) return;
     if (_padTrailingTokens()) return; // Re-entered with the fixed text.
     _images = _referredImages();
-    _saveDraft();
+    _lag.time('draft', _saveDraft);
     final text = _controller.text;
     // Edited, a message recalled from the history is the one typed.
     if (_historyAt != null && !_recalling && text != _historyShown) {
@@ -1203,6 +1192,7 @@ class ChatComposerState extends State<ChatComposer>
   // --- Keyboard ------------------------------------------------------------
 
   KeyEventResult _handleKey(KeyEvent event) {
+    if (event is! KeyUpEvent) _lag.begin('key');
     if (event is KeyUpEvent || _isComposing) return KeyEventResult.ignored;
     // Run by the window's keybindings (it sees keys first).
     if (ChatKeys.isHandled(event)) return KeyEventResult.handled;
@@ -1606,6 +1596,16 @@ class ChatComposerState extends State<ChatComposer>
       widget.session.isStreaming &&
       !(widget.session.canQueue && _canSend);
 
+  /// Emptied: what was in it sent from elsewhere (a suggested reply put
+  /// in at a click, sent at a second).
+  void clear() {
+    _pool = {};
+    _controller.clear();
+    _leaveHistory();
+    _saveDraft();
+    _dismissedTrigger = null;
+  }
+
   void _submit() {
     // Empty while a turn runs, messages queued behind it: the first of them
     // taken up now, as its Send Now.
@@ -1648,22 +1648,9 @@ class ChatComposerState extends State<ChatComposer>
   Widget build(BuildContext context) {
     _shownBuilt = _shownOfText();
     final focused = _focusNode.hasFocus;
-    final suggestion = widget.onSubmit == null
-        ? widget.session.promptSuggestion
+    _suggestion = widget.onSubmit == null
+        ? widget.session.replySuggestions.firstOrNull
         : null;
-    // Its key follows the keybindings (the window builds again when they
-    // change).
-    final suggestionKey = suggestion == null
-        ? null
-        : ChatKeys.keyLabel(
-            ChatCommandIds.acceptPromptSuggestion,
-            _suggestionKeyContext,
-          );
-    if (suggestion != _suggestion || suggestionKey != _suggestionKey) {
-      _suggestion = suggestion;
-      _suggestionKey = suggestionKey;
-      _editor = null; // The placeholder shows them.
-    }
     final colors = themeColors;
     if (!identical(colors, _editorColors)) {
       _editorColors = colors;
@@ -1771,6 +1758,7 @@ class ChatComposerState extends State<ChatComposer>
         session.permissions,
         model,
       ]) ...[choice?.options, choice?.selected],
+      session.fallbackModel,
       // What the model's label says of its settings (see
       // SessionModelPicker): their lists are made anew each time.
       if (model != null)
@@ -2020,13 +2008,7 @@ class ChatComposerState extends State<ChatComposer>
         scrollController: _scrollController,
         shrinkWrap: true,
         embeds: const ComposerChips(),
-        // A suggested prompt, then the key that takes it as the keybindings
-        // label it (`Tab`); alone when it has none. On one line.
-        placeholder: switch ((_suggestion, _suggestionKey)) {
-          (final suggestion?, final key?) => '$suggestion    $key',
-          (final suggestion?, null) => suggestion,
-          (null, _) => context.l10n.composerPlaceholder,
-        }.replaceAll(RegExp(r'[\x00-\x1f]+'), ' '),
+        placeholder: context.l10n.composerPlaceholder,
         onKey: _handleKey,
         onPaste: _paste,
         onPasteCopy: (markdown) =>

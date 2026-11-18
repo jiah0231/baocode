@@ -1414,9 +1414,33 @@ class _MdTableState extends State<MdTable> implements MdTableEditing {
     final look = style.tableStyle;
     final text = style.text;
     final line = BorderSide(color: look.border);
-    InlineSpan spanOf(String value, TextStyle textStyle) =>
+    final embeds =
+        _host?.widget.embeds ??
+        context.findAncestorWidgetOfExactType<MarkdownEditor>()?.embeds ??
+        const MarkdownEmbeds();
+    final embed = widget.embed;
+    // Its formulas and pictures as its editor's show them, not typed in
+    // as well (as wide as their markdown where [shown] is not).
+    InlineSpan spanOf(String value, TextStyle textStyle, {bool shown = true}) =>
         widget.cell?.call(value, textStyle) ??
-        buildInlineSpan(value, style: style, textStyle: textStyle);
+        buildInlineSpan(
+          value,
+          style: style,
+          textStyle: textStyle,
+          isAtomic: (run) => embeds.isAtomic(run, value),
+          atomic: !shown || embed == null
+              ? null
+              : (run, runStyle) => embeds.inline(
+                  context,
+                  MdEmbed(
+                    controller: embed.controller,
+                    lineId: embed.lineId,
+                    run: run,
+                    line: value,
+                    style: runStyle,
+                  ),
+                ),
+        );
     TextStyle styleOf(int row) => row == 0 ? text.merge(style.bold) : text;
 
     // Its edge drawn over the cells, its head's ground clipped to its
@@ -1440,20 +1464,38 @@ class _MdTableState extends State<MdTable> implements MdTableEditing {
 
     // Its scrollbar, over its bottom edge, while the mouse is over it.
     Widget scrolled(EdgeInsets padding, Widget child) {
-      final embeds =
-          _host?.widget.embeds ??
-          context.findAncestorWidgetOfExactType<MarkdownEditor>()?.embeds ??
-          const MarkdownEmbeds();
-      return embeds.tableScrollbar(
-        context,
-        _sideways,
-        hovered: _hovered || _drag != null,
-        padding: padding,
-        style: style,
-        child: SingleChildScrollView(
-          controller: _sideways,
-          scrollDirection: Axis.horizontal,
-          child: child,
+      var hitContent = false;
+      return Listener(
+        onPointerDown: (event) {
+          // The scrollbar's painter hits its track without hitting its child.
+          // Leave only those presses to it, not the host's text selection.
+          if (!hitContent) _host?.claimPointer(event.pointer);
+          hitContent = false;
+        },
+        child: MouseRegion(
+          cursor: SystemMouseCursors.basic,
+          child: embeds.tableScrollbar(
+            context,
+            _sideways,
+            hovered: _hovered || _drag != null,
+            padding: padding,
+            style: style,
+            child: Listener(
+              onPointerDown: (_) => hitContent = true,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.text,
+                child: ScrollConfiguration(
+                  behavior: ScrollConfiguration.of(context)
+                      .copyWith(scrollbars: false),
+                  child: SingleChildScrollView(
+                    controller: _sideways,
+                    scrollDirection: Axis.horizontal,
+                    child: child,
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
       );
     }
@@ -1498,6 +1540,7 @@ class _MdTableState extends State<MdTable> implements MdTableEditing {
             text: spanOf(
               valueOf(r, c),
               styleOf(r),
+              shown: false,
             ).toPlainText(includeSemanticsLabels: false),
             style: styleOf(r),
           ),

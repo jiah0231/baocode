@@ -23,11 +23,16 @@ abstract final class LinkMethods {
   /// `{}`: the [LinkState] now; [LinkEvents.state] follows each change.
   static const state = 'state';
 
-  /// `{"session", "window"?}`: follows the session, [LinkEvents.session]
-  /// bringing all of it at once, then what changes. With `window` (an
-  /// int N), only the last N items at first, and more as it asks
-  /// ([earlier]); `start` and `count` of every update are then counted
-  /// from the first item the phone has, not the session's first.
+  /// `{"session", "window"?, "have"?}`: follows the session,
+  /// [LinkEvents.session] bringing all of it at once, then what changes.
+  /// With `window` (an int N), only the last N items at first, and more as
+  /// it asks ([earlier]); `start` and `count` of every update are then
+  /// counted from the first item the phone has, not the session's first.
+  /// With `have` (the [linkDigest]s of the items the phone still has of
+  /// it, from a connection before), its first update starts where the
+  /// phone's first item is, and leaves out those it has as they are: its
+  /// `start` is how many. [LinkPeer] sends it, and makes the update whole
+  /// again, by itself ([LinkSessionMirror]).
   static const open = 'open';
 
   /// `{"session", "count"?}` -> `{"items": [...], "earlier"}`: up to
@@ -87,6 +92,11 @@ abstract final class LinkMethods {
   /// `{"session", "kind", "option"}`: picks a model, a mode, a permission
   /// mode, an effort or a context size (see [LinkChoice]).
   static const choose = 'choose';
+
+  /// `{"session"}`: the quota of the session's model's accounts asked
+  /// again ([LinkSessionUpdate.quota]); answered once it came, the update
+  /// following.
+  static const quota = 'quota';
 
   /// `{"session", "title"}`.
   static const rename = 'rename';
@@ -177,6 +187,14 @@ abstract final class LinkMethods {
   /// [LinkLimits.download].
   static const download = 'download';
 
+  /// `{"project"?, "bot"?, "name", "data"}` (base64): a file of the
+  /// phone's (one the user picked there, one another app shared) put where
+  /// the project's agent, or the bot's, reads it without asking: on its
+  /// host, apart from the project. Answered with `{"path"}`, full, for a
+  /// message to name (`@path`, in its mentions); with `{"tooLarge": true}`
+  /// past [LinkLimits.upload].
+  static const upload = 'upload';
+
   /// `{"bot"?, "name", "avatar"?, "avatarImage"?, "identity", "abilities",
   /// "proactive", "chatOnly"?, "writesFirst"?}` (as [LinkBot]'s JSON;
   /// `chatOnly`, `writesFirst` not said, as they were): the bot changed, or a new one (no
@@ -218,19 +236,28 @@ abstract final class LinkMethods {
   /// none). Sent when it changes, and on connecting.
   static const setMe = 'setMe';
 
-  /// `{}`: the model the bots' world runs on (who of them wakes when, how
-  /// each is), and those it may: `{"model"?, "options": [LinkOption]}`,
-  /// no `model` while it is off (the desktop's own rules). `unknown` from
-  /// a desktop before it.
-  static const worldModel = 'worldModel';
+  /// `{"token"?, "sandbox"?, "needsInput"?, "done"?, "bots"?, "notices"?}`:
+  /// what the desktop pushes the phone (through APNs) while it is [away]:
+  /// its token (hex; none stops them), `sandbox` for a development build,
+  /// and in its own words what it says of an agent asking (`needsInput`)
+  /// or done (`done`), `{device}` the desktop's name in them; `bots` to be
+  /// told of what bots write, and of their `notices` (by kind, `{title}`
+  /// the agent's). A kind with no words is not pushed. Sent on connecting,
+  /// and when it changes; kept by the desktop. `unknown` from one before.
+  static const push = 'push';
 
-  /// `{"model"?}`: the world's model, one of [worldModel]'s options; none
-  /// turns it off.
-  static const setWorldModel = 'setWorldModel';
+  /// `{"away": bool}`: the phone's app in the background (or in front
+  /// again): the desktop pushes it ([push]) what it would have told of
+  /// itself. A phone not connected is away too.
+  static const away = 'away';
 
-  /// `{"group"?, "name", "members"}`: the group chat changed, or a new
-  /// one (no `group`), of the bots [members] names (their ids) and the
-  /// user: `{"group": LinkGroup}`. `unknown` from a desktop before groups.
+  /// `{"group"?, "name", "members", "passes"?, "rules"?, "gap"?}`: the
+  /// group chat changed, or a new one (no `group`), of the bots [members]
+  /// names (their ids) and the user; `passes`, how many times its
+  /// conversation may be passed on ([LinkGroup.passes]), `rules` its
+  /// rules, `gap` the seconds between its bots' answers ([LinkGroup.gap])
+  /// (each none, as it was): `{"group": LinkGroup}`.
+  /// `unknown` from a desktop before groups.
   static const saveGroup = 'saveGroup';
 
   /// `{"group"}`: the group deleted, its messages with it.
@@ -249,17 +276,19 @@ abstract final class LinkMethods {
   /// `{"group"}`: its messages no longer sent as they come.
   static const closeGroup = 'closeGroup';
 
-  /// `{"group", "text", "images"?, "id"?}` (`images` as [send]'s): the
-  /// user's message to the group: `{"seq"}`. Sent again with the same
-  /// `id`, taken once.
+  /// `{"group", "text", "images"?, "id"?, "ref"?}` (`images` as [send]'s;
+  /// `ref`, the number of the message it quotes): the user's message to
+  /// the group: `{"seq"}`. Sent again with the same `id`, taken once.
   static const sendGroup = 'sendGroup';
 
   /// `{"group", "image"}`: a picture of one of its messages
   /// ([LinkGroupMessage.images]): `{"type", "data"}`.
   static const groupImage = 'groupImage';
 
-  /// Those whose answers can be large: each goes on a stream of its own
-  /// (see [LinkPeer]), holding up nothing else.
+  /// Those whose answers, or requests, can be large: each goes on a stream
+  /// of its own (see [LinkPeer]), holding up nothing else. A picture sent
+  /// (the user's, a bot's) is up to a megabyte: on the control stream, an
+  /// agent opened after it waited seconds over a relay.
   static const bulk = {
     read,
     image,
@@ -269,6 +298,8 @@ abstract final class LinkMethods {
     botAvatar,
     extensions,
     groupImage,
+    setMe,
+    saveBot,
   };
 }
 
@@ -292,6 +323,10 @@ abstract final class LinkLimits {
   /// A file's bytes, opened in another app: base64, under the relay's
   /// burst (16 MiB).
   static const download = 8 * 1024 * 1024;
+
+  /// A file's bytes, from the phone ([LinkMethods.upload]): as
+  /// [download].
+  static const upload = 8 * 1024 * 1024;
 }
 
 /// A task an agent left running beside the conversation: a command, a
@@ -814,6 +849,7 @@ class LinkSessionUpdate {
     this.earlier,
     this.goal,
     this.context,
+    this.quota,
   });
 
   factory LinkSessionUpdate.fromJson(Map<String, Object?> json) =>
@@ -845,6 +881,10 @@ class LinkSessionUpdate {
           _ => null,
         },
         context: switch (json['context']) {
+          final Map<String, Object?> map => map,
+          _ => null,
+        },
+        quota: switch (json['quota']) {
           final Map<String, Object?> map => map,
           _ => null,
         },
@@ -890,6 +930,14 @@ class LinkSessionUpdate {
   /// compacted, in tokens.
   final Map<String, Object?>? context;
 
+  /// How much quota is left, on a model of ChatGPT accounts: `{"provider",
+  /// "back"?, "accounts": [{"name", "plan"?, "current"?, "off"?, "until"?,
+  /// "error"?, "at"?, "windows": [{"minutes"?, "left", "resets"?}]}]}`.
+  /// `back` is when the first of them can be used again, when none can
+  /// now; an account's `until`, when it can; `at`, when its quota was
+  /// learned; `left`, a percentage. Times in milliseconds since the epoch.
+  final Map<String, Object?>? quota;
+
   Map<String, Object?> toJson() => {
     'session': session,
     'start': start,
@@ -903,6 +951,7 @@ class LinkSessionUpdate {
     'earlier': ?earlier,
     'goal': ?goal,
     'context': ?context,
+    'quota': ?quota,
   };
 }
 

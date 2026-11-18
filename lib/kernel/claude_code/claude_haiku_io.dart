@@ -7,6 +7,7 @@ import 'package:bao_agent/bao_agent.dart';
 import '../../chat/chat_models.dart' show ImageAttachment;
 import '../../models/launch_environment.dart';
 import '../../network/network_proxy_io.dart';
+import '../../network/tls.dart';
 import '../../usage/usage_ledger.dart';
 import 'claude_core_setting.dart';
 import 'claude_environment.dart';
@@ -165,6 +166,8 @@ Future<(String, int)> _run(
     if (settingsFile != null) await ClaudeSettingsFile.delete(settingsFile);
     throw const ClaudeHaikuCancelled();
   }
+  // The machine's own certificates, as the app's requests trust them.
+  final certificates = await nodeCertificatesEnvironment(cli.environment);
   final Process process;
   try {
     process = await Process.start(
@@ -186,8 +189,10 @@ Future<(String, int)> _run(
       environment: {
         ...cli.environment,
         ...proxy,
+        ...certificates,
         if (env != null)
           for (final name in ClaudeModelVariables.inherited) name: '',
+        ...ClaudeEntrypoint.of(env, cli.environment),
         ...ClaudeEnvironment.stateDirectory(cli.environment),
       },
       includeParentEnvironment: Platform.isWindows,

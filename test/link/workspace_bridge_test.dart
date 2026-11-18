@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:bao_link/bao_link.dart';
 import 'package:bao_remote/claude.dart' show ClaudeHistoryPage;
 import 'package:baocode/chat/chat_session.dart' show ComposerMessage, UserPlace;
 import 'package:baocode/chat/chat_models.dart';
+import 'package:baocode/chat/reply_suggestions.dart';
 import 'package:baocode/bots/bot_folders.dart';
 import 'package:baocode/bots/bot_groups.dart';
 import 'package:baocode/bots/bots.dart';
@@ -13,6 +15,9 @@ import 'package:baocode/kernel/claude_code/claude_code_transport.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/claude_code/claude_code_kernel.dart';
 import 'package:baocode/link/chat_codec.dart';
+import 'package:baocode/models/codex/codex_service.dart';
+import 'package:baocode/models/model_providers.dart';
+import 'package:baocode/link/link_quota.dart';
 import 'package:baocode/link/workspace_bridge.dart';
 import 'package:baocode/workspace/workspace.dart';
 import 'package:flutter/material.dart';
@@ -103,6 +108,10 @@ void main() {
       workspace: workspace,
       peer: desktop,
       device: () => const DeviceInfo(name: 'Mac', kind: 'mac', system: 'macOS'),
+      quota: LinkQuota(
+        providers: ModelProviders.memory(),
+        codex: CodexUnavailable(),
+      ),
       throttle: const Duration(milliseconds: 10),
     )..start();
     final sub = phone.events
@@ -182,6 +191,41 @@ void main() {
       expect(texts(opened.items), ['u5', '-', 'u6', '-']);
       expect(opened.earlier, isTrue);
     });
+
+    test(
+      'opened again with what the phone has: only what is new comes',
+      () async {
+        final first = await open(4);
+        final have = [for (final item in first.items) linkDigest(item)];
+        final session = workspace.threads.first.session;
+        session.send(const ComposerMessage(text: 'more'));
+        await settle();
+        final again = LinkSessionUpdate.fromJson(
+          (await bridge.handle(LinkMethods.open, {
+                'session': id,
+                'window': 4,
+                'have': have,
+              }))!
+              as Map<String, Object?>,
+        );
+        // From where the phone's first item is: its four left out.
+        expect(again.start, 4);
+        expect(again.count, greaterThan(4));
+        expect(texts(again.items).first, 'more');
+        expect(again.earlier, isTrue);
+        // What the desktop does not have (another conversation's): all of it.
+        final other = LinkSessionUpdate.fromJson(
+          (await bridge.handle(LinkMethods.open, {
+                'session': id,
+                'window': 4,
+                'have': [linkDigest('elsewhere')],
+              }))!
+              as Map<String, Object?>,
+        );
+        expect(other.start, 0);
+        expect(other.count, 4);
+      },
+    );
 
     test('a window beyond the items has all, and no earlier', () async {
       final opened = await open(100);
@@ -312,7 +356,9 @@ void main() {
     final content = (cli.users.last['message']! as Map)['content']! as List;
     expect(
       [for (final block in content) (block as Map)['text']],
-      [UserPlace.phone.note, 'go'],
+      // The user's, as one written at the computer is: suggestions asked
+      // for too.
+      [UserPlace.phone.note, ReplySuggestions.on, 'go'],
     );
   });
 
@@ -813,6 +859,85 @@ void main() {
         ),
       ),
     );
+  });
+
+  test('a file from the phone: kept for the agent, by its name', () async {
+    final workspace = Workspace();
+    addTearDown(workspace.dispose);
+    final bots = Bots(workspace: workspace, folders: MemoryBotFolders());
+    await bots.start();
+    addTearDown(bots.dispose);
+    final (_, desktop) = await peers();
+    final uploads = Directory.systemTemp.createTempSync('phone_uploads');
+    addTearDown(() => uploads.deleteSync(recursive: true));
+    final withBots = WorkspaceBridge(
+      workspace: workspace,
+      peer: desktop,
+      device: () => const DeviceInfo(name: 'PC', kind: 'pc', system: 'Win'),
+      bots: bots,
+      uploadsOf: (_, _) => '${uploads.path}/phone',
+    );
+    addTearDown(withBots.dispose);
+    final bytes = [80, 75, 3, 4, 0, 1, 2];
+    Future<Map> upload(String name) async => await withBots.handle(
+      LinkMethods.upload,
+      {'bot': 'assistant', 'name': name, 'data': base64.encode(bytes)},
+    ) as Map;
+    final first = (await upload('报价单.xlsx'))['path'] as String;
+    expect(first, startsWith('${uploads.path}/phone/'));
+    expect(first, endsWith('/报价单.xlsx'));
+    expect(File(first).readAsBytesSync(), bytes);
+    // The same name again: a folder of its own, the first one kept.
+    final second = (await upload('报价单.xlsx'))['path'] as String;
+    expect(second, isNot(first));
+    expect(File(first).existsSync(), isTrue);
+    expect(
+      await withBots.handle(LinkMethods.upload, {
+        'bot': 'assistant',
+        'name': 'big.bin',
+        'data': base64.encode(Uint8List(LinkLimits.upload + 1)),
+      }),
+      containsPair('tooLarge', true),
+    );
+  });
+
+  test('a file from the phone keeps its name, not its folders', () {
+    expect(WorkspaceBridge.uploadName('../../etc/passwd'), 'passwd');
+    expect(WorkspaceBridge.uploadName(r'C:\x\a:b?.txt'), 'a_b_.txt');
+    expect(WorkspaceBridge.uploadName('..'), 'file');
+    expect(WorkspaceBridge.uploadName(null), 'file');
+    expect(WorkspaceBridge.uploadName('合同 v2.docx'), '合同 v2.docx');
+  });
+
+  test('the plan\'s limits, as the phone reads them', () async {
+    ClaudeCodeKernel.forgetAccount();
+    addTearDown(ClaudeCodeKernel.forgetAccount);
+    final opened = await open();
+    expect(opened.quota, isNull);
+    workspace.threads.first.session.send(const ComposerMessage(text: 'hi'));
+    await settle();
+    cli.push({
+      'type': 'rate_limit_event',
+      'rate_limit_info': {
+        'status': 'allowed',
+        'unifiedWindows': {
+          'five_hour': {'utilization': 0.4, 'resetsAt': 4102444800},
+          'seven_day': {'utilization': 1.0, 'resetsAt': 4102531200},
+          'seven_day_opus': {'utilization': 0.25, 'resetsAt': 4102531200},
+        },
+      },
+    });
+    await settle();
+    final quota = updates.last.quota!;
+    expect(quota['provider'], isA<String>());
+    expect(quota['back'], 4102531200000);
+    expect((quota['accounts']! as List).single, {
+      'windows': [
+        {'minutes': 300, 'left': 60, 'resets': 4102444800000},
+        {'minutes': 10080, 'left': 0, 'resets': 4102531200000},
+        {'minutes': 10080, 'name': 'Opus', 'left': 75, 'resets': 4102531200000},
+      ],
+    });
   });
 }
 

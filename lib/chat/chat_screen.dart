@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:bao_editor/textmate/textmate_syntax.dart' show TextMateSyntax;
+import 'package:flutter/gestures.dart' show kDoubleTapTimeout;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -14,6 +15,8 @@ import '../kernel/kernel_types.dart';
 import '../keybindings/chat_keybindings.dart';
 import '../l10n/l10n.dart';
 import '../models/model_welcome.dart';
+import '../bash_exe/bao_bash.dart';
+import '../bash_exe/bao_bash_view.dart' show BaoBashHint;
 import '../remote/remote_location.dart';
 import '../remote/remote_status.dart' show ClaudeInstallBanner, SshHostBanner;
 import '../stash/stash_actions.dart';
@@ -32,6 +35,7 @@ import 'chat_history_view.dart';
 import 'chat_keys.dart';
 import 'chat_models.dart';
 import 'chat_session.dart';
+import 'session_links.dart';
 import 'open_editor.dart';
 import 'resume_after_reset.dart';
 import 'chat_width.dart';
@@ -47,6 +51,7 @@ import 'panels/limit_reset_panel.dart';
 import 'panels/context_usage_panel.dart';
 import 'panels/goal_panel.dart';
 import 'panels/queue_panel.dart';
+import 'panels/reply_suggestion_bar.dart';
 import 'panels/reset_credits_hint.dart';
 import 'side_panel/file_link.dart';
 import 'side_panel/file_open.dart';
@@ -323,6 +328,11 @@ class _ChatScreenState extends State<ChatScreen>
 
   late final ChatSession _session = widget.session ?? ChatSession();
   final GlobalKey<ChatComposerState> _composerKey = GlobalKey();
+
+  /// The suggested reply just put in the composer: its bar stays a double
+  /// click's time more, for a second click to send it.
+  String? _pickedReply;
+  Timer? _pickedReplyFor;
   final GlobalKey _historyKey = GlobalKey();
   bool _contextPanelOpen = false;
   bool _renaming = false;
@@ -510,6 +520,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   @override
   void dispose() {
+    _pickedReplyFor?.cancel();
     _backMinimapRoom.dispose();
     _session.removeListener(_checkStarting);
     _session.removeListener(_followPlan);
@@ -517,6 +528,7 @@ class _ChatScreenState extends State<ChatScreen>
     ChatWidth.current.removeListener(_widthChanged);
     ChatMinimap.enabled.removeListener(_widthChanged);
     _existence?.dispose();
+    _folderExistence?.dispose();
     _keyScope.dispose();
     for (final layer in _layers) {
       layer.dispose();
@@ -528,7 +540,7 @@ class _ChatScreenState extends State<ChatScreen>
 
   void _toggleContextPanel() {
     setState(() => _contextPanelOpen = !_contextPanelOpen);
-    if (_contextPanelOpen) _session.refreshUsage();
+    if (_contextPanelOpen) unawaited(_session.refreshUsage());
   }
 
   void _answer(InteractionAnswer answer) {
@@ -798,10 +810,60 @@ class _ChatScreenState extends State<ChatScreen>
     );
   }
 
-  Widget? _buildActivityStrip() {
+  /// What the agent suggests the user send next, while nothing is typed:
+  /// one picked is put in the composer, to be edited and sent.
+  Widget? _buildReplySuggestions() {
+    final suggestions = _session.replySuggestions;
+    if (suggestions.isEmpty) return null;
+    final draft = _session.draft;
+    final picked = _pickedReply != null && draft.content == _pickedReply;
+    if (!picked &&
+        ((draft.content?.trim().isNotEmpty ?? false) ||
+            draft.images.isNotEmpty)) {
+      return null;
+    }
+    return ReplySuggestionBar(
+      suggestions: suggestions,
+      playKey:
+          '${identityHashCode(_session)}\u0000${suggestions.join('\u0000')}',
+      onPick: (said) {
+        draft.restore(said, const []);
+        _pickedReplyFor?.cancel();
+        setState(() => _pickedReply = said);
+        _pickedReplyFor = Timer(kDoubleTapTimeout, () {
+          if (mounted) setState(() => _pickedReply = null);
+        });
+      },
+      onSend: (said) {
+        _pickedReplyFor?.cancel();
+        // Put in at the first click: sent now, not left there too.
+        if (_pickedReply == said) _composerKey.currentState?.clear();
+        _pickedReply = null;
+        _session.send(
+          ComposerMessage(text: said),
+          editor: widget.openEditor,
+          from: UserPlace.computer,
+        );
+      },
+    );
+  }
+
+  /// The strip over the composer, with the conversations this one handed
+  /// work to as they stand (see [SessionLinks]).
+  Widget _activityStrip() {
+    final handed = SessionLinks.of(context)?.handedFrom(_session);
+    if (handed == null) return _PanelSlot(child: _buildActivityStrip());
+    return ValueListenableBuilder(
+      valueListenable: handed,
+      builder: (context, handed, _) =>
+          _PanelSlot(child: _buildActivityStrip(handed)),
+    );
+  }
+
+  Widget? _buildActivityStrip([List<HandedConversation> handed = const []]) {
     final tasks = _session.tasks ?? const [];
     final changes = _session.fileChanges;
-    if (!ActivityStrip.hasContent(tasks, changes)) return null;
+    if (!ActivityStrip.hasContent(tasks, changes, handed: handed)) return null;
     final links = widget.fileLinks;
     final open = links == null
         ? widget.onOpenChange
@@ -816,6 +878,11 @@ class _ChatScreenState extends State<ChatScreen>
     return ActivityStrip(
       tasks: tasks,
       changes: changes,
+      handed: handed,
+      onOpenHanded: switch (SessionLinks.of(context)) {
+        final links? => (conversation) => links.open(conversation.id),
+        null => null,
+      },
       root: _session.root ?? '.',
       paths: _session.paths,
       onKeep: _session.keepAllChanges,
@@ -971,6 +1038,15 @@ class _ChatScreenState extends State<ChatScreen>
     (path) => widget.fileLinks?.exists?.call(path) ?? Future.value(false),
   );
 
+  /// And which folders, those of its links too.
+  FileExistence? _folderExistence;
+  FileExistence? get _folders => widget.fileLinks?.folderExists == null
+      ? null
+      : _folderExistence ??= FileExistence(
+          (path) =>
+              widget.fileLinks?.folderExists?.call(path) ?? Future.value(false),
+        );
+
   /// Opens [request] where [ChatScreen.fileLinks] says: a file's changes
   /// with what the session knows of them.
   void _openFile(FileOpenRequest request) {
@@ -1113,6 +1189,7 @@ class _ChatScreenState extends State<ChatScreen>
             paths: links.paths,
             onOpen: _openFile,
             existence: _files,
+            folders: _folders,
             readBytes: links.readBytes,
             sizeOf: links.sizeOf,
             inPanel: links.inPanel,
@@ -1427,6 +1504,13 @@ class _ChatScreenState extends State<ChatScreen>
               // Claude Code being downloaded for this machine, or put on
               // a remote project's host.
               ClaudeInstallBanner(location: _session.kernelContext.cwd),
+              // Windows: BaoCode Bash recommended to whoever runs commands
+              // in neither it nor Git Bash, for a project on this machine.
+              if (BaoBash.current case final bash?
+                  when !RemoteLocation.isRemote(
+                    _session.kernelContext.cwd ?? '',
+                  ))
+                BaoBashHint(bash: bash),
               // Reset credits of the model's ChatGPT accounts about to
               // expire: a plan to use them.
               ResetCreditsHint(model: _session.models?.selected.id),
@@ -1540,7 +1624,13 @@ class _ChatScreenState extends State<ChatScreen>
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Before all: the agent stopped, till the usage limit resets.
+        // On top of all: what the agent suggests to put in the composer,
+        // coming and going softly.
+        ListenableBuilder(
+          listenable: _session.draft,
+          builder: (context, _) => _SoftSlot(child: _buildReplySuggestions()),
+        ),
+        // Then: the agent stopped, till the usage limit resets.
         ListenableBuilder(
           listenable: ResumeAfterReset.current,
           builder: (context, _) => _PanelSlot(child: _buildLimitPanel()),
@@ -1585,7 +1675,7 @@ class _ChatScreenState extends State<ChatScreen>
             _ => null,
           },
         ),
-        _PanelSlot(child: _buildActivityStrip()),
+        _activityStrip(),
         ChatComposer(
           key: _composerKey,
           session: _session,
@@ -1953,7 +2043,7 @@ class _HistoryLoadingState extends State<_HistoryLoading> {
 /// disappears at once (no size or fade transition): the history above
 /// yields the height.
 class _PanelSlot extends StatelessWidget {
-  const _PanelSlot({required this.child});
+  const _PanelSlot({super.key, required this.child});
 
   final Widget? child;
 
@@ -1966,6 +2056,54 @@ class _PanelSlot extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: gap),
       child: panel,
+    );
+  }
+}
+
+/// A [_PanelSlot] that, unlike the others, comes and goes softly: fading in
+/// as its room opens, out as it closes, the history above giving way as
+/// briefly. For the reply suggestions, which come at each turn's end and go
+/// at the first key.
+class _SoftSlot extends StatelessWidget {
+  const _SoftSlot({required this.child});
+
+  final Widget? child;
+
+  static const _duration = Duration(milliseconds: 150);
+
+  /// Its room opening: as a bot's message's on the phone (its Reveal), the
+  /// suggestions coming into it one by one.
+  static const _opening = Duration(milliseconds: 340);
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSize(
+      duration: _opening,
+      reverseDuration: _duration,
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.bottomCenter,
+      child: AnimatedSwitcher(
+        duration: _duration,
+        switchInCurve: Curves.easeOut,
+        switchOutCurve: Curves.easeOut,
+        // What goes takes no room, nor clicks: the room closes as it
+        // fades, from the top down, it on the composer till gone.
+        layoutBuilder: (current, gone) => Stack(
+          fit: StackFit.passthrough,
+          clipBehavior: Clip.none,
+          children: [
+            for (final panel in gone)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: IgnorePointer(child: panel),
+              ),
+            ?current,
+          ],
+        ),
+        child: _PanelSlot(key: ValueKey(child != null), child: child),
+      ),
     );
   }
 }

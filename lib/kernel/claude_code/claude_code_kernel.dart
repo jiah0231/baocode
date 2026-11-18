@@ -26,7 +26,6 @@ import '../commit_attribution.dart';
 import '../extension_switches.dart';
 import '../kernel_event.dart';
 import '../kernel_types.dart';
-import '../prompt_suggestions.dart';
 import '../transcript.dart';
 import '../queued_messages.dart';
 import 'claude_code_transport.dart';
@@ -115,9 +114,9 @@ class ClaudeCodeKernel
         ForksConversation,
         RenamesSession,
         AcceptsImages,
-        SuggestsPrompts,
         ManagesMcpServers,
         ConfirmsModelSwitch,
+        ReportsModelFallback,
         WatchesEdits,
         LoadsHistory {
   ClaudeCodeKernel(
@@ -179,6 +178,14 @@ class ClaudeCodeKernel
     }
     if (_model case final model? when !_pickedFast.containsKey(model)) {
       _pickedFast[model] = settings[KernelChoiceKind.fast.name] == 'fast';
+    }
+    // A provider's model goes by what was picked for it, else its own
+    // (#914): a session resumed on one, on the context it had; a new one
+    // not on the context another model was last on.
+    if ((_context.resume, _model, _window)
+        case (_?, final model?, final window?)
+        when _providers.resolve(model) != null) {
+      _pickedWindows[model] = window;
     }
     Future<ClaudeHistoryPage> wholePage(
       SessionRecord session, {
@@ -385,6 +392,11 @@ class ClaudeCodeKernel
   String _launchedProvider = '';
   String? _reportedModel;
 
+  /// The model the CLI answers on in the picked one's place (its id, e.g.
+  /// `claude-opus-4-8`), since the picked one's safeguards flagged a
+  /// message: until a model is picked again.
+  String? _fallback;
+
   /// Whether the CLI sends a queued message now on its own (an interrupt
   /// with `send_now`), sparing the tasks in the background, as its init
   /// says (`interrupt_send_now_v1`).
@@ -434,11 +446,6 @@ class ClaudeCodeKernel
   /// at start, so another is taken up by a restart (see [_applyWindow]).
   int? _launchedWindow;
 
-  /// Whether the process was started to suggest the next prompt
-  /// ([PromptSuggestions]): taken only at start, so a change is taken up by
-  /// a restart (see [_applyWindow]).
-  bool _launchedSuggestions = true;
-
   /// What the process was started with, its flag settings' permission
   /// rules sent again with the [ExtensionSwitches] as they change.
   ClaudeLaunch? _launched;
@@ -463,7 +470,7 @@ class ClaudeCodeKernel
   /// What the context comes to as the model told it: its last request's
   /// input and output. The CLI's count is its own estimate for a model
   /// behind the proxy (images' base64 as text, once). Null with none
-  /// since the context changed under it (compacted, rewound).
+  /// since the context changed (compacted, rewound) or a result recalibrated it.
   int? _toldContext;
 
   /// The tool calls' results in the context, counted here: Claude Code's
@@ -480,9 +487,7 @@ class ClaudeCodeKernel
 
   /// [_contextDetail], its tool calls' results as counted here.
   ContextDetail? get _shownDetail => switch (_contextDetail) {
-    final detail? when _resultsKnown => detail.withToolResults(
-      _results.byTool,
-    ),
+    final detail? when _resultsKnown => detail.withToolResults(_results.byTool),
     final detail => detail,
   };
 
@@ -508,7 +513,6 @@ class ClaudeCodeKernel
   // them was told, shown in all of them.
   static List<RateLimitWindow> _limits = const [];
   static final Set<ClaudeCodeKernel> _live = {};
-  String? _suggestion;
   List<McpServer>? _servers;
 
   // --- Lifecycle ------------------------------------------------------------------
@@ -613,7 +617,6 @@ class ClaudeCodeKernel
       _launchedProvider = target.provider;
       _launchedModel = custom != null ? _model : null;
       _launchedWindow = _autocompact;
-      _launchedSuggestions = PromptSuggestions.current();
       _appliedSwitches = ExtensionSwitches.current();
       final sdkServers = ClaudeSdkTools.serversFor(_cwd);
       final transport = await _start(
@@ -630,7 +633,6 @@ class ClaudeCodeKernel
               : null,
           thinking: custom != null && direct && effort == 'none' ? false : null,
           autocompact: _autocompact,
-          promptSuggestions: _launchedSuggestions,
           switches: _appliedSwitches,
           attribution: CommitAttribution.current(),
           env: env,
@@ -657,6 +659,7 @@ class ClaudeCodeKernel
         return;
       }
       _transport = transport;
+      // Share the request merger; custom providers record their calls already.
       _usage = custom == null
           ? ClaudeUsageMeter(
               record: (call, {trace}) =>
@@ -670,12 +673,17 @@ class ClaudeCodeKernel
               providerName: 'Claude Code',
               quota: () => _quota,
             )
-          : null;
+          : ClaudeUsageMeter(
+              record: (call, {trace}) {},
+              session: () => _sessionId,
+            );
       final control = _control = ControlChannel(transport.write);
       _subscription = transport.messages.listen(_receive);
       _applyInitialize(
         await control.request('initialize', {
-          'promptSuggestions': _launchedSuggestions,
+          // The app's own, in the agent's replies (ReplySuggestions): none
+          // of the CLI's, each a request of its own.
+          'promptSuggestions': false,
           if (sdkServers.isNotEmpty) 'sdkMcpServers': sdkServers,
           if (_editWatch != null) 'hooks': _editHooks,
         }),
@@ -873,8 +881,6 @@ class ClaudeCodeKernel
   /// compacts where it was told at start, whatever it is told after. Done
   /// only as a message is sent, so a pick leaves the conversation be.
   ///
-  /// So is the prompt suggestions' setting turned on or off since.
-  ///
   /// So is another provider, or one whose setup changed: the session goes
   /// on, resumed, on it. That even with tasks at work in the background
   /// (a server it started), which end with the process, or the CLI still
@@ -883,11 +889,7 @@ class ClaudeCodeKernel
   void _applyWindow() {
     if (!_running) return;
     final otherProvider = _providerKey != _launchedProvider;
-    if (!otherProvider &&
-        _autocompact == _launchedWindow &&
-        PromptSuggestions.current() == _launchedSuggestions) {
-      return;
-    }
+    if (!otherProvider && _autocompact == _launchedWindow) return;
     if (!otherProvider && _busy) return;
     _teardown();
     _translator.endTasks();
@@ -986,22 +988,7 @@ class ClaudeCodeKernel
       _applyWindow();
       _beginTurn(turn.id);
     }
-    if (_suggestion != null) {
-      _suggestion = null;
-      emitInfoChanged();
-    }
-    emit(
-      ItemUpserted(
-        nextSeq,
-        turn.id,
-        UserMessageItem(
-          text: turn.text,
-          queued: busy,
-          images: turn.images,
-          sentAt: DateTime.now(),
-        ),
-      ),
-    );
+    emit(ItemUpserted(nextSeq, turn.id, _sentItem(turn, queued: busy)));
     // Taken now, as the message was sent.
     final ask = _work == 'ask';
     if (hold) {
@@ -1094,6 +1081,20 @@ class ClaudeCodeKernel
       // taken up next, as when the user stops the turn.
       if (turn.now && _queued.contains(turn.id) && !spareBackground) cancel();
     });
+  }
+
+  /// [turn] as it shows once sent, until the CLI reads it back: a message
+  /// another agent sent (`<agent-message>`), as its card, as read back.
+  static UserMessageItem _sentItem(KernelTurn turn, {bool queued = false}) {
+    final fromAgent = ClaudeTranslator.agentMessage(turn.text);
+    return UserMessageItem(
+      text: fromAgent?.text ?? turn.text,
+      queued: queued,
+      images: turn.images,
+      sentAt: DateTime.now(),
+      fromAgent: fromAgent?.from,
+      fromSession: fromAgent?.session,
+    );
   }
 
   void _beginTurn(String id, {bool unprompted = false}) {
@@ -1356,6 +1357,7 @@ class ClaudeCodeKernel
           }
           emit(Rewound(nextSeq, itemId: itemId, index: index));
           // Its last request held what is rewound too.
+          _usage?.clearContext();
           _toldContext = null;
           _resultsReading++;
           _resultsKnown = _resultsKnown && _results.rewind(itemId);
@@ -1467,9 +1469,6 @@ class ClaudeCodeKernel
   @override
   void moveToBackground(String toolUseId) =>
       _tell('background_tasks', {'tool_use_id': toolUseId});
-
-  @override
-  String? get promptSuggestion => _suggestion;
 
   // --- MCP servers ------------------------------------------------------------------
 
@@ -1875,6 +1874,11 @@ class ClaudeCodeKernel
   void _receive(Map<String, Object?> message) {
     if (_control?.receive(message) ?? false) return;
     _usage?.receive(message);
+    if (message['type'] == 'stream_event') {
+      final told = _toldContext;
+      _toldContext = _usage?.mainContextTokens ?? _toldContext;
+      if (_toldContext != told) _reportContext();
+    }
     if (message['type'] case 'assistant' || 'user'
         when _results.add(message) && _resultsKnown) {
       _reportContext();
@@ -1896,6 +1900,8 @@ class ClaudeCodeKernel
       case 'system' when message['subtype'] == 'init':
         _sessionId = message['session_id'] as String? ?? _sessionId;
         _reportedModel = message['model'] as String?;
+        // Started again on the model picked, not on the one in its place.
+        if (_reportedModel != _fallback) _fallback = null;
         _sendsNow = (message['capabilities'] as List? ?? const []).contains(
           'interrupt_send_now_v1',
         );
@@ -1935,6 +1941,15 @@ class ClaudeCodeKernel
       case 'system' when message['subtype'] == 'compact_boundary':
         _translator.translate(message);
         _compacted(message);
+      // The picked model's safeguards flagged a message: the session goes
+      // on on another (a subagent's alone, 'local', leaves it as it is).
+      case 'system' when message['subtype'] == 'model_refusal_fallback':
+        if (message['fallback_model'] case final String model
+            when model.isNotEmpty && message['scope'] != 'local') {
+          _fallback = model;
+          emitInfoChanged();
+        }
+        _translator.translate(message);
       case 'system' when message['subtype'] == 'session_state_changed':
         _cliWorking = message['state'] != 'idle';
         // A turn's checks of the goal are all kept by now.
@@ -1962,6 +1977,9 @@ class ClaudeCodeKernel
       case 'assistant':
         final told = _toldContext;
         if (_countRequest(message)) _reportStats();
+        if (_usage case final usage?) {
+          _toldContext = usage.mainContextTokens ?? told;
+        }
         if (_toldContext != told) _reportContext();
         if (message['error'] == 'rate_limit') {
           _limitSaid(message['message']);
@@ -1974,18 +1992,6 @@ class ClaudeCodeKernel
         _rateLimits(message['rate_limit_info']);
       case 'command_lifecycle':
         _lifecycle(message);
-      case 'prompt_suggestion':
-        final suggestion = (message['suggestion'] as String?)?.trim();
-        // One turned off since the process started is not offered.
-        if (_turn == null &&
-            _queued.isEmpty &&
-            suggestion != _suggestion &&
-            PromptSuggestions.current()) {
-          _suggestion = suggestion == null || suggestion.isEmpty
-              ? null
-              : suggestion;
-          emitInfoChanged();
-        }
       default:
         _translator.translate(message);
     }
@@ -2097,8 +2103,12 @@ class ClaudeCodeKernel
 
   /// One of the app's own tools asks the user: on the conversation, as the
   /// CLI's requests are; but answered to the tool. Given up as the turn
-  /// ends; null where no one is there to ask.
+  /// ends; null where no one is there to ask. In full access not asked:
+  /// allowed, as the CLI's own actions are.
   Future<ApprovalDecision?> _sdkAsk(ApprovalRequest request) {
+    if (_approval == 'bypassPermissions') {
+      return Future.value(ApprovalDecision.allowOnce);
+    }
     // No one there (a bot's), or Don't ask: not allowed.
     if ((_workspace?.approvesAll ?? false) || _approval == 'dontAsk') {
       return Future.value();
@@ -2167,15 +2177,10 @@ class ClaudeCodeKernel
       case 'started':
         if (_queued.remove(id)) {
           emit(
-            ItemUpserted(
-              nextSeq,
-              id,
-              UserMessageItem(
-                text: _sent[id]?.text ?? '',
-                images: _sent[id]?.images ?? const [],
-                sentAt: DateTime.now(),
-              ),
-            ),
+            ItemUpserted(nextSeq, id, switch (_sent[id]) {
+              final turn? => _sentItem(turn),
+              null => UserMessageItem(text: '', sentAt: DateTime.now()),
+            }),
           );
         }
         if (_turn != id &&
@@ -2254,7 +2259,7 @@ class ClaudeCodeKernel
         _ => TurnUsage(costUsd: turnCost),
       },
     );
-    unawaited(_refreshContext());
+    unawaited(_refreshContext(completed: _custom == null));
   }
 
   // --- Goal ------------------------------------------------------------------------
@@ -2727,9 +2732,10 @@ class ClaudeCodeKernel
     unawaited(_refreshContext());
   }
 
-  Future<void> _refreshContext() async {
+  Future<void> _refreshContext({bool completed = false}) async {
     final control = _control;
     if (control == null) return;
+    final contextRequest = _usage?.mainContextRequest;
     try {
       // In full: each part's things too (the system prompt's sections,
       // the built-in tools, the messages by tool), counted where it runs.
@@ -2765,6 +2771,11 @@ class ClaudeCodeKernel
               ),
         ],
       );
+      // Only the same request's fresh count supersedes its final total.
+      if (completed && identical(_usage?.mainContextRequest, contextRequest)) {
+        _usage?.clearContext();
+        _toldContext = null;
+      }
       _reportContext();
     } on Object {
       // Context usage is a nicety: an older CLI may not answer.
@@ -3147,11 +3158,31 @@ class ClaudeCodeKernel
   }
 
   /// A request to switch the CLI to [model], a value it listed: none if
-  /// it is the one in use.
-  _Request? _modelChange(String? model) {
-    if (model == null || model == _currentModel?.value) return null;
+  /// it is the one in use, unless [again] (another answers in its place).
+  _Request? _modelChange(String? model, {bool again = false}) {
+    if (model == null || (model == _currentModel?.value && !again)) {
+      return null;
+    }
     _model = model;
+    _fallback = null;
     return ('set_model', {'model': model});
+  }
+
+  @override
+  String? get fallbackModel => switch (_fallback) {
+    final id? => claudeModelName(id),
+    null => null,
+  };
+
+  @override
+  void endFallback() {
+    if (_fallback == null) return;
+    if (model.selected case final picked?) {
+      _selectModel(picked);
+    } else {
+      _fallback = null;
+      emitInfoChanged();
+    }
   }
 
   /// Sends [requests] in turn, each once the one before is done, then
@@ -3284,6 +3315,9 @@ class ClaudeCodeKernel
   /// which resumes it there).
   void _selectModel(String id, {bool keep = true}) {
     if (keep) _keepModelSettings();
+    // Picked again over the one answering in its place: switched back to.
+    final again = _fallback != null;
+    _fallback = null;
     final target = _providers.resolve(id);
     final sameProvider = _providerKeyOf(id) == _onProvider;
     // Its own effort and context, if it had them: not the one before's.
@@ -3304,7 +3338,7 @@ class ClaudeCodeKernel
           : null;
       if (effort != null) _appliedEffort = effort;
       _change([
-        ?_modelChange(variant?.value),
+        ?_modelChange(variant?.value, again: again),
         if (effort != null)
           (
             'apply_flag_settings',
@@ -3349,11 +3383,12 @@ class ClaudeCodeKernel
     final current = model.selected;
     if (current == null) return;
     if (effort.selected case final level?) _pickedEfforts[current] = level;
-    final window = switch (_custom) {
-      (_, final info) => _windowFor(info),
-      null => _windows[contextSize.selected],
-    };
-    if (window != null) _pickedWindows[current] = window;
+    // A provider's model's is noted as it is picked: else it is its own,
+    // as its upstream says (see _windowFor).
+    if (_custom != null) return;
+    if (_windows[contextSize.selected] case final window?) {
+      _pickedWindows[current] = window;
+    }
   }
 
   /// [model]'s variant with the long context or without, as there is one.
@@ -3388,10 +3423,13 @@ class ClaudeCodeKernel
   String? _effortFor(ProviderModel info) =>
       info.effortLevels.contains(_effort) ? _effort : info.initialEffort;
 
-  /// The context a provider's model fills before compacting: the one
-  /// picked, if it offers it, else its own.
-  int _windowFor(ProviderModel info) =>
-      info.contextOptions.contains(_window) ? _window! : info.initialContext;
+  /// The context a provider's model (the one in use) fills before
+  /// compacting: the one picked for it, if it offers it, else its own (as
+  /// its upstream says, else as set): not one picked with another model.
+  int _windowFor(ProviderModel info) => switch (_pickedWindows[_model]) {
+    final picked? when info.contextOptions.contains(picked) => picked,
+    _ => info.initialContext,
+  };
 
   /// The context the session compacts at: a provider's model's, else as
   /// picked (null for the CLI's own).
@@ -3486,6 +3524,8 @@ class ClaudeCodeKernel
       };
     },
     select: _selectModel,
+    // Over the one answering in its place: switched back to.
+    reselects: () => _fallback != null,
   );
 
   /// The contexts offered, by option id.
@@ -3546,10 +3586,11 @@ class ClaudeCodeKernel
     },
     selectedFor: (model) {
       if (model == this.model.selected) return contextSize.selected;
-      final window = _pickedWindows[model] ?? _window;
       if (_providers.resolve(model) case (_, final info)) {
-        return '${info.contextOptions.contains(window) ? window : info.initialContext}';
+        final picked = _pickedWindows[model];
+        return '${info.contextOptions.contains(picked) ? picked : info.initialContext}';
       }
+      final window = _pickedWindows[model] ?? _window;
       return _windows.entries
           .where((entry) => entry.value == window)
           .firstOrNull
@@ -3692,9 +3733,11 @@ class ClaudeCodeKernel
       request['decision_reason_code'] != null;
 
   /// Plan's commands are left to the classifier with the approvals that
-  /// approve for the user; asked about with the others.
+  /// approve for the user, where it runs on the model: on another
+  /// provider's there is none to leave them to (see [_permission]), and
+  /// the CLI, told to use it all the same, refuses what it cannot check.
   bool get _reviewsPlan =>
-      _approval == 'auto' || _approval == 'bypassPermissions';
+      _classifies && (_approval == 'auto' || _approval == 'bypassPermissions');
 
   /// Whether the auto mode classifier runs on the model: not on another
   /// provider's.
@@ -3926,6 +3969,18 @@ class _Permission {
   final List<String> questions;
 }
 
+/// A Claude model's id as its name: `claude-opus-4-8` as `Opus 4.8`,
+/// `claude-sonnet-4-5-20250929` as `Sonnet 4.5`; another id as it is.
+String claudeModelName(String id) {
+  final match = RegExp(
+    r'^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?(?:\[1m\])?$',
+  ).firstMatch(id.toLowerCase());
+  if (match == null) return id;
+  final family = match[1]!;
+  return '${family[0].toUpperCase()}${family.substring(1)} '
+      '${match[2]}${match[3] == null ? '' : '.${match[3]}'}';
+}
+
 class _ModelInfo {
   const _ModelInfo({
     required this.value,
@@ -3990,11 +4045,15 @@ class _Choice implements KernelChoiceSource {
     required this._options,
     required this._selected,
     required this._select,
+    this._reselects,
   });
 
   final List<KernelOption> Function() _options;
   final String? Function() _selected;
   final void Function(String id) _select;
+
+  /// Whether the one selected is picked again all the same, now.
+  final bool Function()? _reselects;
   List<KernelOption> _cache = const [];
 
   /// The same list while unchanged, so pickers keep their identity.
@@ -4010,7 +4069,7 @@ class _Choice implements KernelChoiceSource {
 
   @override
   void select(String id) {
-    if (id != selected) _select(id);
+    if (id != selected || (_reselects?.call() ?? false)) _select(id);
   }
 }
 

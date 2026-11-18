@@ -142,6 +142,10 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
     final root = folders.root;
     if (root == null || _started) return;
     _started = true;
+    // Every folder under it is the app's own, listed nowhere: even one
+    // whose bot is gone (a stale folder left behind). Set before anything
+    // is waited for, so the sidebar's first frame lists none of them.
+    workspace.appFolderRoot = root;
     try {
       computer = await _computerName();
     } on Object catch (error) {
@@ -163,9 +167,6 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
     for (final bot in _bots) {
       folders.make(bot.folder);
     }
-    // Every folder under it is the app's own, listed nowhere: even one
-    // whose bot is gone (a stale folder left behind).
-    workspace.appFolderRoot = root;
     workspace.agentSetup = _setup;
     ClaudeSdkTools.gate = this;
     BotTools.register(this);
@@ -177,6 +178,7 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
     // Each with its conversation, for the phones to open from the first.
     _bots.forEach(threadFor);
     groups.start();
+    _dropWorld(root);
     workspace.addListener(_watch);
     _watch();
     _schedule();
@@ -1019,6 +1021,20 @@ class Bots extends ChangeNotifier implements ClaudeSdkGate {
       id = 'b$now-$n';
     }
     return id;
+  }
+
+  /// Where the bots' world had its conversation, when there was one to
+  /// say who answers in a group: what is left of it gone.
+  void _dropWorld(String root) {
+    final path = p.join(root, 'world');
+    final threads = [
+      for (final thread in workspace.threads)
+        if (thread.project.path == path) thread,
+    ];
+    if (threads.isEmpty && !folders.folders().contains(path)) return;
+    if (threads.isNotEmpty) workspace.deleteAll(threads);
+    folders.delete(path);
+    unawaited(forgetSessions(path));
   }
 
   /// Deletes [id]'s bot, its conversation and memory: not the assistant's.

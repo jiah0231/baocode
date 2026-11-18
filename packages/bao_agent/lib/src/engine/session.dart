@@ -50,6 +50,7 @@ class EngineOptions {
     this.promptSuggestions = false,
     this.autoTitle = true,
     this.environment = const {},
+    this.rootCertificates = const [],
     this.configDir,
     this.productName = 'BaoCode',
     this.systemPrompt,
@@ -80,6 +81,7 @@ class EngineOptions {
       for (final MapEntry(:key, :value) in asMap(json['environment']).entries)
         if (value is String) key: value,
     },
+    rootCertificates: [...asList(json['rootCertificates']).whereType<String>()],
     configDir: asText(json['configDir']),
     productName: asText(json['productName']) ?? 'BaoCode',
     systemPrompt: asString(json['systemPrompt']),
@@ -132,6 +134,11 @@ class EngineOptions {
   /// API's settings are read from.
   final Map<String, String> environment;
 
+  /// The machine's own roots (PEM, each a block), trusted beside the ones
+  /// Dart bundles: a provider may chain to one of those, which Mozilla's
+  /// list does not have.
+  final List<String> rootCertificates;
+
   /// Where Claude Code's files are, if not where the environment says.
   final String? configDir;
 
@@ -175,6 +182,7 @@ class EngineOptions {
     'promptSuggestions': promptSuggestions,
     'autoTitle': autoTitle,
     'environment': environment,
+    'rootCertificates': rootCertificates,
     'configDir': ?configDir,
     'productName': productName,
     'systemPrompt': ?systemPrompt,
@@ -409,22 +417,24 @@ class AgentSession {
 
   /// The environment the API's settings are read from: the user's shell's,
   /// with the settings' `env` over it.
-  Map<String, String> get environment =>
-      _environment ??= {...options.environment, ...settings.env};
+  Map<String, String> get environment => _environment ??= caseFoldedEnvironment(
+    {...options.environment, ...settings.env},
+  );
 
   Map<String, String>? _commandEnvironment;
 
   /// The environment commands run in: [environment], but for the keys a
   /// provider was given (they are the session's, not the user's), and
   /// with what tells a program it runs under the agent.
-  Map<String, String> get commandEnvironment => _commandEnvironment ??= {
-    ...options.environment,
-    for (final MapEntry(:key, :value) in settings.env.entries)
-      if (!_secret(key) || options.environment[key] == value) key: value,
-    'CLAUDECODE': '1',
-    'CLAUDE_CODE_ENTRYPOINT': 'baocode-dart',
-    'GIT_EDITOR': 'true',
-  };
+  Map<String, String> get commandEnvironment =>
+      _commandEnvironment ??= caseFoldedEnvironment({
+        ...options.environment,
+        for (final MapEntry(:key, :value) in settings.env.entries)
+          if (!_secret(key) || options.environment[key] == value) key: value,
+        'CLAUDECODE': '1',
+        'CLAUDE_CODE_ENTRYPOINT': 'baocode-dart',
+        'GIT_EDITOR': 'true',
+      });
 
   /// The effort of a turn, as hooks and commands are told it: none for a
   /// model known to take none; a model not known is sent none, and works
@@ -527,7 +537,7 @@ class AgentSession {
     try {
       final result = Process.runSync(
         shell.executable,
-        shell.posix ? ['-c', helper] : ['/c', helper],
+        shell.run(helper),
         environment: commandEnvironment,
         includeParentEnvironment: false,
       );

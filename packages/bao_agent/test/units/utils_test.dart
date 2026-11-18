@@ -181,33 +181,23 @@ void main() {
         for (final f in files) p.relative(f.path, from: root.path): f,
       };
       expect(byName.keys, [
-        p.join('home', '.claude', 'CLAUDE.md'),
-        p.join('home', '.claude', 'rules', 'style.md'),
-        p.join('work', 'CLAUDE.md'),
-        p.join('work', 'app', 'CLAUDE.md'),
+        'home/.claude/CLAUDE.md',
+        'home/.claude/rules/style.md',
+        'work/CLAUDE.md',
+        'work/app/CLAUDE.md',
         // What a file imports comes after it, a file of its own.
-        p.join('work', 'app', 'docs', 'more.md'),
-        p.join('work', 'app', 'docs', 'deeper.md'),
-        p.join('work', 'app', '.claude', 'rules', 'dart.md'),
-        p.join('work', 'app', 'CLAUDE.local.md'),
+        'work/app/docs/more.md',
+        'work/app/docs/deeper.md',
+        'work/app/.claude/rules/dart.md',
+        'work/app/CLAUDE.local.md',
       ]);
-      expect(
-        byName[p.join('home', '.claude', 'CLAUDE.md')]!.type,
-        MemoryType.user,
-      );
-      expect(
-        byName[p.join('work', 'app', 'CLAUDE.local.md')]!.type,
-        MemoryType.local,
-      );
-      final app = byName[p.join('work', 'app', 'CLAUDE.md')]!.content;
+      expect(byName['home/.claude/CLAUDE.md']!.type, MemoryType.user);
+      expect(byName['work/app/CLAUDE.local.md']!.type, MemoryType.local);
+      final app = byName['work/app/CLAUDE.md']!.content;
       expect(app, contains('See @docs/more.md'));
       expect(app, contains('`@not/this.md`'));
-      expect(
-        byName[p.join('work', 'app', 'docs', 'deeper.md')]!.content,
-        'Deepest.',
-      );
-      final rule =
-          byName[p.join('work', 'app', '.claude', 'rules', 'dart.md')]!;
+      expect(byName['work/app/docs/deeper.md']!.content, 'Deepest.');
+      final rule = byName['work/app/.claude/rules/dart.md']!;
       expect(rule.conditional, isTrue);
       final cwd = p.join(root.path, 'work', 'app');
       expect(MemoryLoader.rulesFor(files, p.join(cwd, 'lib', 'a.dart'), cwd), [
@@ -317,10 +307,9 @@ void main() {
       expect(settings.rules.last.source, SettingsSource.session);
       settings.applyFlag({'model': 'haiku'});
       expect(settings.model, 'haiku');
-      final extra = p.normalize('/extra');
-      settings.addDirectories([extra], SettingsSource.local);
+      settings.addDirectories(['/extra'], SettingsSource.local);
       settings.reload();
-      expect(settings.additionalDirectories, contains(extra));
+      expect(settings.additionalDirectories, contains('/extra'));
       expect(SettingsSource.parse('localSettings'), SettingsSource.local);
       expect(SettingsSource.parse('nope'), isNull);
     });
@@ -437,15 +426,74 @@ void main() {
       expect(windows({}, {}).executable, 'cmd.exe');
     });
 
-    test('Git Bash reports the physical cwd in native Windows form', () {
-      final bash = windows(
-        {'CLAUDE_CODE_GIT_BASH_PATH': r'D:\git\bash.exe'},
-        {r'D:\git\bash.exe'},
+    test('on Windows: BaoCode Bash, where the app installed it, before '
+        'Git\'s; the one set before both', () {
+      const bao =
+          r'C:\Users\me\AppData\Roaming\BaoCode\tools\bash-exe\bash.exe';
+      const git = r'C:\Program Files\Git\bin\bash.exe';
+      final found = windows({Shell.baoBashVariable: bao}, {bao, git});
+      expect((found.executable, found.posix, found.baoBash), (bao, true, true));
+      // Uninstalled since.
+      expect(windows({Shell.baoBashVariable: bao}, {git}).executable, git);
+      expect(windows({Shell.baoBashVariable: bao}, {git}).baoBash, isFalse);
+      expect(
+        windows(
+          {Shell.baoBashVariable: bao, 'CLAUDE_CODE_GIT_BASH_PATH': git},
+          {bao, git},
+        ).executable,
+        git,
       );
-      final args = bash.arguments('cd sub', r'C:\Temp\cwd');
-      expect(args[1], contains(r'cygpath -w -- "$(pwd -P)"'));
-      expect(args[1], endsWith(r' >| "$2" 2>/dev/null; exit $__bao_status'));
-      expect(args.sublist(3), ['cd sub', r'C:\Temp\cwd']);
+    });
+
+    test('on Windows: the shell the app\'s settings pick, before all', () {
+      const bao =
+          r'C:\Users\me\AppData\Roaming\BaoCode\tools\bash-exe\bash.exe';
+      const git = r'C:\Program Files\Git\bin\bash.exe';
+      const ps = r'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe';
+      final env = {
+        Shell.baoBashVariable: bao,
+        'CLAUDE_CODE_GIT_BASH_PATH': git,
+      };
+      final picked = windows({...env, Shell.chosenVariable: bao}, {bao, git});
+      expect((picked.executable, picked.baoBash), (bao, true));
+      final cmd = windows(
+        {...env, Shell.chosenVariable: r'C:\Windows\system32\cmd.exe'},
+        {bao, git, r'C:\Windows\system32\cmd.exe'},
+      );
+      expect(cmd.kind, ShellKind.cmd);
+      final powershell = windows(
+        {...env, Shell.chosenVariable: ps},
+        {bao, git, ps},
+      );
+      expect(
+        (powershell.kind, powershell.posix),
+        (ShellKind.powershell, false),
+      );
+      // A bare name is looked for on the PATH.
+      expect(
+        windows({Shell.chosenVariable: 'pwsh.exe'}, {}).kind,
+        ShellKind.powershell,
+      );
+      // Gone since: as if none were picked.
+      expect(
+        windows({...env, Shell.chosenVariable: ps}, {bao, git}).executable,
+        git,
+      );
+    });
+
+    test('PowerShell runs the command as a string, as written', () {
+      const shell = Shell('powershell.exe', kind: ShellKind.powershell);
+      final args = shell.arguments("echo 'it''s' \"x\"", r'C:\t\cwd');
+      expect(args.take(5), [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-Command',
+      ]);
+      expect(args.last, contains("Invoke-Expression 'echo ''it''''s'' \"x\"'"));
+      expect(args.last, contains(r"WriteAllText('C:\t\cwd'"));
+      expect(shell.run('dir').last, isNot(contains('WriteAllText')));
     });
 
     test('elsewhere: the user\'s bash or zsh, else bash, else sh', () {
@@ -461,8 +509,6 @@ void main() {
       );
       expect(find({}, {}).executable, '/bin/sh');
       final bash = find({}, {'/bin/bash'});
-      expect(bash.arguments('ls', '/tmp/cwd')[1], isNot(contains('cygpath')));
-      expect(bash.arguments('ls', '/tmp/cwd')[1], contains('pwd -P'));
       expect(bash.arguments('ls', '/tmp/cwd'), [
         '-c',
         isA<String>(),
@@ -470,6 +516,29 @@ void main() {
         'ls',
         '/tmp/cwd',
       ]);
+    });
+  });
+
+  group('caseFoldedEnvironment', () {
+    const environment = {
+      'Path': r'C:\Windows',
+      'NO_PROXY': 'localhost',
+      'HTTPS_PROXY': 'http://127.0.0.1:7897',
+      'https_proxy': 'http://127.0.0.1:7897',
+      'PATH': r'C:\rg;C:\Windows',
+      'no_proxy': 'localhost,127.0.0.1',
+    };
+
+    test('on Windows, one of names that differ only in case: the last', () {
+      expect(caseFoldedEnvironment(environment, windows: true), {
+        'https_proxy': 'http://127.0.0.1:7897',
+        'PATH': r'C:\rg;C:\Windows',
+        'no_proxy': 'localhost,127.0.0.1',
+      });
+    });
+
+    test('elsewhere, as it is', () {
+      expect(caseFoldedEnvironment(environment, windows: false), environment);
     });
   });
 
