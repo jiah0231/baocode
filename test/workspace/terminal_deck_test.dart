@@ -328,10 +328,10 @@ void main() {
     await rightClick(tester, find.byKey(ObjectKey(shell)).first);
     await tester.tap(find.text('New Terminal'));
     await tester.pumpAndSettle();
-    expect([for (final each in terminals.instances) each.cwd], [
-      '/w/api',
-      '/w/api',
-    ]);
+    expect(
+      [for (final each in terminals.instances) each.cwd],
+      ['/w/api', '/w/api'],
+    );
 
     // One folder: made at once, nothing said in the tabs.
     await tester.pumpWidget(deck(['/w/app']));

@@ -41,9 +41,8 @@ void main() {
           latest.version.startsWith('0.166.'),
         );
         final metadata = jsonDecode(
-          await File(
-            'test/fixtures/codex/official_release_0_166_0.json',
-          ).readAsString(),
+          await File('test/fixtures/codex/official_release_0_166_0.json')
+              .readAsString(),
         ) as Map<String, dynamic>;
         final release = CodexInstallRelease.fromJson(metadata, latest.target);
         expect(release.version, '0.166.0');
@@ -237,19 +236,22 @@ http_headers = { "X-Fixture" = "kept-header" }
           'cwd': project.path,
           'approvalPolicy': 'never',
           'sandbox': 'read-only',
-          'dynamicTools': [{
-            'type': 'function', 'name': 'session_query',
-            'description': 'Legacy +25 selected conversation retrieval.',
-            'inputSchema': {
-              'type': 'object',
-              'properties': {
-                'capability': {'type': 'string'},
-                'session_id': {'type': 'string'},
+          'dynamicTools': [
+            {
+              'type': 'function',
+              'name': 'session_query',
+              'description': 'Legacy +25 selected conversation retrieval.',
+              'inputSchema': {
+                'type': 'object',
+                'properties': {
+                  'capability': {'type': 'string'},
+                  'session_id': {'type': 'string'},
+                },
+                'required': ['capability', 'session_id'],
+                'additionalProperties': false,
               },
-              'required': ['capability', 'session_id'],
-              'additionalProperties': false,
             },
-          }],
+          ],
         });
         final thread = started['thread'] as Map;
         final threadId = thread['id'] as String;
@@ -279,91 +281,146 @@ http_headers = { "X-Fixture" = "kept-header" }
         // Stop its actual writer before resuming from disk in a new process.
         await rpc.close();
         rpc = null;
-        sessionQueries = SessionQueryService(read: (id) async => SessionQuerySnapshot(
-          targetId: id, title: 'Selected Claude task', kernel: 'Claude Code',
-          messages: const [SessionQueryMessage(
-            index: 0, role: 'assistant', text: 'Smoke context port 8123.',
-          )],
-        ))..register();
+        sessionQueries = SessionQueryService(
+          read: (id) async => SessionQuerySnapshot(
+            targetId: id,
+            title: 'Selected Claude task',
+            kernel: 'Claude Code',
+            messages: const [
+              SessionQueryMessage(
+                index: 0,
+                role: 'assistant',
+                text: 'Smoke context port 8123.',
+              ),
+            ],
+          ),
+        )..register();
         var smokeTurnActive = true;
         sessionQueries.grant(
-          ['claude-code:smoke-target'], callerSessionId: () => threadId,
-          callerCwd: project.path, callerTurnId: 'smoke-host-turn', isActive: () => smokeTurnActive,
+          ['claude-code:smoke-target'],
+          callerSessionId: () => threadId,
+          callerCwd: project.path,
+          callerTurnId: 'smoke-host-turn',
+          isActive: () => smokeTurnActive,
         );
         sessionBridge = await CodexSessionMcp.start(
-          cwd: project.path, sessionId: () => threadId, turnId: () => 'smoke-host-turn',
+          cwd: project.path,
+          sessionId: () => threadId,
+          turnId: () => 'smoke-host-turn',
         );
-        rpc = _Rpc(await Process.start(
-          executable, const ['app-server'], workingDirectory: project.path,
-          environment: environment, includeParentEnvironment: false,
-        ));
+        rpc = _Rpc(
+          await Process.start(
+            executable,
+            const ['app-server'],
+            workingDirectory: project.path,
+            environment: environment,
+            includeParentEnvironment: false,
+          ),
+        );
         await rpc.request('initialize', {
           'clientInfo': {'name': 'baocode-smoke', 'version': '1.0.0'},
           'capabilities': {'experimentalApi': true},
         });
         rpc.notify('initialized', const {});
         final resumed = await rpc.request('thread/resume', {
-          'threadId': threadId, 'cwd': project.path,
-          'approvalPolicy': 'never', 'sandbox': 'read-only',
+          'threadId': threadId,
+          'cwd': project.path,
+          'approvalPolicy': 'never',
+          'sandbox': 'read-only',
           'config': {
             'mcp_servers.baocode_session':
-                (sessionBridge.configuration()['mcp_servers'] as Map)['baocode_session'],
+                (sessionBridge.configuration()['mcp_servers']
+                    as Map)['baocode_session'],
           },
         });
         expect((resumed['thread'] as Map)['id'], threadId);
-        final discoveryDeadline = DateTime.now().add(const Duration(seconds: 15));
-        Map? sessionServer;
-        bool discovered(Map server) => (server['tools'] as Map? ?? {}).entries.any(
-          (entry) => entry.key == 'session_query' ||
-              (entry.value is Map && (entry.value as Map)['name'] == 'session_query'),
+        final discoveryDeadline = DateTime.now().add(
+          const Duration(seconds: 15),
         );
+        Map? sessionServer;
+        bool discovered(Map server) =>
+            (server['tools'] as Map? ?? {}).entries.any(
+              (entry) =>
+                  entry.key == 'session_query' ||
+                  (entry.value is Map &&
+                      (entry.value as Map)['name'] == 'session_query'),
+            );
         while (true) {
           final inventory = await rpc.request('mcpServerStatus/list', {
-            'threadId': threadId, 'serverName': 'baocode_session',
+            'threadId': threadId,
+            'serverName': 'baocode_session',
           });
-          sessionServer = (inventory['data'] as List).cast<Map>()
-              .where((entry) => entry['name'] == 'baocode_session').firstOrNull;
+          sessionServer = (inventory['data'] as List)
+              .cast<Map>()
+              .where((entry) => entry['name'] == 'baocode_session')
+              .firstOrNull;
           if (sessionServer != null && discovered(sessionServer)) break;
           if (sessionServer?['runtimeStatus'] == 'failed' ||
               DateTime.now().isAfter(discoveryDeadline)) {
-            fail('Legacy session MCP discovery failed: '
-                '${sessionServer?['runtimeStatus']}; ${sessionServer?['toolsError']}');
+            fail(
+              'Legacy session MCP discovery failed: '
+              '${sessionServer?['runtimeStatus']}; ${sessionServer?['toolsError']}',
+            );
           }
           await Future<void>.delayed(const Duration(milliseconds: 100));
         }
-        final tool = (sessionServer['tools'] as Map).entries.singleWhere(
-          (entry) => entry.key == 'session_query' ||
-              (entry.value as Map)['name'] == 'session_query',
-        ).value as Map;
+        final tool =
+            (sessionServer['tools'] as Map).entries
+                    .singleWhere(
+                      (entry) =>
+                          entry.key == 'session_query' ||
+                          (entry.value as Map)['name'] == 'session_query',
+                    )
+                    .value
+                as Map;
         final newSchema = tool['inputSchema'] as Map;
         expect(newSchema['required'], ['session_id']);
-        expect((newSchema['properties'] as Map).containsKey('capability'), false);
+        expect(
+          (newSchema['properties'] as Map).containsKey('capability'),
+          false,
+        );
         final retrieved = await rpc.request('mcpServer/tool/call', {
-          'threadId': threadId, 'server': 'baocode_session', 'tool': 'session_query',
+          'threadId': threadId,
+          'server': 'baocode_session',
+          'tool': 'session_query',
           'arguments': {'session_id': 'claude-code:smoke-target'},
         });
         expect(retrieved['isError'], isNot(true));
         expect(jsonEncode(retrieved), contains('Smoke context port 8123.'));
         final denied = await rpc.request('mcpServer/tool/call', {
-          'threadId': threadId, 'server': 'baocode_session', 'tool': 'session_query',
+          'threadId': threadId,
+          'server': 'baocode_session',
+          'tool': 'session_query',
           'arguments': {'session_id': 'claude-code:unselected'},
         });
         expect(jsonEncode(denied), isNot(contains('Smoke context port 8123.')));
         expect(denied['isError'], true);
         smokeTurnActive = false;
         final inactive = await rpc.request('mcpServer/tool/call', {
-          'threadId': threadId, 'server': 'baocode_session', 'tool': 'session_query',
+          'threadId': threadId,
+          'server': 'baocode_session',
+          'tool': 'session_query',
           'arguments': {'session_id': 'claude-code:smoke-target'},
         });
         expect(inactive['isError'], true);
-        expect(jsonEncode(inactive), isNot(contains('Smoke context port 8123.')));
+        expect(
+          jsonEncode(inactive),
+          isNot(contains('Smoke context port 8123.')),
+        );
         expect(rpc.sentMethods, isNot(contains('turn/start')));
         // Distinguish protocol success from later OS resource cleanup failures.
         // ignore: avoid_print
-        print('Official protocol assertions complete: legacy MCP retrieval and denial passed; no model turn.');
+        print(
+          'Official protocol assertions complete: legacy MCP retrieval and denial passed; no model turn.',
+        );
         await rpc.close();
         rpc = null;
-        await _verifyProviderRoutes(executable, environment, project, configFile);
+        await _verifyProviderRoutes(
+          executable,
+          environment,
+          project,
+          configFile,
+        );
       } on Object catch (error) {
         protocolFailure = error;
         rethrow;
@@ -381,9 +438,16 @@ http_headers = { "X-Fixture" = "kept-header" }
             print('Official smoke cleanup failed: $error');
           }
         }
-        await clean(() async { await rpc?.close(); });
-        await clean(() async { await sessionBridge?.close(); });
-        await clean(() { sessionQueries?.dispose(); });
+
+        await clean(() async {
+          await rpc?.close();
+        });
+        await clean(() async {
+          await sessionBridge?.close();
+        });
+        await clean(() {
+          sessionQueries?.dispose();
+        });
         DataDirectory.current = originalDirectory;
         await clean(() => _deleteTemp(root));
         if (protocolFailure == null && cleanupFailure != null) {
@@ -404,13 +468,19 @@ Future<void> _verifyProviderRoutes(
   File configFile,
 ) async {
   const proxy = CodexProxyConfiguration(
-    baseUrl: 'http://127.0.0.1:9/p/codex', token: 'isolated-fixture-only',
+    baseUrl: 'http://127.0.0.1:9/p/codex',
+    token: 'isolated-fixture-only',
   );
   final before = await configFile.readAsString();
-  final providerConfig = {'model_providers': {'baocode': proxy.provider}};
+  final providerConfig = {
+    'model_providers': {'baocode': proxy.provider},
+  };
   _Rpc? rpc;
   Future<_Rpc> open({bool proxied = false, bool bridge = false}) async {
-    final launch = CodexLaunch(cwd: project.path, proxy: proxied ? proxy : null);
+    final launch = CodexLaunch(
+      cwd: project.path,
+      proxy: proxied ? proxy : null,
+    );
     final arguments = [
       ...launch.arguments,
       if (bridge) ...[
@@ -419,11 +489,15 @@ Future<void> _verifyProviderRoutes(
       ],
     ];
     expect(arguments.any((arg) => arg.contains(proxy.token)), false);
-    final server = _Rpc(await Process.start(executable, arguments,
-      workingDirectory: project.path,
-      environment: {...environment, ...proxy.environment},
-      includeParentEnvironment: false,
-    ));
+    final server = _Rpc(
+      await Process.start(
+        executable,
+        arguments,
+        workingDirectory: project.path,
+        environment: {...environment, ...proxy.environment},
+        includeParentEnvironment: false,
+      ),
+    );
     try {
       await server.request('initialize', {
         'clientInfo': {'name': 'baocode-provider-smoke', 'version': '1.0.0'},
@@ -436,8 +510,11 @@ Future<void> _verifyProviderRoutes(
       rethrow;
     }
   }
+
   Map<String, Object?> options() => {
-    'cwd': project.path, 'approvalPolicy': 'never', 'sandbox': 'read-only',
+    'cwd': project.path,
+    'approvalPolicy': 'never',
+    'sandbox': 'read-only',
     'model': 'fixture-model',
   };
   Future<void> persistInertThread(_Rpc server, String threadId) async {
@@ -452,17 +529,21 @@ Future<void> _verifyProviderRoutes(
     });
     expect((paused['goal'] as Map)['status'], 'paused');
     await server.request('thread/goal/clear', {
-      'threadId': threadId, 'origin': 'user',
+      'threadId': threadId,
+      'origin': 'user',
     });
     final cleared = await server.request('thread/goal/get', {
       'threadId': threadId,
     });
     expect(cleared['goal'], isNull);
   }
+
   try {
     rpc = await open();
     final started = await rpc.request('thread/start', {
-      ...options(), 'modelProvider': 'baocode', 'config': providerConfig,
+      ...options(),
+      'modelProvider': 'baocode',
+      'config': providerConfig,
     });
     final original = (started['thread'] as Map)['id'] as String;
     await persistInertThread(rpc, original);
@@ -470,18 +551,33 @@ Future<void> _verifyProviderRoutes(
     rpc = await open();
     // Prove disk persistence from a new process before testing admission.
     final persisted = await rpc.request('thread/read', {
-      'threadId': original, 'includeTurns': false,
+      'threadId': original,
+      'includeTurns': false,
     });
     expect((persisted['thread'] as Map)['id'], original);
     expect((persisted['thread'] as Map)['modelProvider'], 'baocode');
-    await expectLater(rpc.request('thread/resume', {
-      'threadId': original, 'modelProvider': 'baocode', 'config': providerConfig,
-    }), throwsA(isA<StateError>().having((e) => '$e', 'native provider check', contains('current provider is openai'))));
+    await expectLater(
+      rpc.request('thread/resume', {
+        'threadId': original,
+        'modelProvider': 'baocode',
+        'config': providerConfig,
+      }),
+      throwsA(
+        isA<StateError>().having(
+          (e) => '$e',
+          'native provider check',
+          contains('current provider is openai'),
+        ),
+      ),
+    );
     await rpc.close();
     rpc = await open(proxied: true, bridge: true);
-    final effective = (await rpc.request('config/read', {
-      'includeLayers': false, 'cwd': project.path,
-    }))['config'] as Map;
+    final effective =
+        (await rpc.request('config/read', {
+              'includeLayers': false,
+              'cwd': project.path,
+            }))['config']
+            as Map;
     expect(effective['model_provider'], 'baocode');
     final mcp = effective['mcp_servers'] as Map;
     expect(mcp.keys, containsAll(['AgentDock', 'numeric', 'baocode_session']));
@@ -490,16 +586,23 @@ Future<void> _verifyProviderRoutes(
     expect((mcp['AgentDock'] as Map)['env'], {'FIXTURE_ONLY': 'kept-env'});
     expect((mcp['numeric'] as Map)['tool_timeout_sec'], 27.5);
     expect((mcp['numeric'] as Map)['enabled'], false);
-    expect((mcp['numeric'] as Map)['http_headers'], {'X-Fixture': 'kept-header'});
+    expect((mcp['numeric'] as Map)['http_headers'], {
+      'X-Fixture': 'kept-header',
+    });
     final resumed = await rpc.request('thread/resume', {
-      'threadId': original, 'modelProvider': 'baocode', 'config': providerConfig,
+      'threadId': original,
+      'modelProvider': 'baocode',
+      'config': providerConfig,
     });
     expect((resumed['thread'] as Map)['id'], original);
     await rpc.close();
     rpc = await open();
     final nativeFork = await rpc.request('thread/fork', {
-      'cwd': project.path, 'approvalPolicy': 'never', 'sandbox': 'read-only',
-      'threadId': original, 'deferGoalContinuation': true,
+      'cwd': project.path,
+      'approvalPolicy': 'never',
+      'sandbox': 'read-only',
+      'threadId': original,
+      'deferGoalContinuation': true,
     });
     final nativeId = (nativeFork['thread'] as Map)['id'] as String;
     expect(nativeId, isNot(original));
@@ -507,26 +610,38 @@ Future<void> _verifyProviderRoutes(
     await persistInertThread(rpc, nativeId);
     await rpc.close();
     rpc = await open();
-    final nativeResume = await rpc.request('thread/resume', {'threadId': nativeId});
+    final nativeResume = await rpc.request('thread/resume', {
+      'threadId': nativeId,
+    });
     expect((nativeResume['thread'] as Map)['id'], nativeId);
     await rpc.close();
     rpc = await open(proxied: true);
     final proxyFork = await rpc.request('thread/fork', {
-      ...options(), 'threadId': nativeId, 'deferGoalContinuation': true,
-      'modelProvider': 'baocode', 'config': providerConfig,
+      ...options(),
+      'threadId': nativeId,
+      'deferGoalContinuation': true,
+      'modelProvider': 'baocode',
+      'config': providerConfig,
     });
     final proxyId = (proxyFork['thread'] as Map)['id'] as String;
     expect(proxyId, isNot(nativeId));
     await persistInertThread(rpc, proxyId);
     await rpc.close();
     rpc = await open(proxied: true);
-    final finalResume = await rpc.request('thread/resume', {'threadId': proxyId});
+    final finalResume = await rpc.request('thread/resume', {
+      'threadId': proxyId,
+    });
     expect((finalResume['thread'] as Map)['id'], proxyId);
-    final unchanged = await rpc.request('thread/read', {'threadId': original, 'includeTurns': false});
+    final unchanged = await rpc.request('thread/read', {
+      'threadId': original,
+      'includeTurns': false,
+    });
     expect((unchanged['thread'] as Map)['modelProvider'], 'baocode');
     expect(await configFile.readAsString(), before);
     // ignore: avoid_print
-    print('Native provider assertions complete: rejection, same-ID recovery, both explicit switch directions, and sparse MCP merge; no model turn.');
+    print(
+      'Native provider assertions complete: rejection, same-ID recovery, both explicit switch directions, and sparse MCP merge; no model turn.',
+    );
   } finally {
     await rpc?.close();
   }
@@ -601,41 +716,49 @@ class _Rpc {
     _stdout = process.stdout
         .transform(const Utf8Decoder(allowMalformed: true))
         .transform(const LineSplitter())
-        .listen((line) {
-          try {
-            final message = jsonDecode(line);
-            if (message is! Map) return;
-            final id = message['id'];
-            if (id is! int) return;
-            final pending = _pending.remove(id);
-            if (pending == null) return;
-            if (message['error'] != null) {
-              pending.completeError(
-                StateError('Codex protocol error: ${message['error']}'),
-              );
-            } else {
-              pending.complete(
-                Map<String, dynamic>.from(message['result'] as Map),
-              );
+        .listen(
+          (line) {
+            try {
+              final message = jsonDecode(line);
+              if (message is! Map) return;
+              final id = message['id'];
+              if (id is! int) return;
+              final pending = _pending.remove(id);
+              if (pending == null) return;
+              if (message['error'] != null) {
+                pending.completeError(
+                  StateError('Codex protocol error: ${message['error']}'),
+                );
+              } else {
+                pending.complete(
+                  Map<String, dynamic>.from(message['result'] as Map),
+                );
+              }
+            } on Object catch (error) {
+              for (final pending in _pending.values) {
+                pending.completeError(error);
+              }
+              _pending.clear();
             }
-          } on Object catch (error) {
-            for (final pending in _pending.values) {
-              pending.completeError(error);
-            }
-            _pending.clear();
-          }
-        }, onDone: () => _stdoutDone.complete(), onError: (Object error) {
-          _errors.add('stdout: $error');
-        });
+          },
+          onDone: () => _stdoutDone.complete(),
+          onError: (Object error) {
+            _errors.add('stdout: $error');
+          },
+        );
     _stderr = process.stderr
         .transform(const Utf8Decoder(allowMalformed: true))
         .transform(const LineSplitter())
-        .listen((line) {
-          _errors.add(line);
-          if (_errors.length > 20) _errors.removeAt(0);
-        }, onDone: () => _stderrDone.complete(), onError: (Object error) {
-          _errors.add('stderr: $error');
-        });
+        .listen(
+          (line) {
+            _errors.add(line);
+            if (_errors.length > 20) _errors.removeAt(0);
+          },
+          onDone: () => _stderrDone.complete(),
+          onError: (Object error) {
+            _errors.add('stderr: $error');
+          },
+        );
     process.exitCode.then((code) {
       for (final pending in _pending.values) {
         pending.completeError(

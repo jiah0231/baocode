@@ -254,7 +254,10 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
         });
       }
     }
-    setState(() { _foldOpen[fold.key] = open; _minimapChanged(); });
+    setState(() {
+      _foldOpen[fold.key] = open;
+      _minimapChanged();
+    });
   }
 
   /// What row [index] shows. Of a run under way the user has not opened

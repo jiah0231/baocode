@@ -1353,8 +1353,7 @@ class AgentSidePanelView extends StatelessWidget {
           maxPickerWidth: 180,
           padding: const EdgeInsets.only(left: 6),
         )
-      else if (onOpenInIde case final open?
-          when !ideIsDocumentPath(tab.path))
+      else if (onOpenInIde case final open? when !ideIsDocumentPath(tab.path))
         IdeActionButton(
           icon: Codicons.goToFile,
           tooltip: context.l10n.sidePanelOpenInIde,

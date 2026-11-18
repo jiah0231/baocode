@@ -388,6 +388,12 @@ abstract interface class LoadsHistory {
   Future<void> loadEarlier();
 }
 
+/// Offers what the user would likely send next, after a turn.
+abstract interface class SuggestsPrompts {
+  /// Null when no prompt suggestion is available.
+  String? get promptSuggestion;
+}
+
 /// Uses MCP servers, and lets the user see and manage them.
 abstract interface class ManagesMcpServers {
   /// As last reported; null until first asked for.

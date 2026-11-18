@@ -366,7 +366,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   /// A conversation named in another's steps or cards, opened as the
   /// sidebar would: in this window.
   void _openLinkedAgent(AgentThread thread) =>
-      _agentWindow ? _showInWindow(thread) : _openAgent(thread);
+      _localChatWindow ? _showInWindow(thread) : _openAgent(thread);
 
   /// The IDE's workspaces by folder, each kept once shown; [_noFolder]'s is
   /// its empty window.

@@ -67,7 +67,11 @@ Future<ChatSession> pumpSession(
   List<KernelDescriptor>? kernels,
   void Function(ChatSession)? beforeMount,
 }) async {
-  final session = ChatSession(kernel: kernel, kernels: kernels, historyCount: 0);
+  final session = ChatSession(
+    kernel: kernel,
+    kernels: kernels,
+    historyCount: 0,
+  );
   addTearDown(session.dispose);
   beforeMount?.call(session);
   await tester.pumpWidget(
@@ -474,11 +478,12 @@ void main() {
     final transport = _UiCodexTransport();
     late final KernelDescriptor descriptor;
     descriptor = KernelDescriptor(
-      id: 'codex', label: 'Codex', icon: Icons.data_object_rounded,
+      id: 'codex',
+      label: 'Codex',
+      icon: Icons.data_object_rounded,
       description: '',
-      create: (context) => CodexKernel(
-        descriptor, context, start: (_) async => transport,
-      ),
+      create: (context) =>
+          CodexKernel(descriptor, context, start: (_) async => transport),
     );
     final session = await pumpSession(
       tester,
@@ -493,9 +498,16 @@ void main() {
     expect(session.kernels, contains(same(descriptor)));
     session.send(const ComposerMessage(text: '把输入框改成随内容增高'));
     await runWhile(tester, () => session.pendingInteraction == null);
-    expect(transport.methods, containsAllInOrder([
-      'initialize', 'skills/list', 'config/read', 'thread/start', 'turn/start',
-    ]));
+    expect(
+      transport.methods,
+      containsAllInOrder([
+        'initialize',
+        'skills/list',
+        'config/read',
+        'thread/start',
+        'turn/start',
+      ]),
+    );
     expect(find.byType(InteractionPanel), findsOneWidget);
     expect(find.text('Run command'), findsOneWidget);
     expect(find.text('Allow once'), findsOneWidget);

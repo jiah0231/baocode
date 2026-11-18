@@ -41,10 +41,7 @@ class ToolResultTally {
     var brought = false;
     for (final block in content) {
       switch (block) {
-        case {
-              'type': 'tool_use' || 'server_tool_use',
-              'id': final String id,
-            }
+        case {'type': 'tool_use' || 'server_tool_use', 'id': final String id}
             when line['type'] == 'assistant':
           _names[id] = '${block['name'] ?? 'tool'}';
         case {'type': 'tool_result', 'tool_use_id': final String id}

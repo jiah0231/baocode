@@ -104,25 +104,29 @@ List<int> archiveEntry(String name, {String type = '0', String link = ''}) {
 }
 
 void main() {
-  test('reviewed official protocol fixture stays inside the supported family', () {
-    final data = jsonDecode(
-      File('test/fixtures/codex/official_release_0_166_0.json').readAsStringSync(),
-    ) as Map<String, dynamic>;
-    final assets = data['assets'] as List;
-    expect(assets, hasLength(6));
-    for (final asset in assets.cast<Map<String, dynamic>>()) {
-      final name = asset['name'] as String;
-      final target = name.substring('codex-package-'.length, name.length - 7);
-      final release = CodexInstallRelease.fromJson(data, target);
-      release.validate();
-      expect(release.version, '0.166.0');
-      expect(
-        CodexAppTools.supportsRestrictedBots('baocode/${release.version}'),
-        isTrue,
-      );
-    }
-    expect(CodexAppTools.supportsRestrictedBots('baocode/0.167.0'), isFalse);
-  });
+  test(
+    'reviewed official protocol fixture stays inside the supported family',
+    () {
+      final data = jsonDecode(
+        File('test/fixtures/codex/official_release_0_166_0.json')
+            .readAsStringSync(),
+      ) as Map<String, dynamic>;
+      final assets = data['assets'] as List;
+      expect(assets, hasLength(6));
+      for (final asset in assets.cast<Map<String, dynamic>>()) {
+        final name = asset['name'] as String;
+        final target = name.substring('codex-package-'.length, name.length - 7);
+        final release = CodexInstallRelease.fromJson(data, target);
+        release.validate();
+        expect(release.version, '0.166.0');
+        expect(
+          CodexAppTools.supportsRestrictedBots('baocode/${release.version}'),
+          isTrue,
+        );
+      }
+      expect(CodexAppTools.supportsRestrictedBots('baocode/0.167.0'), isFalse);
+    },
+  );
 
   test('only complete official stable package with a digest is accepted', () {
     final release = CodexInstallRelease.fromJson(metadata(), target);

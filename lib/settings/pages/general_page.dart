@@ -65,6 +65,7 @@ class GeneralSettingsPage extends StatelessWidget {
 
   /// The local Codex CLI; remote hosts resolve their own executable.
   final Future<LocalCodexStatus?> Function()? codexStatus;
+
   /// BaoCode Bash, where it is offered (Windows); none under test.
   final BaoBash? bash;
 

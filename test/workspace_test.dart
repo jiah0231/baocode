@@ -725,10 +725,7 @@ void main() {
       isNot(contains(modelSettingKey(KernelChoiceKind.context, '@gw/m'))),
     );
     expect(settings[modelSettingKey(KernelChoiceKind.context, 'opus')], '1m');
-    expect(
-      settings[modelSettingKey(KernelChoiceKind.effort, '@gw/m')],
-      'high',
-    );
+    expect(settings[modelSettingKey(KernelChoiceKind.effort, '@gw/m')], 'high');
 
     // Once: one picked since stays.
     (store.preferences['settings'] as Map)[modelSettingKey(

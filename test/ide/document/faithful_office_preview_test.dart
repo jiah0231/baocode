@@ -144,7 +144,11 @@ void main() {
       expect(bounds['y'], 28.0 * tester.view.devicePixelRatio);
       await host.event(first, 'openExternal');
       await host.event(first, 'reload');
-      expect(externalOpens, 1, reason: 'Unloaded hosts cannot request actions.');
+      expect(
+        externalOpens,
+        1,
+        reason: 'Unloaded hosts cannot request actions.',
+      );
       expect(reads, 1);
       await host.event(first, 'ready');
       expect(host.messages.first['theme']['canOpenExternal'], isTrue);
@@ -165,7 +169,11 @@ void main() {
       expect(host.of('dispose').map((a) => a['id']), contains(first));
       await host.event(first, 'reload');
       await host.event(first, 'openExternal');
-      expect(reads, 2, reason: 'Repeated events from a disposed host are ignored.');
+      expect(
+        reads,
+        2,
+        reason: 'Repeated events from a disposed host are ignored.',
+      );
       expect(externalOpens, 2);
       await host.event(second, 'ready');
       await host.event(second, 'loaded');

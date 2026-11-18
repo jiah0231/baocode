@@ -251,10 +251,6 @@ Future<Uint8List> readBytesThrough(IdeFileService files, String path) async {
   return utf8.encode(await files.read(path, force: true));
 }
 
-/// Whether [files] are this machine's: [listLocalProjectFiles] lists them.
-bool isLocalFileService(IdeFileService files) =>
-    files is platform.LocalIdeFileService;
-
 /// As [listProjectFiles] for a local project, on the calling isolate: for
 /// one that is not the UI's.
 IdeFileListing listLocalProjectFiles(String root, int limit) =>

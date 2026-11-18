@@ -55,6 +55,10 @@ class _RangeFiles extends _TextOnlyFiles implements IdeRangeFiles {
   }
 
   @override
+  Future<void> appendBytes(String path, int offset, Uint8List bytes) async =>
+      throw StateError('A preview must not write');
+
+  @override
   Future<int> sizeOf(List<String> paths, {int? limit}) async {
     sizeRequests++;
     return size;

@@ -133,7 +133,8 @@ void main() {
     expect(button(tester).onPressed, isNull);
     expect(button(tester).tooltip, contains('Save a local copy'));
     expect(
-      tester.widget<IdeDocumentPreview>(find.byType(IdeDocumentPreview))
+      tester
+          .widget<IdeDocumentPreview>(find.byType(IdeDocumentPreview))
           .onOpenInDefaultApp,
       isNull,
     );
@@ -160,27 +161,29 @@ void main() {
     }
   });
 
-  documentTest('missing files and directories report failure without launching', (
-    tester,
-  ) async {
-    final opened = <String>[];
-    final folder = Directory(p.join(directory.path, 'folder.doc'))..createSync();
-    for (final path in [p.join(directory.path, 'missing.doc'), folder.path]) {
-      await tester.pumpWidget(
-        view(
-          FileOpenRequest(path),
-          open: (path) async {
-            opened.add(path);
-            return true;
-          },
-        ),
-      );
-      await press(tester);
-      await tester.pump();
-      expect(find.textContaining('Could not open this file'), findsOneWidget);
-      expect(opened, isEmpty);
-    }
-  });
+  documentTest(
+    'missing files and directories report failure without launching',
+    (tester) async {
+      final opened = <String>[];
+      final folder = Directory(p.join(directory.path, 'folder.doc'))
+        ..createSync();
+      for (final path in [p.join(directory.path, 'missing.doc'), folder.path]) {
+        await tester.pumpWidget(
+          view(
+            FileOpenRequest(path),
+            open: (path) async {
+              opened.add(path);
+              return true;
+            },
+          ),
+        );
+        await press(tester);
+        await tester.pump();
+        expect(find.textContaining('Could not open this file'), findsOneWidget);
+        expect(opened, isEmpty);
+      }
+    },
+  );
 
   documentTest('launcher false and thrown errors are visible and retryable', (
     tester,
@@ -274,12 +277,13 @@ void main() {
     expect(button(tester).onPressed, isNotNull);
   });
 
-  documentTest('ordinary text keeps its filename', (
-    tester,
-  ) async {
+  documentTest('ordinary text keeps its filename', (tester) async {
     final path = localFile('notes.txt');
     await tester.pumpWidget(view(FileOpenRequest(path)));
-    expect(find.textContaining('notes.txt', findRichText: true), findsOneWidget);
+    expect(
+      find.textContaining('notes.txt', findRichText: true),
+      findsOneWidget,
+    );
     expect(find.byKey(actionKey), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });

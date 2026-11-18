@@ -66,84 +66,97 @@ void main() {
       String file(String relative) =>
           paths.normalize(paths.join(root, relative));
       final hostName = paths.style == p.Style.windows ? 'Windows' : 'POSIX';
-      testWidgets('$hostName: a link to a file, and code naming one, have its icon and '
-          'no underline; the icon opens it too', (tester) async {
-        final existence = FileExistence((path) async => path == file('lib/b.dart'));
-        addTearDown(existence.dispose);
-        final opened = <String>[];
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: FileOpenScope(
-                root: root,
-                paths: paths,
-                onOpen: (request) => opened.add(request.path),
-                existence: existence,
-                child: const MarkdownView(
-                  'See [a.dart](lib/a.dart#L3), `lib/b.dart`, `lib/c.dart` '
-                  'and [the site](https://baocode.dev).',
+      testWidgets(
+        '$hostName: a link to a file, and code naming one, have its icon and '
+        'no underline; the icon opens it too',
+        (tester) async {
+          final existence = FileExistence(
+            (path) async => path == file('lib/b.dart'),
+          );
+          addTearDown(existence.dispose);
+          final opened = <String>[];
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Scaffold(
+                body: FileOpenScope(
+                  root: root,
+                  paths: paths,
+                  onOpen: (request) => opened.add(request.path),
+                  existence: existence,
+                  child: const MarkdownView(
+                    'See [a.dart](lib/a.dart#L3), `lib/b.dart`, `lib/c.dart` '
+                    'and [the site](https://baocode.dev).',
+                  ),
                 ),
               ),
             ),
-          ),
-        );
-        await tester.pumpAndSettle();
-        expect(
-          [
-            for (final icon in tester.widgetList<FileIcon>(find.byType(FileIcon)))
-              icon.path,
-          ],
-          [file('lib/a.dart'), file('lib/b.dart')],
-        );
-        for (final span in leaves(tester)) {
-          expect(span.style?.decoration, isNot(TextDecoration.underline));
-        }
-        await tester.tap(find.byType(FileIcon).first);
-        await tester.tap(find.byType(FileIcon).last);
-        expect(opened, [file('lib/a.dart'), file('lib/b.dart')]);
-      });
+          );
+          await tester.pumpAndSettle();
+          expect(
+            [
+              for (final icon in tester.widgetList<FileIcon>(
+                find.byType(FileIcon),
+              ))
+                icon.path,
+            ],
+            [file('lib/a.dart'), file('lib/b.dart')],
+          );
+          for (final span in leaves(tester)) {
+            expect(span.style?.decoration, isNot(TextDecoration.underline));
+          }
+          await tester.tap(find.byType(FileIcon).first);
+          await tester.tap(find.byType(FileIcon).last);
+          expect(opened, [file('lib/a.dart'), file('lib/b.dart')]);
+        },
+      );
 
-      testWidgets('$hostName: a link to a folder has a folder\'s icon; a file without an '
-          'extension, once found, a file\'s', (tester) async {
-        final existence = FileExistence(
-          (path) async => {file('LICENSE'), file('.gitignore')}.contains(path),
-        );
-        addTearDown(existence.dispose);
-        await tester.pumpWidget(
-          MaterialApp(
-            home: Scaffold(
-              body: FileOpenScope(
-                root: root,
-                paths: paths,
-                onOpen: (_) {},
-                existence: existence,
-                child: const MarkdownView(
-                  '[lib/ide](lib/ide), [side_panel/](lib/chat/side_panel/), '
-                  '[.github](.github), [LICENSE](LICENSE), '
-                  '[.gitignore](.gitignore)',
+      testWidgets(
+        '$hostName: a link to a folder has a folder\'s icon; a file without an '
+        'extension, once found, a file\'s',
+        (tester) async {
+          final existence = FileExistence(
+            (path) async =>
+                {file('LICENSE'), file('.gitignore')}.contains(path),
+          );
+          addTearDown(existence.dispose);
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Scaffold(
+                body: FileOpenScope(
+                  root: root,
+                  paths: paths,
+                  onOpen: (_) {},
+                  existence: existence,
+                  child: const MarkdownView(
+                    '[lib/ide](lib/ide), [side_panel/](lib/chat/side_panel/), '
+                    '[.github](.github), [LICENSE](LICENSE), '
+                    '[.gitignore](.gitignore)',
+                  ),
                 ),
               ),
             ),
-          ),
-        );
-        await tester.pumpAndSettle();
-        expect(
-          [
-            for (final icon in tester.widgetList<FolderIcon>(
-              find.byType(FolderIcon),
-            ))
-              icon.path,
-          ],
-          [file('lib/ide'), file('lib/chat/side_panel'), file('.github')],
-        );
-        expect(
-          [
-            for (final icon in tester.widgetList<FileIcon>(find.byType(FileIcon)))
-              icon.path,
-          ],
-          [file('LICENSE'), file('.gitignore')],
-        );
-      });
+          );
+          await tester.pumpAndSettle();
+          expect(
+            [
+              for (final icon in tester.widgetList<FolderIcon>(
+                find.byType(FolderIcon),
+              ))
+                icon.path,
+            ],
+            [file('lib/ide'), file('lib/chat/side_panel'), file('.github')],
+          );
+          expect(
+            [
+              for (final icon in tester.widgetList<FileIcon>(
+                find.byType(FileIcon),
+              ))
+                icon.path,
+            ],
+            [file('LICENSE'), file('.gitignore')],
+          );
+        },
+      );
     }
   });
 
@@ -167,7 +180,9 @@ void main() {
   for (final paths in [p.posix, p.windows]) {
     final root = paths.style == p.Style.windows ? r'C:\p' : '/p';
     final hostName = paths.style == p.Style.windows ? 'Windows' : 'POSIX';
-    testWidgets('$hostName: a file link has its menu on a right click', (tester) async {
+    testWidgets('$hostName: a file link has its menu on a right click', (
+      tester,
+    ) async {
       final existence = FileExistence((_) async => true);
       addTearDown(existence.dispose);
       await tester.pumpWidget(
