@@ -8,7 +8,8 @@ import 'package:baocode/chat/chat_models.dart';
 import 'package:baocode/bots/bot_folders.dart';
 import 'package:baocode/bots/bot_groups.dart';
 import 'package:baocode/bots/bots.dart';
-import 'package:baocode/bots/bot_prompt.dart' show botReplyProtocolReminder;
+import 'package:baocode/bots/bot_prompt.dart'
+    show BotSuggestions, botReplyProtocolReminder;
 import 'package:baocode/kernel/claude_code/claude_code_transport.dart';
 import 'package:baocode/kernel/agent_kernel.dart';
 import 'package:baocode/kernel/claude_code/claude_code_kernel.dart';
@@ -557,6 +558,29 @@ void main() {
             thread.session.itemAt(i),
         ].whereType<UserMessageItem>().last;
         expect(user.text, '在吗');
+
+        if (!bySession) {
+          // A real Bot kernel supports queues. Being in a turn therefore
+          // does not reject the send or consume an undelivered off note.
+          expect(thread.session.isStreaming, isTrue);
+          expect(thread.session.canQueue, isTrue);
+          expect(thread.session.canSend, isTrue);
+          await bridge.handle(LinkMethods.send, {
+            'bot': bot.id,
+            'text': 'Synthetic follow-up',
+            'suggest': false,
+          });
+          for (var i = 0; i < 100 && sent.users.length < 2; i++) {
+            await Future<void>.delayed(const Duration(milliseconds: 20));
+          }
+          expect(sent.users, hasLength(2));
+          expect(jsonEncode(sent.users.last), contains(BotSuggestions.off));
+          expect(
+            bots.suggestionNotes(bot, wanted: false),
+            isEmpty,
+            reason: 'The off transition was delivered, not rejected as busy',
+          );
+        }
       },
     );
   }
