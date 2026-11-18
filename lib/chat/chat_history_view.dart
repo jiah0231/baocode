@@ -171,7 +171,13 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   int _minimapBuiltRevision = 0;
   int _minimapFrom = 0;
 
+  // Earliest row whose visibility may have changed since the last build.
+  int? _rowsDirtyFrom;
+
   void _minimapChanged([int from = 0]) {
+    _rowsDirtyFrom = _rowsDirtyFrom == null
+        ? from
+        : math.min(_rowsDirtyFrom!, from);
     _minimapFrom = _minimapRevision == _minimapBuiltRevision
         ? from
         : math.min(_minimapFrom, from);
@@ -2555,12 +2561,36 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
   /// The rows as the items show now. The list is told of each row come or
   /// gone, so the extents it measured stay with their rows.
   void _syncRows() {
-    final rows = [
-      for (var index = 0; index < _feed.itemCount; index++)
+    // A streaming text delta can only affect its changed tail. Fold changes
+    // invalidate from zero; transient editing/animation and custom trailing
+    // widgets retain the conservative full scan.
+    final dirty = _rowsDirtyFrom;
+    _rowsDirtyFrom = null;
+    final from = dirty != null &&
+            widget.after == null &&
+            _editingIndex == null &&
+            _leaving.isEmpty &&
+            _entering.isEmpty
+        ? dirty.clamp(0, _feed.itemCount)
+        : 0;
+    var low = 0;
+    var high = _rows.length;
+    while (low < high) {
+      final mid = (low + high) >> 1;
+      if (_rows[mid] < from) {
+        low = mid + 1;
+      } else {
+        high = mid;
+      }
+    }
+    final prefix = low;
+    final tail = [
+      for (var index = from; index < _feed.itemCount; index++)
         if (_hasRow(index)) index,
     ];
-    if (listEquals(rows, _rows)) return;
+    if (listEquals(tail, _rows.sublist(prefix))) return;
     final before = _rows;
+    final rows = [...before.take(prefix), ...tail];
     _rows = rows;
     // Not laid out yet, or with other rows (another conversation's): it
     // takes them as it finds them.
