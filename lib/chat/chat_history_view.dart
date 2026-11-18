@@ -2566,7 +2566,8 @@ class _ChatHistoryViewState extends State<ChatHistoryView>
     // widgets retain the conservative full scan.
     final dirty = _rowsDirtyFrom;
     _rowsDirtyFrom = null;
-    final from = dirty != null &&
+    final from =
+        dirty != null &&
             widget.after == null &&
             _editingIndex == null &&
             _leaving.isEmpty &&
