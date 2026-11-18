@@ -193,7 +193,11 @@ jobs:
           Remove-Item Env:BAOCODE_CODEX_OFFICIAL_SMOKE -ErrorAction SilentlyContinue
           $tests = @(
             'test/bots/bots_test.dart',
-            'test/bots/codex_bot_mobile_test.dart',
+            'test/link/link_host_test.dart',
+            'test/link/workspace_bridge_test.dart',
+            'test/window/app_windows_test.dart',
+            'test/workspace/session_tools_test.dart',
+            'test/ide/file_index_store_test.dart',
             'test/codex_fork_test.dart',
             'test/chat/session_query_test.dart',
             'test/chat/session_query_queue_test.dart',
