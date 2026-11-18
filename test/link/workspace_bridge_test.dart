@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:path/path.dart' as p;
+
 import 'package:bao_link/bao_link.dart';
 import 'package:bao_remote/claude.dart' show ClaudeHistoryPage;
 import 'package:baocode/chat/chat_session.dart' show ComposerMessage, UserPlace;
@@ -875,7 +877,7 @@ void main() {
       peer: desktop,
       device: () => const DeviceInfo(name: 'PC', kind: 'pc', system: 'Win'),
       bots: bots,
-      uploadsOf: (_, _) => '${uploads.path}/phone',
+      uploadsOf: (_, _) => p.join(uploads.path, 'phone'),
     );
     addTearDown(withBots.dispose);
     final bytes = [80, 75, 3, 4, 0, 1, 2];
@@ -884,8 +886,8 @@ void main() {
       {'bot': 'assistant', 'name': name, 'data': base64.encode(bytes)},
     ) as Map;
     final first = (await upload('报价单.xlsx'))['path'] as String;
-    expect(first, startsWith('${uploads.path}/phone/'));
-    expect(first, endsWith('/报价单.xlsx'));
+    expect(p.isWithin(p.join(uploads.path, 'phone'), first), isTrue);
+    expect(p.basename(first), '报价单.xlsx');
     expect(File(first).readAsBytesSync(), bytes);
     // The same name again: a folder of its own, the first one kept.
     final second = (await upload('报价单.xlsx'))['path'] as String;

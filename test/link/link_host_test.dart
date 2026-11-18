@@ -840,9 +840,9 @@ void main() {
       filesOf: (project) => (
         files: _MemoryFiles({
           '${made.path}/web.code-workspace': '{}',
-          '/code/site/index.html': '<p>',
-          '/code/api/main.go': 'package main',
-          '/code/api/go.mod': 'module api',
+          p.absolute('/code/site/index.html'): '<p>',
+          p.absolute('/code/api/main.go'): 'package main',
+          p.absolute('/code/api/go.mod'): 'module api',
           '${made.path}/shot.png': 'png',
         }),
         paths: p.context,
