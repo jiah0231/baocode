@@ -25,8 +25,6 @@ const BRIDGE = 1;
 // What BaoCode may ask of this version, beyond BRIDGE 1's first methods
 // (tabs.*, cdp, detach, watch): told in the hello.
 const CAPABILITIES = ['cdp.session', 'call', 'subscribe', 'configure'];
-// What the toolbar button opens while BaoCode is not there to connect to.
-const HELP = 'https://baocode.dev/download#browser';
 
 let port = null;
 let connected = false; // To BaoCode, not just its host.
@@ -111,7 +109,7 @@ function showState() {
   chrome.action.setTitle({
     title:
       watching !== null
-        ? 'BaoCode is watching: click when you are done'
+        ? 'BaoCode is watching: open the sidebar to finish'
         : connected
           ? 'BaoCode: connected'
           : 'BaoCode: not running',
@@ -463,26 +461,49 @@ async function share(tab, group) {
   await chrome.tabGroups.update(groupId, { title: GROUP, color: 'yellow' });
 }
 
-// The toolbar button: shares the tab in front with BaoCode, or stops; while
-// BaoCode watches the user, says they are done. Without BaoCode, tells how
-// to get it.
-chrome.action.onClicked.addListener(async (tab) => {
-  connect();
-  if (!(await connection())) {
-    await chrome.tabs.create({ url: HELP, index: tab.index + 1 });
-    return;
-  }
-  if (watching !== null) {
-    event('watchDone', { tabId: watching });
-    return;
-  }
-  if (await isShared(tab)) {
-    await chrome.tabs.ungroup(tab.id);
-    await detach(tab.id);
-  } else {
-    await share(tab);
-  }
+// The toolbar opens the native sidebar. Sharing is a separate explicit
+// action there, never a side effect of opening the panel.
+chrome.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error);
+
+chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  if (sender.id !== chrome.runtime.id ||
+      sender.url !== chrome.runtime.getURL('sidepanel.html') ||
+      !['panel.status', 'panel.share'].includes(message?.type)) return;
+  panelAction(message).then(reply, () => reply({ error: true }));
+  return true;
 });
+
+async function panelAction({ type, windowId, tabId }) {
+  if (!Number.isInteger(windowId) || windowId < 0) return { error: true };
+  connect();
+  const [tab] = await chrome.tabs.query({ active: true, windowId });
+  if (type === 'panel.share') {
+    if (!connected || !tab || tab.id !== tabId || !shareable(tab)) {
+      return { error: true };
+    }
+    if (watching === tab.id) {
+      event('watchDone', { tabId: tab.id });
+    } else if (await isShared(tab)) {
+      await chrome.tabs.ungroup(tab.id);
+      await detach(tab.id);
+    } else {
+      await share(tab);
+    }
+  }
+  return {
+    connected,
+    tabId: tab?.id ?? null,
+    title: tab?.title ?? '',
+    canShare: shareable(tab),
+    shared: !!tab && await isShared(tab),
+    watching: !!tab && tab.id === watching,
+  };
+}
+
+function shareable(tab) {
+  return Number.isInteger(tab?.id) &&
+      /^(https?:|file:)/i.test(tab.url ?? '');
+}
 
 // --- The debugger, attached to a shared tab the first time BaoCode asks
 // it something; what it tells goes to BaoCode.

@@ -1,0 +1,15 @@
+:root { color-scheme: light dark; font: 14px/1.55 system-ui, sans-serif; color: light-dark(#22252c, #e8eaf0); background: light-dark(#faf9f7, #191b20); }
+* { box-sizing: border-box; }
+body { margin: 0; }
+header { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid light-dark(#e6e2dc, #353844); }
+header img { width: 24px; height: 24px; }
+#connection { margin-inline-start: auto; font-size: 12px; }
+#connection::before { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-inline-end: 6px; background: #8c8181; }
+#connection[data-connected="true"]::before { background: #329465; }
+main { padding: 16px; }
+section { padding: 16px; border: 1px solid light-dark(#e6e2dc, #353844); border-radius: 16px; background: light-dark(#fff, #22252d); }
+h1 { margin: 0; font-size: 15px; }
+p { color: light-dark(#625e65, #adaebc); overflow-wrap: anywhere; }
+button { font: inherit; border: 0; border-radius: 999px; padding: 7px 14px; background: light-dark(#e0eafa, #334766); color: inherit; cursor: pointer; }
+button:disabled { opacity: .55; cursor: default; }
+#hint { margin: 10px 0 0; font-size: 12px; }
