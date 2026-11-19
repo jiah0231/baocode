@@ -22,8 +22,11 @@ function fixture() {
       onStartup: listen('startup'), onInstalled: listen('installed'),
       async getContexts({contextTypes, documentIds}) {
         assert.equal(contextTypes[0], 'SIDE_PANEL');
-        const windowId = {'panel-a': 4, 'panel-b': 12}[documentIds[0]];
-        return windowId == null ? [] : [{windowId}];
+        const [documentId] = documentIds;
+        const windowId = {'panel-a': 4, 'panel-b': 12, 'global-a': -1, 'global-b': -1, forged: -1}[documentId];
+        return windowId == null ? [] : [{
+          contextType: 'SIDE_PANEL', documentId: documentId === 'forged' ? 'global-a' : documentId, windowId,
+        }];
       },
       connectNative: () => ({onMessage: listen('native'), onDisconnect: listen('disconnect'), postMessage(message) { posted.push(message); }}),
     },
@@ -109,4 +112,28 @@ test('chat uses the trusted sidebar document window, not caller supplied tab or 
   listeners.disconnect();
   assert.equal((await resultB).error, 'offline');
   assert.equal(counts().grouped, 0);
+});
+
+test('global side panel without a window ID uses a distinct verified document scope', async () => {
+  const {listeners, url, posted} = fixture();
+  await listeners.native({type: 'bridge', connected: true});
+  const call = (documentId, action, extra = {}) => new Promise(resolve => {
+    assert.equal(listeners.message({type: 'panel.chat', windowId: 4, action, ...extra},
+      {id: 'fixture', url, documentId}, resolve), true);
+  });
+  assert.equal((await call('forged', 'snapshot')).error, 'window');
+  const pending = [
+    call('global-a', 'claim', {code: 'ABCDEFGHJK'}),
+    call('global-a', 'snapshot'),
+    call('global-b', 'snapshot'),
+  ];
+  await new Promise(setImmediate);
+  const [a, again, b] = posted.filter(message => message.type === 'sidebarChat');
+  assert.ok(a.windowId >= 2 ** 32);
+  assert.equal(a.windowId, again.windowId);
+  assert.notEqual(a.windowId, b.windowId);
+  for (const request of [a, again, b]) {
+    await listeners.native({type: 'sidebarChatResult', requestId: request.requestId, result: {linked: request !== b}});
+  }
+  assert.deepEqual((await Promise.all(pending)).map(result => result.linked), [true, true, false]);
 });

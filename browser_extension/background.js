@@ -27,6 +27,9 @@ const BRIDGE = 1;
 const CAPABILITIES = ['cdp.session', 'call', 'subscribe', 'configure', 'sidebar.chat'];
 
 const sidebarRequests = new Map();
+const windowlessPanelScopes = new Map();
+// Separate legacy wire keys from Chromium's signed 32-bit window IDs.
+let nextWindowlessScope = 2 ** 32;
 let port = null;
 let connected = false; // To BaoCode, not just its host.
 const attached = new Set(); // Tabs the debugger is attached to.
@@ -493,7 +496,9 @@ async function sidebarChat(message, documentId) {
   const [context] = await chrome.runtime.getContexts({
     contextTypes: ['SIDE_PANEL'], documentIds: [documentId],
   });
-  if (!Number.isInteger(context?.windowId) || context.windowId < 0) {
+  if (context?.contextType !== 'SIDE_PANEL' || context.documentId !== documentId ||
+      !Number.isInteger(context.windowId) || context.windowId < -1 ||
+      context.windowId >= 2 ** 31) {
     return { error: 'window' };
   }
   if (!connected || sidebarRequests.size >= 24) return { error: 'unavailable' };
@@ -502,6 +507,19 @@ async function sidebarChat(message, documentId) {
       (action === 'claim' && !/^[A-Z2-9]{10}$/.test(code ?? '')) ||
       (action === 'send' && (typeof text !== 'string' || text.length > 8000 ||
         typeof messageId !== 'string' || messageId.length > 80))) return { error: 'invalid' };
+  // Global side panels can have windowId -1. Bind to the verified panel
+  // document instead; closing/recreating it requires a new invitation.
+  let scope = context.windowId;
+  if (scope === -1) {
+    scope = windowlessPanelScopes.get(documentId);
+    if (scope === undefined) {
+      scope = nextWindowlessScope++;
+      if (windowlessPanelScopes.size >= 128) {
+        windowlessPanelScopes.delete(windowlessPanelScopes.keys().next().value);
+      }
+      windowlessPanelScopes.set(documentId, scope);
+    }
+  }
   return new Promise(resolve => {
     const requestId = crypto.randomUUID();
     const finish = (result) => {
@@ -511,7 +529,7 @@ async function sidebarChat(message, documentId) {
     };
     const timeout = setTimeout(() => finish({ error: 'timeout' }), 1400);
     sidebarRequests.set(requestId, finish);
-    send({ type: 'sidebarChat', requestId, windowId: context.windowId, action,
+    send({ type: 'sidebarChat', requestId, windowId: scope, action,
       ...(action === 'claim' ? {code} : action === 'send' ? {text, messageId} : {}) });
   });
 }
