@@ -10,6 +10,22 @@
 <body>
 <header><img src="icons/icon-32.png" alt=""><strong>BaoCode</strong><span id="connection" role="status"></span></header>
 <main>
+  <section id="chat">
+    <h1 id="chatTitle"></h1>
+    <p id="chatStatus" role="status"></p>
+    <form id="pair" hidden>
+      <input id="code" maxlength="10" spellcheck="false" autocomplete="off">
+      <button id="link" type="submit"></button>
+    </form>
+    <div id="conversation" hidden>
+      <div id="messages"></div>
+      <form id="composer">
+        <textarea id="question" rows="2" maxlength="8000"></textarea>
+        <button id="send" type="submit"></button>
+      </form>
+      <button id="unlink" type="button"></button>
+    </div>
+  </section>
   <section aria-labelledby="heading">
     <h1 id="heading"></h1>
     <p id="tab"></p>

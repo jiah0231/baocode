@@ -13,3 +13,12 @@ p { color: light-dark(#625e65, #adaebc); overflow-wrap: anywhere; }
 button { font: inherit; border: 0; border-radius: 999px; padding: 7px 14px; background: light-dark(#e0eafa, #334766); color: inherit; cursor: pointer; }
 button:disabled { opacity: .55; cursor: default; }
 #hint { margin: 10px 0 0; font-size: 12px; }
+
+#chat + section { margin-top: 12px; }
+#chat form:not([hidden]) { display: flex; align-items: flex-end; gap: 8px; margin-top: 8px; }
+#chat input, #chat textarea { min-width: 0; flex: 1; font: inherit; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 6px; padding: 8px; }
+#chat textarea { resize: vertical; }
+#messages { max-height: 50vh; overflow: auto; }
+#messages article { margin-block: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#messages strong { display: block; margin-bottom: 2px; }
+#unlink { margin-top: 8px; }

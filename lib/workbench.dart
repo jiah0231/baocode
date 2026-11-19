@@ -1683,6 +1683,44 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     }
   }
 
+  Future<void> _inviteBrowserSidebar(AgentThread thread) async {
+    final zh = Localizations.localeOf(context).languageCode == 'zh';
+    final workspace = _workspace;
+    final session = thread.session;
+    final code = BrowserBridge.instance.sidebarChat.invite(
+      () => workspace.threads.contains(thread) &&
+              thread.isOpen &&
+              identical(thread.session, session) &&
+              !thread.archived
+          ? session
+          : null,
+      () => thread.title,
+    );
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(zh ? '连接浏览器侧栏' : 'Connect browser sidebar'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(zh
+                ? '在浏览器侧栏输入此码，即可查看并继续「${thread.title}」。两分钟内有效，仅可使用一次。'
+                : 'Enter this code in the sidebar to view and continue “${thread.title}”. It expires after two minutes and can only be used once.'),
+            const SizedBox(height: 12),
+            SelectableText(code),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(MaterialLocalizations.of(context).closeButtonLabel),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// The window's commands the palette runs, as they can be now.
   List<PaletteAction> _paletteActions() {
     final l10n = context.l10n;
@@ -1714,6 +1752,25 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       ?action(resetFeatureTipsCommandId, Codicons.discard),
       ?action(starOnGitHubCommandId, Codicons.star),
       ?action(browserWelcomeCommandId, Codicons.globe),
+      if (BrowserBridge.instance.supported && BrowserBridge.instance.enabled) ...[
+        if ((_agentThread ?? _workspace.current) case final thread? when !thread.archived)
+          PaletteAction(
+            id: 'baocode.browserSidebar.connect',
+            label: Localizations.localeOf(context).languageCode == 'zh'
+                ? '连接浏览器侧栏到当前会话'
+                : 'Connect browser sidebar to this conversation',
+            icon: Codicons.globe,
+            run: () => unawaited(_inviteBrowserSidebar(thread)),
+          ),
+        PaletteAction(
+          id: 'baocode.browserSidebar.disconnect',
+          label: Localizations.localeOf(context).languageCode == 'zh'
+              ? '断开所有浏览器侧栏会话'
+              : 'Disconnect all browser sidebar chats',
+          icon: Codicons.globe,
+          run: BrowserBridge.instance.sidebarChat.revoke,
+        ),
+      ],
       ?action(stashWelcomeCommandId, Codicons.note),
       ?action(modelWelcomeCommandId, Codicons.sparkle),
       ?action(

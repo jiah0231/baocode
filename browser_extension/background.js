@@ -24,8 +24,9 @@ const PROTOCOL = '1.3';
 const BRIDGE = 1;
 // What BaoCode may ask of this version, beyond BRIDGE 1's first methods
 // (tabs.*, cdp, detach, watch): told in the hello.
-const CAPABILITIES = ['cdp.session', 'call', 'subscribe', 'configure'];
+const CAPABILITIES = ['cdp.session', 'call', 'subscribe', 'configure', 'sidebar.chat'];
 
+const sidebarRequests = new Map();
 let port = null;
 let connected = false; // To BaoCode, not just its host.
 const attached = new Set(); // Tabs the debugger is attached to.
@@ -59,6 +60,7 @@ function setConnected(value) {
   // BaoCode gone: nothing watches any more, and the next one says again
   // what it wants.
   if (!value) {
+    for (const finish of sidebarRequests.values()) finish({ error: 'offline' });
     watching = null;
     config = { ...DEFAULTS };
     subscribed.clear();
@@ -145,6 +147,10 @@ function event(name, fields) {
 }
 
 async function received(message) {
+  if (message.type === 'sidebarChatResult') {
+    sidebarRequests.get(message.requestId)?.(message.result);
+    return;
+  }
   if (message.type === 'bridge') {
     setConnected(message.connected === true);
     return;
@@ -472,6 +478,43 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   panelAction(message).then(reply, () => reply({ error: true }));
   return true;
 });
+
+// Never infer the chat's window from the focused tab. Resolve the actual
+// panel document in the browser, and fail closed if it is not available.
+chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  if (message?.type !== 'panel.chat' || sender.id !== chrome.runtime.id ||
+      sender.url !== chrome.runtime.getURL('sidepanel.html') || !sender.documentId) return;
+  sidebarChat(message, sender.documentId).then(reply, () => reply({ error: 'unavailable' }));
+  return true;
+});
+
+async function sidebarChat(message, documentId) {
+  if (!connected) return { error: 'offline' };
+  const [context] = await chrome.runtime.getContexts({
+    contextTypes: ['SIDE_PANEL'], documentIds: [documentId],
+  });
+  if (!Number.isInteger(context?.windowId) || context.windowId < 0) {
+    return { error: 'window' };
+  }
+  if (!connected || sidebarRequests.size >= 24) return { error: 'unavailable' };
+  const {action, code, text, messageId} = message;
+  if (!['claim', 'unlink', 'snapshot', 'send'].includes(action) ||
+      (action === 'claim' && !/^[A-Z2-9]{10}$/.test(code ?? '')) ||
+      (action === 'send' && (typeof text !== 'string' || text.length > 8000 ||
+        typeof messageId !== 'string' || messageId.length > 80))) return { error: 'invalid' };
+  return new Promise(resolve => {
+    const requestId = crypto.randomUUID();
+    const finish = (result) => {
+      clearTimeout(timeout);
+      sidebarRequests.delete(requestId);
+      resolve(result);
+    };
+    const timeout = setTimeout(() => finish({ error: 'timeout' }), 1400);
+    sidebarRequests.set(requestId, finish);
+    send({ type: 'sidebarChat', requestId, windowId: context.windowId, action,
+      ...(action === 'claim' ? {code} : action === 'send' ? {text, messageId} : {}) });
+  });
+}
 
 async function panelAction({ type, windowId, tabId }) {
   if (!Number.isInteger(windowId) || windowId < 0) return { error: true };
