@@ -468,7 +468,7 @@ chrome.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true }).catch(conso
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (sender.id !== chrome.runtime.id ||
       sender.url !== chrome.runtime.getURL('sidepanel.html') ||
-      !['panel.status', 'panel.share'].includes(message?.type)) return;
+      !['panel.status', 'panel.share', 'panel.unshare', 'panel.finish'].includes(message?.type)) return;
   panelAction(message).then(reply, () => reply({ error: true }));
   return true;
 });
@@ -477,18 +477,20 @@ async function panelAction({ type, windowId, tabId }) {
   if (!Number.isInteger(windowId) || windowId < 0) return { error: true };
   connect();
   const [tab] = await chrome.tabs.query({ active: true, windowId });
-  if (type === 'panel.share') {
-    if (!connected || !tab || tab.id !== tabId || !shareable(tab)) {
-      return { error: true };
-    }
-    if (watching === tab.id) {
-      event('watchDone', { tabId: tab.id });
-    } else if (await isShared(tab)) {
+  if (type !== 'panel.status' && (!tab || tab.id !== tabId)) return { error: true };
+  if (type === 'panel.finish') {
+    if (!connected || watching !== tab.id) return { error: true };
+    event('watchDone', { tabId: tab.id });
+  } else if (type === 'panel.unshare') {
+    // Revocation is browser-local, even if the desktop has disconnected.
+    if (await isShared(tab)) {
       await chrome.tabs.ungroup(tab.id);
+      shared.delete(tab.id);
       await detach(tab.id);
-    } else {
-      await share(tab);
     }
+  } else if (type === 'panel.share') {
+    if (!connected || !shareable(tab)) return { error: true };
+    if (!(await isShared(tab))) await share(tab);
   }
   return {
     connected,

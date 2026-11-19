@@ -7,9 +7,9 @@ const [heading, online, offline, share, unshare, finish, connect, unsupported, f
 const get = (id) => document.getElementById(id);
 const button = get('share');
 get('heading').textContent = heading;
-let windowId, tabId, busy = false, generation = 0;
+let windowId, tabId, intent, busy = false, generation = 0;
 
-async function update(action = false) {
+async function update(action) {
   if (busy) return;
   if (action) {
     busy = true;
@@ -19,7 +19,7 @@ async function update(action = false) {
   try {
     windowId ??= (await chrome.windows.getCurrent()).id;
     const status = await chrome.runtime.sendMessage({
-      type: action ? 'panel.share' : 'panel.status', windowId, tabId,
+      type: action ?? 'panel.status', windowId, tabId,
     });
     if (current !== generation) return;
     if (!status || status.error) throw new Error();
@@ -27,8 +27,10 @@ async function update(action = false) {
     get('connection').textContent = status.connected ? online : offline;
     get('connection').dataset.connected = String(status.connected);
     get('tab').textContent = status.title || empty;
+    intent = status.watching ? 'panel.finish' : status.shared ? 'panel.unshare' : 'panel.share';
     button.textContent = status.watching ? finish : status.shared ? unshare : share;
-    button.disabled = !status.connected || !status.canShare;
+    button.disabled = status.watching ? !status.connected
+      : !status.shared && (!status.connected || !status.canShare);
     get('hint').textContent = !status.connected ? connect : status.canShare ? '' : unsupported;
   } catch {
     if (current !== generation) return;
@@ -40,7 +42,8 @@ async function update(action = false) {
 }
 
 button.textContent = share;
-button.addEventListener('click', () => update(true));
+button.disabled = true;
+button.addEventListener('click', () => { if (intent && !button.disabled) update(intent); });
 chrome.tabs.onActivated.addListener(({windowId: changed}) => {
   if (changed === windowId) update();
 });
