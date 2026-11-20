@@ -11,8 +11,8 @@ jobs:
     if: >-
       github.repository == 'jiah0231/baocode' &&
       (github.event_name == 'workflow_dispatch' ||
-       (github.event.ref_type == 'branch' && github.event.ref == 'feat/edge-assistant-offline-smoke'))
-    runs-on: ubuntu-latest
+       (github.event.ref_type == 'branch' && github.event.ref == 'feat/edge-assistant-offline-noble'))
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
