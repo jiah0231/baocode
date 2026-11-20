@@ -11,7 +11,7 @@ jobs:
     if: >-
       github.repository == 'jiah0231/baocode' &&
       (github.event_name == 'workflow_dispatch' ||
-       (github.event.ref_type == 'branch' && github.event.ref == 'feat/edge-shared-chat-contract'))
+       (github.event.ref_type == 'branch' && github.event.ref == 'feat/edge-sidebar-frame-budget'))
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -32,6 +32,8 @@ jobs:
           git diff --exit-code HEAD --
           flutter pub get
           flutter gen-l10n
+      - name: Verify native messaging envelope budget
+        run: flutter test --no-pub test/browser/sidebar_frame_budget_test.dart
       - name: Compile shared desktop chat models, codec and column on Web
         run: |
           set -euo pipefail

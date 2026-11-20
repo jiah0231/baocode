@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 
 import '../platform/data_dir.dart';
 import 'browser_sidebar_chat.dart';
+import 'sidebar_frame_budget.dart';
 
 /// The user's own browsers, reached through BaoCode's extension in them
 /// (browser_extension/): each runs the app's native messaging host
@@ -714,8 +715,10 @@ class BrowserConnection {
   Future<void> configure(Map<String, Object?> config) =>
       request('configure', config);
 
-  void _write(Map<String, Object?> message) {
-    final body = utf8.encode(jsonEncode(message));
+  void _write(Map<String, Object?> message) =>
+      _writeBytes(utf8.encode(jsonEncode(message)));
+
+  void _writeBytes(Uint8List body) {
     final header = ByteData(4)..setUint32(0, body.length, Endian.little);
     _socket
       ..add(header.buffer.asUint8List())
@@ -834,7 +837,7 @@ class BrowserConnection {
         } on Object {
           result = const {'error': 'unavailable'};
         }
-        _write({'type': 'sidebarChatResult', 'requestId': id, 'result': result});
+        _writeBytes(encodeSidebarResult(id, result));
       case 'event':
         final event = message['event'] as String? ?? '';
         _bridge._events.add(BrowserEvent(this, event, message));
