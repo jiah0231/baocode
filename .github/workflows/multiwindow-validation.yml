@@ -4,6 +4,7 @@ on:
   push:
     branches: ['feat/windows-new-window', 'feat/global-translation-floating-window', 'validate/sidebar-v1.9.5+57']
   workflow_dispatch:
+  create:
 permissions:
   contents: read
 concurrency:
@@ -11,7 +12,10 @@ concurrency:
   cancel-in-progress: true
 jobs:
   windows:
-    if: github.repository == 'jiah0231/baocode'
+    if: >-
+      github.repository == 'jiah0231/baocode' &&
+      (github.event_name != 'create' ||
+       (github.event.ref_type == 'branch' && github.event.ref == 'validate/sidebar-v1.9.5+57-r2'))
     runs-on: windows-2025
     timeout-minutes: 60
     env:
