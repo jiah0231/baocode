@@ -36,6 +36,11 @@ class _FixtureState extends State<_Fixture> {
 final value = 42;
 ```
 
+```mermaid
+flowchart TD
+  A[开始] --> B[整理资料]
+  B --> C[核对内容]
+  C --> D[完成]
 ''';
   bool _complete = false;
 
@@ -56,7 +61,7 @@ final value = 42;
           child: ListView(
             padding: const EdgeInsets.all(12),
             children: [
-              AssistantText(_prefix + (_complete ? '最后一段已追加。' : '')),
+              AssistantText(_prefix + (_complete ? '```\n\n最后一段已追加。' : '')),
             ],
           ),
         ),

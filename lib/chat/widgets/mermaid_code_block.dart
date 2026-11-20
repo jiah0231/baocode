@@ -10,12 +10,12 @@ import 'package:mermaid_flutter/mermaid_flutter.dart';
 import '../../l10n/l10n.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/codicons.dart';
-import '../../theme/workbench_theme.dart' show themeColors;
+import '../../theme/render_theme.dart' show themeColors;
 import '../chat_models.dart' show ImageAttachment;
-import '../side_panel/file_link_menu.dart';
 import 'code_citation.dart';
-import 'content_image.dart' show ContentImagePlaceholder;
-import 'image_thumbnails.dart' show ImageMenu, showImagePreview;
+import 'content_image_placeholder.dart' show ContentImagePlaceholder;
+import 'mermaid_picture_actions_native.dart'
+    if (dart.library.js_interop) 'mermaid_picture_actions_web.dart';
 import 'mermaid_theme.dart';
 
 /// Native, offline Mermaid rendering, with the ordinary code block as fallback.
@@ -194,7 +194,7 @@ class _MermaidCodeBlockState extends State<MermaidCodeBlock> {
   /// [scene] shown whole, as a picture is.
   Future<void> _preview(mermaid.RenderScene scene) async {
     final picture = await _picture(scene);
-    if (mounted) showImagePreview(context, picture);
+    if (mounted) showMermaidPicture(context, picture);
   }
 
   @override
@@ -273,17 +273,12 @@ class _MermaidCodeBlockState extends State<MermaidCodeBlock> {
                 final shown = _shown(scene, constraints.maxWidth);
                 return Align(
                   alignment: AlignmentDirectional.topStart,
-                  child: FileLinkMenuRegion(
-                    menu: _PictureMenu(() => _picture(shown)),
-                    child: MouseRegion(
-                      cursor: SystemMouseCursors.zoomIn,
-                      child: GestureDetector(
-                        onTap: () => unawaited(_preview(shown)),
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: _Scene(scene: shown, source: widget.code),
-                        ),
-                      ),
+                  child: mermaidPictureRegion(
+                    picture: () => _picture(shown),
+                    onPreview: () => unawaited(_preview(shown)),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: _Scene(scene: shown, source: widget.code),
                     ),
                   ),
                 );
@@ -309,18 +304,19 @@ class _MermaidCodeBlockState extends State<MermaidCodeBlock> {
                         tooltip: l10n.sidePanelSource,
                         onTap: () => setState(() => _showSource = true),
                       ),
-                      CodeBlockIconButton(
-                        icon: Codicons.screenFull,
-                        tooltip: l10n.cmdListExpand,
-                        onTap: () => unawaited(
-                          _preview(
-                            _shown(
-                              scene,
-                              context.size?.width ?? double.infinity,
+                      if (mermaidPicturePreviewAvailable)
+                        CodeBlockIconButton(
+                          icon: Codicons.screenFull,
+                          tooltip: l10n.cmdListExpand,
+                          onTap: () => unawaited(
+                            _preview(
+                              _shown(
+                                scene,
+                                context.size?.width ?? double.infinity,
+                              ),
                             ),
                           ),
                         ),
-                      ),
                       CodeBlockIconButton(
                         icon: _copied ? Codicons.check : Codicons.copy,
                         tooltip: l10n.commonCopy,
@@ -361,20 +357,6 @@ class _Scene extends StatelessWidget {
       size: Size(scene.size.width, scene.size.height),
     ),
   );
-}
-
-/// A right click's on a diagram: a picture's (see [ImageMenu]), the
-/// picture made as it is asked for.
-class _PictureMenu implements ChatItemMenu {
-  const _PictureMenu(this.picture);
-
-  final Future<ImageAttachment> Function() picture;
-
-  @override
-  Future<void> show(BuildContext context, Offset position) async {
-    final made = await picture();
-    if (context.mounted) await ImageMenu(made).show(context, position);
-  }
 }
 
 /// [scene] as a PNG, on [background] (a picture see-through would be lost
