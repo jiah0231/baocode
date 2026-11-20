@@ -45,6 +45,7 @@ import 'package:bao_editor/textmate/textmate_worker.dart'
 
 import '../ide/ide_color_theme_picker.dart';
 import '../platform/event_log.dart';
+import 'workbench_colors.dart';
 import 'workbench_theme_initial_colors.dart';
 import 'pebrel_theme.dart';
 import 'pebrel_theme_store.dart';
@@ -56,6 +57,8 @@ export 'package:bao_editor/monaco/vs/platform/theme/common/theme.dart'
         getThemeTypeSelector,
         isDark,
         isHighContrast;
+
+export 'workbench_colors.dart';
 
 /// `ThemeSettingDefaults`: the default theme of each color scheme. Ours are
 /// Bao Dark and Bao Light, not upstream's Dark 2026 and Light 2026.
@@ -116,43 +119,6 @@ abstract interface class ColorThemeSelectionStorage {
     String? data,
     required bool autoDetectColorScheme,
   });
-}
-
-/// A color theme's colors as widgets read them: what the theme sets, else
-/// the color registry's default for its type (`IColorTheme.getColor`).
-class WorkbenchColors {
-  WorkbenchColors(this.theme);
-
-  final ColorThemeData theme;
-  final Map<String, ui.Color?> _colors = {};
-
-  ColorScheme get type => theme.type;
-  bool get dark => isDark(type);
-  bool get highContrast => isHighContrast(type);
-
-  /// The color [id] names; null when neither the theme nor the registry
-  /// gives it one.
-  ui.Color? get(String id) => _colors.putIfAbsent(id, () {
-    final color = theme.getColor(id);
-    return color == null ? null : toFlutterColor(color);
-  });
-
-  /// [get], else what the element would inherit upstream: a text color
-  /// without one (`sideBar.foreground`, `list.hoverForeground`…) leaves CSS
-  /// `color` inherited, ending at the workbench's `foreground`; any other
-  /// color (a background, a border) is none, so transparent.
-  ui.Color operator [](String id) =>
-      get(id) ??
-      (id != 'foreground' && id.endsWith('oreground')
-          ? get('foreground')
-          : null) ??
-      const ui.Color(0x00000000);
-
-  /// A VS Code color as Flutter paints it.
-  static ui.Color toFlutterColor(vs.Color color) {
-    final rgba = color.rgba;
-    return ui.Color.fromARGB((rgba.a * 255).round(), rgba.r, rgba.g, rgba.b);
-  }
 }
 
 /// The current color theme's colors, as widgets read them
