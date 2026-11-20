@@ -1,0 +1,41 @@
+# Feasibility check: the actual BaoCode ChatScreen, not the old sidepanel HTML.
+# Synthetic conversations only. No uploads, desktop connection, or publication.
+name: Browser chat parity compile probe
+on:
+  create:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  web-chat:
+    if: >-
+      github.repository == 'jiah0231/baocode' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.ref_type == 'branch' && github.event.ref == 'feat/edge-native-chat-parity'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.5
+          cache: true
+      - name: Restore source and asset inputs
+        run: |
+          set -euo pipefail
+          python3 tool/ci/reassemble_preview_assets.py
+          python3 tool/ci/reassemble_maple_font.py
+          git diff --exit-code HEAD --
+          flutter pub get
+          flutter gen-l10n
+      - name: Compile the same desktop ChatScreen with the browser target
+        run: |
+          set -euo pipefail
+          flutter build web --no-pub --csp --no-web-resources-cdn --target=tool/preview/todo_steps.dart
+          test -s build/web/main.dart.js
+          test -s build/web/flutter_bootstrap.js
+          test -s build/web/canvaskit/canvaskit.wasm
