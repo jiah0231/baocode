@@ -2,7 +2,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../chat_models.dart';
-import 'composer_embeds.dart' show ComposerEmbed;
 import 'composer_files.dart';
 
 /// What is typed in a composer and not sent yet, kept for when it shows
@@ -10,8 +9,8 @@ import 'composer_files.dart';
 /// images. Listened to by the composers showing it, as the same agent shows
 /// in two windows: what is typed in one shows in the other.
 class ComposerDraft extends ChangeNotifier {
-  /// Its text, the things in it as the composer writes them (see
-  /// [ComposerEmbed]); null until anything was typed or attached: start
+  /// Its text, including the embedded content as the composer writes it;
+  /// null until anything was typed or attached: start
   /// from what the composer was given.
   String? content;
   TextSelection selection = const TextSelection.collapsed(offset: 0);

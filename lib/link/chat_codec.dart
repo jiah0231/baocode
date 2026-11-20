@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import '../chat/chat_models.dart';
 import '../chat/reply_suggestions.dart';
-import '../chat/session_links.dart' show isSessionTool, sessionIdsOf;
+import '../chat/session_link_items.dart' show isSessionTool, sessionIdsOf;
 
 /// The history's items as JSON, for the phones paired with the desktop
 /// (see `package:bao_link`). The phone has this file as it is (its
