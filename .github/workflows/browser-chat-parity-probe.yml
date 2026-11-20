@@ -1,5 +1,5 @@
 # Incremental Web probe: shared desktop chat contract and column.
-# Synthetic conversations only. No uploads, desktop connection, or publication.
+# Synthetic conversations only. No desktop connection or release publication.
 name: Browser chat parity compile probe
 on:
   create:
@@ -11,7 +11,7 @@ jobs:
     if: >-
       github.repository == 'jiah0231/baocode' &&
       (github.event_name == 'workflow_dispatch' ||
-       (github.event.ref_type == 'branch' && github.event.ref == 'feat/edge-assistant-shimmer-theme'))
+       (github.event.ref_type == 'branch' && github.event.ref == 'feat/edge-assistant-offline-smoke'))
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -57,7 +57,40 @@ jobs:
         if: ${{ !cancelled() && steps.restore.outcome == 'success' }}
         run: |
           set -euo pipefail
-          flutter build web --no-pub --csp --no-web-resources-cdn --target=tool/preview/browser_original_assistant.dart
+          flutter build web --no-pub --pwa-strategy=none --base-href=/ --csp --no-web-resources-cdn --target=tool/preview/browser_original_assistant.dart
           test -s build/web/main.dart.js
           test -s build/web/flutter_bootstrap.js
           test -s build/web/canvaskit/canvaskit.wasm
+      - name: Stage an isolated MV3 fixture
+        run: |
+          set -euo pipefail
+          mkdir -p build/assistant-mv3
+          cp -a build/web/. build/assistant-mv3/
+          cp tool/preview/assistant_mv3/{manifest.json,fixture-worker.js} build/assistant-mv3/
+          sed -i '/<link rel="manifest" href="manifest.json">/d' build/assistant-mv3/index.html
+          rm -f build/assistant-mv3/flutter_service_worker.js
+      - name: Install pinned Chromium smoke runner
+        run: |
+          set -euo pipefail
+          mkdir -p build/assistant-smoke
+          npm install --prefix build/assistant-smoke --no-audit --no-fund --save-exact playwright@1.56.1
+          build/assistant-smoke/node_modules/.bin/playwright install --with-deps chromium
+          cp tool/preview/assistant_mv3/smoke.cjs build/assistant-smoke/
+      - name: Start the original chat fixture under the extension policy
+        run: |
+          node build/assistant-smoke/smoke.cjs build/assistant-mv3 build/assistant-screens
+      - name: Preserve synthetic screenshots
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: assistant-mv3-screens
+          path: build/assistant-screens/
+          if-no-files-found: ignore
+          retention-days: 3
+      - name: Preserve unpacked fixture for a Windows Edge smoke
+        uses: actions/upload-artifact@v4
+        with:
+          name: assistant-mv3-fixture-not-a-release
+          path: build/assistant-mv3/
+          if-no-files-found: error
+          retention-days: 3

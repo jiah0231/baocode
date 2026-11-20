@@ -6,8 +6,13 @@ import 'package:baocode/l10n/l10n.dart';
 import 'package:baocode/theme/app_theme.dart';
 import 'package:baocode/theme/render_theme_web.dart' as browser_theme;
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 
+// Offscreen Chromium uses the same accessibility tree as Edge. Keep this
+// explicit opt-in confined to the synthetic fixture, not the shipping UI.
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  SemanticsBinding.instance.ensureSemantics();
   // Synthetic Windows host appearance, independent of the CI runner's OS.
   browser_theme.installBrowserRenderTheme(windowsFonts: true);
   runApp(MaterialApp(
