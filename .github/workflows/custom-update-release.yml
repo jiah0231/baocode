@@ -169,29 +169,39 @@ jobs:
           set -euo pipefail
           python3 tool/ci/reassemble_maple_font.py --verify-only
       - name: Require independent multiwindow validation of exact source
+        env:
+          VALIDATED_SHA: e7f48164297c5c8315cc5df3dbaefd4fa3e024b3
+          VALIDATED_BRANCH: validate/sidebar-v1.9.5+57-r2
+          VALIDATED_RUN_ID: '44663461682'
         shell: bash
         run: |
           set -euo pipefail
-          python3 tool/ci/test_multiwindow_release_gate.py
-          # The validation commit and this release must have identical application source.
-          git fetch --no-tags origin e7f48164297c5c8315cc5df3dbaefd4fa3e024b3
+          # No application source differences from the independently tested candidate.
+          git fetch --no-tags origin "$VALIDATED_SHA"
+          test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$VALIDATED_SHA"
           git diff --exit-code FETCH_HEAD HEAD -- . ':(exclude).github/workflows/custom-update-release.yml'
           response="$RUNNER_TEMP/multiwindow-validation.json"
-          for attempt in $(seq 1 40); do
-            curl --fail --silent --show-error --retry 2 \
-              -H 'Accept: application/vnd.github+json' \
-              "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/multiwindow-validation.yml/runs?head_sha=e7f48164297c5c8315cc5df3dbaefd4fa3e024b3&per_page=100" \
-              > "$response"
-            if python3 tool/ci/verify_multiwindow_release_gate.py "e7f48164297c5c8315cc5df3dbaefd4fa3e024b3" "$response"; then
-              break
-            fi
-            # Fail closed on a completed non-successful run; wait only for pending results.
-            if jq -e '(.workflow_runs | max_by(.id) | .status) == "completed"' "$response" >/dev/null; then
-              exit 1
-            fi
-            sleep 30
-          done
-          python3 tool/ci/verify_multiwindow_release_gate.py "e7f48164297c5c8315cc5df3dbaefd4fa3e024b3" "$response"
+          curl --fail --silent --show-error --retry 2 --get \
+            -H 'Accept: application/vnd.github+json' \
+            --data-urlencode "head_sha=$VALIDATED_SHA" \
+            --data-urlencode "branch=$VALIDATED_BRANCH" \
+            --data per_page=100 \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/multiwindow-validation.yml/runs" \
+            > "$response"
+          jq -e --arg sha "$VALIDATED_SHA" --arg branch "$VALIDATED_BRANCH" --arg run "$VALIDATED_RUN_ID" '
+            (.workflow_runs | map(select(.head_sha == $sha and .head_branch == $branch
+              and .path == ".github/workflows/multiwindow-validation.yml")) | max_by(.id))
+            | .id == ($run | tonumber) and .status == "completed" and .conclusion == "success"
+          ' "$response"
+          curl --fail --silent --show-error --retry 2 \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$VALIDATED_RUN_ID/jobs" \
+          | jq -e '
+              any(.jobs[]; .name == "windows" and .status == "completed" and .conclusion == "success"
+                and any(.steps[]; .name == "Verify real native windows and single-instance forwarding"
+                  and .status == "completed" and .conclusion == "success"))
+            '
+          echo "Verified independent Windows run $VALIDATED_RUN_ID at $VALIDATED_SHA ($VALIDATED_BRANCH)."
       - name: Sign and publish verified build; advertise last
         env:
           SIGNING_SEED: ${{ secrets.BAOCODE_CUSTOM_UPDATE_SIGNING_KEY }}
