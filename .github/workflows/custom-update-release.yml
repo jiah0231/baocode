@@ -173,13 +173,25 @@ jobs:
         run: |
           set -euo pipefail
           python3 tool/ci/test_multiwindow_release_gate.py
-          # Public read-only API; no expanded token permissions or credentials.
+          # The validation commit and this release must have identical application source.
+          git fetch --no-tags origin e7f48164297c5c8315cc5df3dbaefd4fa3e024b3
+          git diff --exit-code FETCH_HEAD HEAD -- . ':(exclude).github/workflows/custom-update-release.yml'
           response="$RUNNER_TEMP/multiwindow-validation.json"
-          curl --fail --silent --show-error --retry 2 \
-            -H 'Accept: application/vnd.github+json' \
-            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/multiwindow-validation.yml/runs?head_sha=abddd8a84fbed097b7e3fa3f159541e971a599f0&per_page=100" \
-            > "$response"
-          python3 tool/ci/verify_multiwindow_release_gate.py "abddd8a84fbed097b7e3fa3f159541e971a599f0" "$response"
+          for attempt in $(seq 1 40); do
+            curl --fail --silent --show-error --retry 2 \
+              -H 'Accept: application/vnd.github+json' \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/multiwindow-validation.yml/runs?head_sha=e7f48164297c5c8315cc5df3dbaefd4fa3e024b3&per_page=100" \
+              > "$response"
+            if python3 tool/ci/verify_multiwindow_release_gate.py "e7f48164297c5c8315cc5df3dbaefd4fa3e024b3" "$response"; then
+              break
+            fi
+            # Fail closed on a completed non-successful run; wait only for pending results.
+            if jq -e '(.workflow_runs | max_by(.id) | .status) == "completed"' "$response" >/dev/null; then
+              exit 1
+            fi
+            sleep 30
+          done
+          python3 tool/ci/verify_multiwindow_release_gate.py "e7f48164297c5c8315cc5df3dbaefd4fa3e024b3" "$response"
       - name: Sign and publish verified build; advertise last
         env:
           SIGNING_SEED: ${{ secrets.BAOCODE_CUSTOM_UPDATE_SIGNING_KEY }}
@@ -216,7 +228,7 @@ jobs:
             cat "release-notes/custom-$version.zh.md" > "$notes"
             printf '\n\n' >> "$notes"
           fi
-          printf 'Source: %s. Release tests were skipped at owner request. Signed Windows x64 custom update.\n' "$GITHUB_SHA" >> "$notes"
+          printf 'Source: %s. Independent Windows validation and signed Windows x64 custom update.\n' "$GITHUB_SHA" >> "$notes"
           gh release create "$tag" "${installers[0]}" --target "$GITHUB_SHA" --draft --title "Custom BaoCode $version" --notes-file "$notes"
           gh release edit "$tag" --draft=false --latest=false
           git fetch --no-tags origin "refs/tags/$tag"
