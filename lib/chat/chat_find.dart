@@ -8,8 +8,8 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:markdown/markdown.dart' as md;
 
-import '../theme/workbench_theme.dart' show themeColors;
-import 'chat_feed.dart';
+import '../theme/render_theme.dart' show themeColors;
+import 'chat_feed_contract.dart';
 import 'chat_models.dart';
 import 'widgets/markdown_tags.dart';
 import 'widgets/markdown_view.dart';

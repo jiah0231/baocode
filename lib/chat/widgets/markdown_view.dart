@@ -4,7 +4,7 @@ import 'package:markdown/markdown.dart' as md;
 
 import '../../theme/app_theme.dart';
 import '../../theme/codicons.dart';
-import '../../theme/workbench_theme.dart' show WorkbenchThemeScope, themeColors;
+import '../../theme/render_theme.dart' show renderThemeRevision, themeColors;
 import '../../workspace/editor_launcher.dart';
 import 'code_citation.dart';
 import 'hover_scrollbar.dart';
@@ -115,7 +115,7 @@ class _MarkdownViewState extends State<MarkdownView> {
       widget.data,
       widget.style,
       themeColors,
-      WorkbenchThemeScope.restyles,
+      renderThemeRevision,
     );
     if (_built case final built? when from == _builtFrom) return built;
     _builtFrom = from;
@@ -123,7 +123,7 @@ class _MarkdownViewState extends State<MarkdownView> {
   }
 
   Widget _build(BuildContext context) {
-    final from = (widget.style, themeColors, WorkbenchThemeScope.restyles);
+    final from = (widget.style, themeColors, renderThemeRevision);
     if (from != _segmentsFrom) _segments = const [];
     _segmentsFrom = from;
     final old = _segments;

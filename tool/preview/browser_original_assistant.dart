@@ -2,13 +2,20 @@
 // Synthetic data only; this entry point does not connect to a real session.
 import 'package:baocode/chat/widgets/assistant_text.dart';
 import 'package:baocode/l10n/l10n.dart';
+import 'package:baocode/theme/app_theme.dart';
+import 'package:baocode/theme/render_theme_web.dart' as browser_theme;
 import 'package:flutter/material.dart';
 
-void main() => runApp(const MaterialApp(
-  localizationsDelegates: AppLocalizations.localizationsDelegates,
-  supportedLocales: AppLocalizations.supportedLocales,
-  home: _Fixture(),
-));
+void main() {
+  // Synthetic Windows host appearance, independent of the CI runner's OS.
+  browser_theme.installBrowserRenderTheme(windowsFonts: true);
+  runApp(MaterialApp(
+    theme: buildAppTheme(),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    home: const _Fixture(),
+  ));
+}
 
 class _Fixture extends StatefulWidget {
   const _Fixture();

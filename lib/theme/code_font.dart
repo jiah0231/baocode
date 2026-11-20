@@ -5,7 +5,7 @@ import 'package:flutter/widgets.dart';
 
 import '../platform/app_platform.dart';
 import 'pebrel_typography.dart';
-import 'workbench_theme.dart';
+import 'render_theme.dart';
 
 /// The font code is drawn in, its size, its ligatures, and how large the
 /// window's text is: settings.json's `editor.fontFamily`, `editor.fontSize`,
@@ -35,8 +35,7 @@ abstract final class CodeFont {
   static PebrelTypography _typography = PebrelTypography.none;
 
   static PebrelTypography get typography {
-    final themes = WorkbenchThemeService.instance;
-    final definition = themes.pebrelTheme(themes.colorThemeId);
+    final definition = renderPebrelTheme;
     if (!identical(definition, _typographySource) ||
         mapleFont.value != _typographyPreset) {
       _typographySource = definition;
@@ -216,7 +215,7 @@ abstract final class CodeFont {
   /// [base], a size code among the window's own text is drawn at on macOS
   /// (the chat's code, a panel's paths), as [sized] has it at the default:
   /// the user's code size does not move it, the window's text scale does.
-  static double uiSized(double base) => base + defaultSize - _macSize;
+  static double uiSized(double base) => base + (renderUsesWindowsFonts ? 1 : 0);
 
   /// The features code is drawn with: none (the font's own, ligatures on),
   /// or the two that make ligatures, `liga` and `calt`, switched off.

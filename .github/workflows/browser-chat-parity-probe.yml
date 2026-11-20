@@ -11,7 +11,7 @@ jobs:
     if: >-
       github.repository == 'jiah0231/baocode' &&
       (github.event_name == 'workflow_dispatch' ||
-       (github.event.ref_type == 'branch' && github.event.ref == 'feat/edge-original-assistant-find'))
+       (github.event.ref_type == 'branch' && github.event.ref == 'feat/edge-assistant-render-theme'))
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -35,12 +35,15 @@ jobs:
           flutter gen-l10n
       - name: Verify native messaging envelope budget
         run: flutter test --no-pub test/browser/sidebar_frame_budget_test.dart
-      - name: Check shared Markdown, find UI, and fixture
+      - name: Check shared Markdown, find UI, theme inputs, and fixture
         run: |
           set -euo pipefail
-          for file in lib/chat/chat_find{,_bar}.dart lib/chat/chat_history_view.dart lib/chat/widgets/markdown_{view,file_actions_native,file_actions_web,options}.dart tool/preview/browser_original_assistant.dart; do
+          for file in lib/theme/{app_theme,code_font,render_theme,render_theme_native,render_theme_web}.dart lib/chat/chat_find{,_bar}.dart lib/chat/chat_history_view.dart lib/chat/widgets/markdown_{view,file_actions_native,file_actions_web,options}.dart tool/preview/browser_original_assistant.dart; do
             dart analyze --no-fatal-warnings "$file"
           done
+      - name: Verify Windows chat typography in Chromium
+        if: ${{ !cancelled() && steps.restore.outcome == 'success' }}
+        run: flutter test --no-pub --platform chrome test/browser/render_theme_web_test.dart
       - name: Compile original assistant prose on Web
         if: ${{ !cancelled() && steps.restore.outcome == 'success' }}
         run: |

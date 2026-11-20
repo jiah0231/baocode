@@ -3,14 +3,13 @@ import 'package:flutter/material.dart';
 import '../ide/terminal/terminal_colors.dart';
 import '../platform/app_platform.dart';
 import 'code_font.dart';
-import 'window_blur.dart';
-import 'workbench_theme.dart' hide ColorScheme;
+import 'render_theme.dart';
 
 /// The app's colors, from the workbench's color theme: each is a VS Code
-/// color id's (see [WorkbenchThemeService]), so they follow the theme the
+/// color id's (from the active rendering theme), so they follow the theme the
 /// user picks as VS Code's workbench does.
 abstract final class AppColors {
-  static WorkbenchColors get _colors => WorkbenchThemeService.instance.colors;
+  static WorkbenchColors get _colors => themeColors;
 
   /// Pebrel's palette is projected without modifying layout or typography.
   /// Only explicitly supplied Pebrel tokens override the VS Code adaptation.
@@ -39,9 +38,8 @@ abstract final class AppColors {
   /// Whether the window has the system's material under it, to show
   /// through the sidebar and the conversation: macOS (see
   /// MainFlutterWindow.swift) and Windows 11 (see win32_window.cpp), once
-  /// Settings → Appearance turns it on ([WindowBlur]).
-  static bool get usesSystemMaterial =>
-      WindowBlur.available && WindowBlur.enabled.value;
+  /// Settings → Appearance turns it on.
+  static bool get usesSystemMaterial => renderWindowBlurEnabled;
 
   /// Under everything: the material itself where there is one. All but the
   /// sidebar cover it (see Workbench).
@@ -328,7 +326,7 @@ abstract final class AppFonts {
   /// Windows [windowsFallbacks]. A family not installed is passed over.
   static List<String> get monoFallbacks => [
     ...CodeFont.effectiveFamilies.skip(1),
-    if (AppPlatform.isWindows) ...windowsFallbacks,
+    if (renderUsesWindowsFonts) ...windowsFallbacks,
   ];
 
   /// Theme line height, or the surface's historical default.
@@ -408,7 +406,7 @@ abstract final class AppFonts {
 }
 
 ThemeData buildAppTheme() {
-  final colors = WorkbenchThemeService.instance.colors;
+  final colors = themeColors;
   final brightness = colors.dark ? Brightness.dark : Brightness.light;
   final pebrelAccent =
       AppColors._render('accent') ?? AppColors._pebrel('accent');
@@ -425,9 +423,9 @@ ThemeData buildAppTheme() {
     fontFamilyFallback: CodeFont.typography.uiFamily != null
         ? [
             ...CodeFont.parseFamilies(CodeFont.typography.uiFamily).skip(1),
-            if (AppPlatform.isWindows) ...AppFonts.windowsFallbacks,
+            if (renderUsesWindowsFonts) ...AppFonts.windowsFallbacks,
           ]
-        : AppPlatform.isWindows
+        : renderUsesWindowsFonts
         ? AppFonts.windowsFallbacks
         : null,
     // The conversation's own color is under it (see Workbench).
