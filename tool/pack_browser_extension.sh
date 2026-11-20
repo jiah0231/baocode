@@ -39,7 +39,7 @@ version=$(jq -r .version "$source/manifest.json")
 rm -rf "$out"
 mkdir -p "$out/unpacked" "$out/store"
 # What the extension is made of, nothing else beside it.
-files=(manifest.json background.js icons _locales)
+files=(manifest.json background.js sidepanel.html sidepanel.css sidepanel.js icons _locales)
 for dir in unpacked store; do
   (cd "$source" && cp -R "${files[@]}" "$out/$dir/")
 done

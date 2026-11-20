@@ -24,10 +24,12 @@ const PROTOCOL = '1.3';
 const BRIDGE = 1;
 // What BaoCode may ask of this version, beyond BRIDGE 1's first methods
 // (tabs.*, cdp, detach, watch): told in the hello.
-const CAPABILITIES = ['cdp.session', 'call', 'subscribe', 'configure'];
-// What the toolbar button opens while BaoCode is not there to connect to.
-const HELP = 'https://baocode.dev/download#browser';
+const CAPABILITIES = ['cdp.session', 'call', 'subscribe', 'configure', 'sidebar.chat'];
 
+const sidebarRequests = new Map();
+const windowlessPanelScopes = new Map();
+// Separate legacy wire keys from Chromium's signed 32-bit window IDs.
+let nextWindowlessScope = 2 ** 32;
 let port = null;
 let connected = false; // To BaoCode, not just its host.
 const attached = new Set(); // Tabs the debugger is attached to.
@@ -61,6 +63,7 @@ function setConnected(value) {
   // BaoCode gone: nothing watches any more, and the next one says again
   // what it wants.
   if (!value) {
+    for (const finish of sidebarRequests.values()) finish({ error: 'offline' });
     watching = null;
     config = { ...DEFAULTS };
     subscribed.clear();
@@ -111,7 +114,7 @@ function showState() {
   chrome.action.setTitle({
     title:
       watching !== null
-        ? 'BaoCode is watching: click when you are done'
+        ? 'BaoCode is watching: open the sidebar to finish'
         : connected
           ? 'BaoCode: connected'
           : 'BaoCode: not running',
@@ -147,6 +150,10 @@ function event(name, fields) {
 }
 
 async function received(message) {
+  if (message.type === 'sidebarChatResult') {
+    sidebarRequests.get(message.requestId)?.(message.result);
+    return;
+  }
   if (message.type === 'bridge') {
     setConnected(message.connected === true);
     return;
@@ -463,26 +470,103 @@ async function share(tab, group) {
   await chrome.tabGroups.update(groupId, { title: GROUP, color: 'yellow' });
 }
 
-// The toolbar button: shares the tab in front with BaoCode, or stops; while
-// BaoCode watches the user, says they are done. Without BaoCode, tells how
-// to get it.
-chrome.action.onClicked.addListener(async (tab) => {
-  connect();
-  if (!(await connection())) {
-    await chrome.tabs.create({ url: HELP, index: tab.index + 1 });
-    return;
-  }
-  if (watching !== null) {
-    event('watchDone', { tabId: watching });
-    return;
-  }
-  if (await isShared(tab)) {
-    await chrome.tabs.ungroup(tab.id);
-    await detach(tab.id);
-  } else {
-    await share(tab);
-  }
+// The toolbar opens the native sidebar. Sharing is a separate explicit
+// action there, never a side effect of opening the panel.
+chrome.sidePanel?.setPanelBehavior({ openPanelOnActionClick: true }).catch(console.error);
+
+chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  if (sender.id !== chrome.runtime.id ||
+      sender.url !== chrome.runtime.getURL('sidepanel.html') ||
+      !['panel.status', 'panel.share', 'panel.unshare', 'panel.finish'].includes(message?.type)) return;
+  panelAction(message).then(reply, () => reply({ error: true }));
+  return true;
 });
+
+// Never infer the chat's window from the focused tab. Resolve the actual
+// panel document in the browser, and fail closed if it is not available.
+chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  if (message?.type !== 'panel.chat' || sender.id !== chrome.runtime.id ||
+      sender.url !== chrome.runtime.getURL('sidepanel.html') || !sender.documentId) return;
+  sidebarChat(message, sender.documentId).then(reply, () => reply({ error: 'unavailable' }));
+  return true;
+});
+
+async function sidebarChat(message, documentId) {
+  if (!connected) return { error: 'offline' };
+  const [context] = await chrome.runtime.getContexts({
+    contextTypes: ['SIDE_PANEL'], documentIds: [documentId],
+  });
+  if (context?.contextType !== 'SIDE_PANEL' || context.documentId !== documentId ||
+      !Number.isInteger(context.windowId) || context.windowId < -1 ||
+      context.windowId >= 2 ** 31) {
+    return { error: 'window' };
+  }
+  if (!connected || sidebarRequests.size >= 24) return { error: 'unavailable' };
+  const {action, code, text, messageId} = message;
+  if (!['claim', 'unlink', 'snapshot', 'send'].includes(action) ||
+      (action === 'claim' && !/^[A-Z2-9]{10}$/.test(code ?? '')) ||
+      (action === 'send' && (typeof text !== 'string' || text.length > 8000 ||
+        typeof messageId !== 'string' || messageId.length > 80))) return { error: 'invalid' };
+  // Global side panels can have windowId -1. Bind to the verified panel
+  // document instead; closing/recreating it requires a new invitation.
+  let scope = context.windowId;
+  if (scope === -1) {
+    scope = windowlessPanelScopes.get(documentId);
+    if (scope === undefined) {
+      scope = nextWindowlessScope++;
+      if (windowlessPanelScopes.size >= 128) {
+        windowlessPanelScopes.delete(windowlessPanelScopes.keys().next().value);
+      }
+      windowlessPanelScopes.set(documentId, scope);
+    }
+  }
+  return new Promise(resolve => {
+    const requestId = crypto.randomUUID();
+    const finish = (result) => {
+      clearTimeout(timeout);
+      sidebarRequests.delete(requestId);
+      resolve(result);
+    };
+    const timeout = setTimeout(() => finish({ error: 'timeout' }), 1400);
+    sidebarRequests.set(requestId, finish);
+    send({ type: 'sidebarChat', requestId, windowId: scope, action,
+      ...(action === 'claim' ? {code} : action === 'send' ? {text, messageId} : {}) });
+  });
+}
+
+async function panelAction({ type, windowId, tabId }) {
+  if (!Number.isInteger(windowId) || windowId < 0) return { error: true };
+  connect();
+  const [tab] = await chrome.tabs.query({ active: true, windowId });
+  if (type !== 'panel.status' && (!tab || tab.id !== tabId)) return { error: true };
+  if (type === 'panel.finish') {
+    if (!connected || watching !== tab.id) return { error: true };
+    event('watchDone', { tabId: tab.id });
+  } else if (type === 'panel.unshare') {
+    // Revocation is browser-local, even if the desktop has disconnected.
+    if (await isShared(tab)) {
+      await chrome.tabs.ungroup(tab.id);
+      shared.delete(tab.id);
+      await detach(tab.id);
+    }
+  } else if (type === 'panel.share') {
+    if (!connected || !shareable(tab)) return { error: true };
+    if (!(await isShared(tab))) await share(tab);
+  }
+  return {
+    connected,
+    tabId: tab?.id ?? null,
+    title: tab?.title ?? '',
+    canShare: shareable(tab),
+    shared: !!tab && await isShared(tab),
+    watching: !!tab && tab.id === watching,
+  };
+}
+
+function shareable(tab) {
+  return Number.isInteger(tab?.id) &&
+      /^(https?:|file:)/i.test(tab.url ?? '');
+}
 
 // --- The debugger, attached to a shared tab the first time BaoCode asks
 // it something; what it tells goes to BaoCode.

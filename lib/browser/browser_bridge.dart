@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import '../platform/data_dir.dart';
+import 'browser_sidebar_chat.dart';
 
 /// The user's own browsers, reached through BaoCode's extension in them
 /// (browser_extension/): each runs the app's native messaging host
@@ -23,6 +24,8 @@ class BrowserBridge extends ChangeNotifier {
   BrowserBridge._();
 
   static final instance = BrowserBridge._();
+
+  final sidebarChat = BrowserSidebarChat();
 
   /// The native messaging host's name, as the extension asks for it.
   static const hostName = 'dev.baocode.browser';
@@ -813,6 +816,25 @@ class BrowserConnection {
             '$capability',
         };
         _bridge._connected();
+      case 'sidebarChat':
+        if (_closed ||
+            !_bridge.enabled ||
+            !compatible ||
+            !can('sidebar.chat') ||
+            !BrowserBridge.extensionIds.any(
+              (id) => origin == 'chrome-extension://$id/',
+            )) {
+          return;
+        }
+        final id = message['requestId'];
+        if (id is! String || id.length > 80) return;
+        Map<String, Object?> result;
+        try {
+          result = _bridge.sidebarChat.handle(this, message);
+        } on Object {
+          result = const {'error': 'unavailable'};
+        }
+        _write({'type': 'sidebarChatResult', 'requestId': id, 'result': result});
       case 'event':
         final event = message['event'] as String? ?? '';
         _bridge._events.add(BrowserEvent(this, event, message));
@@ -830,6 +852,7 @@ class BrowserConnection {
       );
     }
     _pending.clear();
+    _bridge.sidebarChat.disconnect(this);
     _bridge._closed(this);
   }
 }
