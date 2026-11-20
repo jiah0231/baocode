@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../base/step_clock.dart';
 import '../../theme/app_theme.dart';
-import '../../theme/workbench_theme.dart' show themeColors;
+import '../../theme/render_theme.dart' show themeColors;
 
 /// Muted label with a highlight sweeping across it, e.g. "Generating…".
 class ShimmerText extends StatefulWidget {
