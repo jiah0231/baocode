@@ -170,9 +170,9 @@ jobs:
           python3 tool/ci/reassemble_maple_font.py --verify-only
       - name: Require independent multiwindow validation of exact source
         env:
-          VALIDATED_SHA: e7f48164297c5c8315cc5df3dbaefd4fa3e024b3
-          VALIDATED_BRANCH: validate/sidebar-v1.9.5+57-r2
-          VALIDATED_RUN_ID: '44663461682'
+          VALIDATED_SHA: 9013e02b406cc18663635043df10ccdd600093b0
+          VALIDATED_BRANCH: validate/sidebar-direct-v1.9.5+58
+          VALIDATED_RUN_ID: '44681391309'
         shell: bash
         run: |
           set -euo pipefail
@@ -181,23 +181,36 @@ jobs:
           test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$VALIDATED_SHA"
           git diff --exit-code FETCH_HEAD HEAD -- . ':(exclude).github/workflows/custom-update-release.yml'
           response="$RUNNER_TEMP/multiwindow-validation.json"
-          curl --fail --silent --show-error --retry 2 --get \
-            -H 'Accept: application/vnd.github+json' \
-            --data-urlencode "head_sha=$VALIDATED_SHA" \
-            --data-urlencode "branch=$VALIDATED_BRANCH" \
-            --data per_page=100 \
-            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/multiwindow-validation.yml/runs" \
-            > "$response"
-          jq -e --arg sha "$VALIDATED_SHA" --arg branch "$VALIDATED_BRANCH" --arg run "$VALIDATED_RUN_ID" '
-            (.workflow_runs | map(select(.head_sha == $sha and .head_branch == $branch
-              and .path == ".github/workflows/multiwindow-validation.yml")) | max_by(.id))
-            | .id == ($run | tonumber) and .status == "completed" and .conclusion == "success"
-          ' "$response"
+          for attempt in $(seq 1 30); do
+            curl --fail --silent --show-error --retry 2 --get \
+              -H 'Accept: application/vnd.github+json' \
+              --data-urlencode "head_sha=$VALIDATED_SHA" \
+              --data-urlencode "branch=$VALIDATED_BRANCH" \
+              --data per_page=100 \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/workflows/multiwindow-validation.yml/runs" \
+              > "$response"
+            outcome=$(jq -er --arg sha "$VALIDATED_SHA" --arg branch "$VALIDATED_BRANCH" --arg run "$VALIDATED_RUN_ID" '
+              (.workflow_runs | map(select(.head_sha == $sha and .head_branch == $branch
+                and .path == ".github/workflows/multiwindow-validation.yml")) | max_by(.id))
+              | if .id != ($run | tonumber) then "mismatch"
+                elif .status == "completed" then (.conclusion // "missing-conclusion")
+                else "pending" end
+            ' "$response")
+            if [ "$outcome" = success ]; then break; fi
+            if [ "$outcome" != pending ]; then
+              echo "Exact independent Windows validation did not pass: $outcome" >&2
+              exit 1
+            fi
+            sleep 30
+          done
+          test "$outcome" = success
           curl --fail --silent --show-error --retry 2 \
             -H 'Accept: application/vnd.github+json' \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$VALIDATED_RUN_ID/jobs" \
           | jq -e '
               any(.jobs[]; .name == "windows" and .status == "completed" and .conclusion == "success"
+                and any(.steps[]; .name == "Test direct sidebar conversation catalog"
+                  and .status == "completed" and .conclusion == "success")
                 and any(.steps[]; .name == "Verify real native windows and single-instance forwarding"
                   and .status == "completed" and .conclusion == "success"))
             '
