@@ -19,7 +19,7 @@ function fixture() {
     sidePanel: {async setPanelBehavior(value) { assert.equal(value.openPanelOnActionClick, true); }},
     runtime: {
       id: 'fixture', getManifest: () => ({version: 'test'}), getURL: () => url, onMessage: listen('message'),
-      onStartup: listen('startup'), onInstalled: listen('installed'),
+      onStartup: listen('startup'), onInstalled: listen('installed'), onConnect: listen('connect'),
       async getContexts({contextTypes, documentIds}) {
         assert.equal(contextTypes[0], 'SIDE_PANEL');
         const [documentId] = documentIds;
@@ -158,4 +158,48 @@ test('verified sidebar loads the conversation catalog without a pairing code', a
   const result = {threads: [{id: '1', title: 'One'}], more: false};
   await listeners.native({type: 'sidebarChatResult', requestId: request.requestId, result});
   assert.deepEqual(await pending, result);
+});
+
+
+test('Edge fallback permits only the private extension view and isolates live ports', async () => {
+  const {listeners, url, posted} = fixture();
+  await listeners.native({type: 'bridge', connected: true});
+  const makePort = sender => {
+    const hooks = {};
+    const responses = [];
+    const panel = {name: 'baocode.sidebar.chat', sender,
+      onDisconnect: {addListener(fn) { hooks.close = fn; }},
+      onMessage: {addListener(fn) { hooks.message = fn; }},
+      disconnect() { hooks.rejected = true; },
+      postMessage(result) { responses.push(result); },
+    };
+    listeners.connect(panel);
+    return {hooks, responses};
+  };
+  const self = {id: 'fixture', url, origin: 'chrome-extension://fixture'};
+  for (const sender of [
+    {...self, id: 'another'}, {...self, url: 'https://example.test'},
+    {...self, frameId: 1}, {...self, tab: {id: 12}}, {...self, origin: 'null'},
+  ]) {
+    const {hooks} = makePort(sender);
+    assert.equal(hooks.rejected, true);
+    assert.equal(hooks.message, undefined);
+  }
+  const a = makePort(self), b = makePort(self);
+  a.hooks.message({type: 'panel.chat', seq: 1, action: 'list', query: '', offset: 0, windowId: 44});
+  b.hooks.message({type: 'panel.chat', seq: 1, action: 'snapshot', windowId: 44});
+  const [list, snapshot] = posted.filter(m => m.type === 'sidebarChat');
+  assert.ok(list.windowId >= 2 ** 32 && Number.isSafeInteger(list.windowId));
+  assert.notEqual(list.windowId, snapshot.windowId);
+  await listeners.native({type: 'sidebarChatResult', requestId: list.requestId, result: {threads: []}});
+  await listeners.native({type: 'sidebarChatResult', requestId: snapshot.requestId, result: {linked: false}});
+  await new Promise(setImmediate);
+  assert.equal(a.responses[0].seq, 1);
+  assert.equal(a.responses[0].result.threads.length, 0);
+  assert.equal(b.responses[0].result.linked, false);
+  a.hooks.close();
+  const unlink = posted.at(-1);
+  assert.equal(unlink.action, 'unlink');
+  assert.equal(unlink.windowId, list.windowId);
+  await listeners.native({type: 'sidebarChatResult', requestId: unlink.requestId, result: {linked: false}});
 });

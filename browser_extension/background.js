@@ -495,6 +495,37 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   return true;
 });
 
+// Edge can omit the sidebar document metadata used by getContexts. The
+// alternative is a browser-authenticated Port from our own private top-level
+// extension page, never a tab, content script, iframe, or external sender.
+// Each live port gets its own scope; it cannot name another window or session.
+chrome.runtime.onConnect.addListener(panel => {
+  if (panel.name !== 'baocode.sidebar.chat') return;
+  const sender = panel.sender;
+  const url = chrome.runtime.getURL('sidepanel.html');
+  const origin = url.slice(0, url.lastIndexOf('/'));
+  if (sender?.id !== chrome.runtime.id || sender.url !== url ||
+      sender.tab != null || (sender.frameId != null && sender.frameId !== 0) ||
+      (sender.origin != null && sender.origin !== origin)) {
+    panel.disconnect();
+    return;
+  }
+  const random = crypto.getRandomValues(new Uint32Array(2));
+  const scope = 2 ** 32 + ((random[0] & 0xfffff) * 2 ** 32) + random[1];
+  let open = true;
+  panel.onDisconnect.addListener(() => {
+    open = false;
+    if (connected) sidebarChatInScope({action: 'unlink'}, scope).catch(() => {});
+  });
+  panel.onMessage.addListener(message => {
+    if (!open || message?.type !== 'panel.chat' || !Number.isSafeInteger(message.seq)) return;
+    sidebarChatInScope(message, scope).catch(() => ({error: 'unavailable'})).then(result => {
+      if (!open) return;
+      try { panel.postMessage({seq: message.seq, result}); } catch {}
+    });
+  });
+});
+
 async function sidebarChat(message, documentId) {
   if (!connected) return { error: 'offline' };
   const contexts = await chrome.runtime.getContexts?.({
@@ -506,16 +537,8 @@ async function sidebarChat(message, documentId) {
       context.windowId >= 2 ** 31) {
     return { error: 'window' };
   }
-  if (!connected || sidebarRequests.size >= 24) return { error: 'unavailable' };
-  const {action, text, messageId, threadId, query, offset} = message;
-  if (!['list', 'select', 'unlink', 'snapshot', 'send'].includes(action) ||
-      (action === 'list' && (typeof query !== 'string' || query.length > 100 ||
-        !Number.isInteger(offset) || offset < 0 || offset > 1000000)) ||
-      (action === 'select' && (typeof threadId !== 'string' || !/^[0-9]{1,20}$/.test(threadId))) ||
-      (action === 'send' && (typeof text !== 'string' || text.length > 8000 ||
-        typeof messageId !== 'string' || messageId.length > 80))) return { error: 'invalid' };
   // Global side panels can have windowId -1. Bind to the verified panel
-  // document instead; closing/recreating it requires a new invitation.
+  // document instead; closing/recreating it requires selecting again.
   let scope = context.windowId;
   if (scope === -1) {
     scope = windowlessPanelScopes.get(documentId);
@@ -527,6 +550,19 @@ async function sidebarChat(message, documentId) {
       windowlessPanelScopes.set(documentId, scope);
     }
   }
+  return sidebarChatInScope(message, scope);
+}
+
+async function sidebarChatInScope(message, scope) {
+  if (!connected) return {error: 'offline'};
+  if (!connected || sidebarRequests.size >= 24) return { error: 'unavailable' };
+  const {action, text, messageId, threadId, query, offset} = message;
+  if (!['list', 'select', 'unlink', 'snapshot', 'send'].includes(action) ||
+      (action === 'list' && (typeof query !== 'string' || query.length > 100 ||
+        !Number.isInteger(offset) || offset < 0 || offset > 1000000)) ||
+      (action === 'select' && (typeof threadId !== 'string' || !/^[0-9]{1,20}$/.test(threadId))) ||
+      (action === 'send' && (typeof text !== 'string' || text.length > 8000 ||
+        typeof messageId !== 'string' || messageId.length > 80))) return { error: 'invalid' };
   return new Promise(resolve => {
     const requestId = crypto.randomUUID();
     const finish = (result) => {

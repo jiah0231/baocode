@@ -83,7 +83,44 @@ const threads = get('threads');
 const chatStatus = get('chatStatus');
 let chatLinked = false, chatBusy = false, available = false, pollTimer, notice = '', nextSend;
 let pollVersion = 0, offset = 0, renderedDirectory = null;
-const chatRequest = (action, extra) => chrome.runtime.sendMessage({type: 'panel.chat', action, ...extra});
+let useChatPort = false, chatPort, seq = 0;
+const pendingChat = new Map();
+function scopedChat(message) {
+  if (!chatPort) {
+    const current = chrome.runtime.connect({name: 'baocode.sidebar.chat'});
+    chatPort = current;
+    current.onMessage.addListener(({seq, result}) => pendingChat.get(seq)?.(result));
+    current.onDisconnect.addListener(() => {
+      if (chatPort !== current) return;
+      chatPort = null;
+      for (const finish of pendingChat.values()) finish({error: 'window'});
+    });
+  }
+  return new Promise(resolve => {
+    const key = ++seq;
+    const finish = result => {
+      clearTimeout(timer);
+      pendingChat.delete(key);
+      resolve(result);
+    };
+    const timer = setTimeout(() => finish({error: 'timeout'}), 8500);
+    pendingChat.set(key, finish);
+    try { chatPort.postMessage({...message, seq: key}); }
+    catch { finish({error: 'window'}); }
+  });
+}
+async function chatRequest(action, extra) {
+  const message = {type: 'panel.chat', action, ...extra};
+  if (useChatPort) return scopedChat(message);
+  const result = await chrome.runtime.sendMessage(message);
+  // Decide transport before selecting or sending anything. Never replay an
+  // action if it may already have been accepted by the desktop.
+  if (action === 'snapshot' && !chatLinked && result?.error === 'window') {
+    useChatPort = true;
+    return scopedChat(message);
+  }
+  return result;
+}
 get('chatTitle').textContent = copy.title;
 for (const key of ['send', 'unlink', 'previous', 'next']) get(key).textContent = copy[key];
 for (const [input, label] of [[question, copy.question], [search, copy.search]]) {
