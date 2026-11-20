@@ -12,7 +12,7 @@ import '../../l10n/l10n.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/codicons.dart';
 import '../../theme/material_file_icons.dart';
-import '../../theme/workbench_theme.dart' show themeColors;
+import '../../theme/render_theme.dart' show themeColors;
 import '../chat_find.dart' show ChatFindMarks;
 import '../side_panel/file_link.dart' show FileLineRange, FileLink;
 import '../side_panel/file_open.dart' show FileOpenScope;

@@ -11,7 +11,7 @@ jobs:
     if: >-
       github.repository == 'jiah0231/baocode' &&
       (github.event_name == 'workflow_dispatch' ||
-       (github.event.ref_type == 'branch' && github.event.ref == 'feat/edge-assistant-render-theme'))
+       (github.event.ref_type == 'branch' && github.event.ref == 'feat/edge-assistant-isolated-browser-tests'))
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -43,7 +43,7 @@ jobs:
           done
       - name: Verify Windows chat typography in Chromium
         if: ${{ !cancelled() && steps.restore.outcome == 'success' }}
-        run: flutter test --no-pub --platform chrome test/browser/render_theme_web_test.dart
+        run: flutter test --no-pub --platform chrome tool/browser_tests/render_theme_web_test.dart
       - name: Compile original assistant prose on Web
         if: ${{ !cancelled() && steps.restore.outcome == 'success' }}
         run: |

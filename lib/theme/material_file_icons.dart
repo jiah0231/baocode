@@ -5,7 +5,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import 'file_icon_theme.dart';
-import 'workbench_theme.dart' show themeColors;
+import 'render_theme.dart' show themeColors;
 
 /// File and folder icons from the Material Icon Theme (the icons of
 /// material-icons-browser-extension), bundled by

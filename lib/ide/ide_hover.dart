@@ -28,7 +28,7 @@ import 'package:flutter/material.dart';
 
 import '../base/tooltip_scroll.dart';
 import '../platform/native_overlay_occlusion.dart';
-import '../theme/workbench_theme.dart' show themeColors;
+import '../theme/render_theme.dart' show themeColors;
 
 /// The workbench hover's colors, in the color theme.
 abstract final class IdeHoverColors {
