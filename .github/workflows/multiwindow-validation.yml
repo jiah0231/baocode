@@ -15,7 +15,7 @@ jobs:
     if: >-
       github.repository == 'jiah0231/baocode' &&
       (github.event_name != 'create' ||
-       (github.event.ref_type == 'branch' && github.event.ref == 'validate/sidebar-v1.9.5+57-r2'))
+       (github.event.ref_type == 'branch' && github.event.ref == 'validate/sidebar-direct-v1.9.5+58'))
     runs-on: windows-2025
     timeout-minutes: 60
     env:
@@ -55,6 +55,8 @@ jobs:
       - run: flutter analyze --no-pub --fatal-infos
       - run: dart format --output=none --set-exit-if-changed lib/window/app_windows.dart lib/window/code_args.dart test/window/app_windows_test.dart test/window/code_args_test.dart test/window/multi_window_test.dart test/window/window_chat_state_test.dart test/workspace/window_agent_draft_test.dart lib/workspace/workspace.dart lib/workspace/open_in_editor_button.dart lib/workspace/new_chat_folder_bar.dart lib/workspace/window_header/window_header.dart lib/sidebar/sidebar.dart
       - run: node --test tool/ci/browser_sidepanel_test.cjs
+      - name: Test direct sidebar conversation catalog
+        run: flutter test --no-pub test/browser/sidebar_direct_catalog_test.dart
       - name: Test window and launch regressions
         run: flutter test --no-pub --reporter expanded --timeout 2m test/window test/workspace/window_agent_draft_test.dart test/platform/open_requests_test.dart test/keybindings/window_keybindings_test.dart test/update/version_test.dart test/update/custom_release_manifest_test.dart
       - name: Test latest upstream integration and pairing compatibility

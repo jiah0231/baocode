@@ -77,8 +77,8 @@ void main() {
     });
 
     test('Bot reply compatibility upgrades the published +55 build', () {
-      expect(currentAppVersion, v('1.9.5+57'));
-      expect(currentAppVersion > v('1.9.5+56'), isTrue);
+      expect(currentAppVersion, v('1.9.5+58'));
+      expect(currentAppVersion > v('1.9.5+57'), isTrue);
     });
 
     test("is pubspec.yaml's version", () {
