@@ -15,7 +15,7 @@ jobs:
     if: >-
       github.repository == 'jiah0231/baocode' &&
       (github.event_name != 'create' ||
-       (github.event.ref_type == 'branch' && github.event.ref == 'validate/sidebar-direct-v1.9.5+58'))
+       (github.event.ref_type == 'branch' && github.event.ref == 'validate/sidebar-direct-v1.9.5+58-r2'))
     runs-on: windows-2025
     timeout-minutes: 60
     env:

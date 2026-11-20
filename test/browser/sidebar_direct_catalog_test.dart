@@ -1,4 +1,4 @@
-import '../../lib/browser/browser_sidebar_chat.dart';
+import 'package:baocode/browser/browser_sidebar_chat.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
