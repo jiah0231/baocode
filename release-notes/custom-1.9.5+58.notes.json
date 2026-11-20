@@ -1,0 +1,4 @@
+{
+  "zh": "Edge 侧栏不再需要连接码。在已连接本机 BaoCode 的侧栏中，直接搜索并打开未归档的桌面会话。历史仅在选择后读取，不会自动共享网页。请单独安装 Edge 扩展 0.3.2；桌面更新不会替换浏览器扩展。",
+  "en": "No connection code is required. Open the Edge sidebar, search the local BaoCode conversation list, and choose an active conversation to continue. History loads only after selection, and webpages are never shared automatically. Install the matching Edge extension 0.3.2 separately."
+}
