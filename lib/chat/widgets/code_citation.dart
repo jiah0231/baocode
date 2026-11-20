@@ -14,8 +14,9 @@ import '../../theme/codicons.dart';
 import '../../theme/material_file_icons.dart';
 import '../../theme/render_theme.dart' show themeColors;
 import '../chat_find.dart' show ChatFindMarks;
-import '../side_panel/file_link.dart' show FileLineRange, FileLink;
-import '../side_panel/file_open.dart' show FileOpenScope;
+import '../side_panel/file_link.dart' show FileLink;
+import 'code_citation_actions_native.dart'
+    if (dart.library.js_interop) 'code_citation_actions_web.dart';
 import 'hover_builder.dart';
 import 'table_selection.dart';
 import 'will_change_paint.dart';
@@ -576,16 +577,15 @@ class _CodeCardState extends State<_CodeCard> {
   /// The cited file's icon, name and lines, which open it there.
   Widget _file(BuildContext context, CodeCitation citation) {
     final scope = CodeCitationScope.maybeOf(context);
-    final open = scope?.onOpen;
-    final files = FileOpenScope.maybeOf(context);
-    // As the chat's file links are found, in a workspace's folders and the
-    // files the agent read too.
-    final path = switch ((files, scope?.root)) {
-      (final files?, _) => files.resolve(citation.path),
-      (null, final root?) => citation.pathIn(root),
-      _ => null,
-    };
-    final opens = open != null && path != null;
+    final root = scope?.root;
+    final activate = citationActivation(
+      context,
+      path: citation.path,
+      start: citation.start,
+      end: citation.end,
+      fallbackPath: () => root == null ? null : citation.pathIn(root),
+      open: scope?.onOpen,
+    );
     Widget file = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -606,19 +606,11 @@ class _CodeCardState extends State<_CodeCard> {
         ),
       ],
     );
-    if (opens) {
+    if (activate != null) {
       file = MouseRegion(
         cursor: SystemMouseCursors.click,
         child: GestureDetector(
-          // Where it is of the places it may be, as a link's.
-          onTap: () => files != null
-              ? files.openLink(
-                  FileLink(
-                    citation.path,
-                    FileLineRange(citation.start, citation.end),
-                  ),
-                )
-              : open(path, citation.start, citation.end),
+          onTap: activate,
           child: file,
         ),
       );

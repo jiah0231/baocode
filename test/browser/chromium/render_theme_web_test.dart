@@ -1,3 +1,6 @@
+@TestOn('browser')
+library;
+
 import 'package:baocode/theme/app_theme.dart';
 import 'package:baocode/theme/render_theme.dart';
 import 'package:baocode/theme/render_theme_web.dart' as browser_theme;
