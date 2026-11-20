@@ -24,7 +24,7 @@ const PROTOCOL = '1.3';
 const BRIDGE = 1;
 // What BaoCode may ask of this version, beyond BRIDGE 1's first methods
 // (tabs.*, cdp, detach, watch): told in the hello.
-const CAPABILITIES = ['cdp.session', 'call', 'subscribe', 'configure', 'sidebar.chat'];
+const CAPABILITIES = ['cdp.session', 'call', 'subscribe', 'configure', 'sidebar.chat.list'];
 
 const sidebarRequests = new Map();
 const windowlessPanelScopes = new Map();
@@ -486,25 +486,32 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 // panel document in the browser, and fail closed if it is not available.
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (message?.type !== 'panel.chat' || sender.id !== chrome.runtime.id ||
-      sender.url !== chrome.runtime.getURL('sidepanel.html') || !sender.documentId) return;
+      sender.url !== chrome.runtime.getURL('sidepanel.html')) return;
+  if (!sender.documentId) {
+    reply({ error: 'window' });
+    return;
+  }
   sidebarChat(message, sender.documentId).then(reply, () => reply({ error: 'unavailable' }));
   return true;
 });
 
 async function sidebarChat(message, documentId) {
   if (!connected) return { error: 'offline' };
-  const [context] = await chrome.runtime.getContexts({
+  const contexts = await chrome.runtime.getContexts?.({
     contextTypes: ['SIDE_PANEL'], documentIds: [documentId],
-  });
+  }).catch(() => []);
+  const [context] = contexts ?? [];
   if (context?.contextType !== 'SIDE_PANEL' || context.documentId !== documentId ||
       !Number.isInteger(context.windowId) || context.windowId < -1 ||
       context.windowId >= 2 ** 31) {
     return { error: 'window' };
   }
   if (!connected || sidebarRequests.size >= 24) return { error: 'unavailable' };
-  const {action, code, text, messageId} = message;
-  if (!['claim', 'unlink', 'snapshot', 'send'].includes(action) ||
-      (action === 'claim' && !/^[A-Z2-9]{10}$/.test(code ?? '')) ||
+  const {action, text, messageId, threadId, query, offset} = message;
+  if (!['list', 'select', 'unlink', 'snapshot', 'send'].includes(action) ||
+      (action === 'list' && (typeof query !== 'string' || query.length > 100 ||
+        !Number.isInteger(offset) || offset < 0 || offset > 1000000)) ||
+      (action === 'select' && (typeof threadId !== 'string' || !/^[0-9]{1,20}$/.test(threadId))) ||
       (action === 'send' && (typeof text !== 'string' || text.length > 8000 ||
         typeof messageId !== 'string' || messageId.length > 80))) return { error: 'invalid' };
   // Global side panels can have windowId -1. Bind to the verified panel
@@ -527,10 +534,11 @@ async function sidebarChat(message, documentId) {
       sidebarRequests.delete(requestId);
       resolve(result);
     };
-    const timeout = setTimeout(() => finish({ error: 'timeout' }), 1400);
+    const timeout = setTimeout(() => finish({ error: 'timeout' }), action === 'select' ? 7000 : 2200);
     sidebarRequests.set(requestId, finish);
     send({ type: 'sidebarChat', requestId, windowId: scope, action,
-      ...(action === 'claim' ? {code} : action === 'send' ? {text, messageId} : {}) });
+      ...(action === 'list' ? {query, offset} : action === 'select' ? {threadId}
+        : action === 'send' ? {text, messageId} : {}) });
   });
 }
 

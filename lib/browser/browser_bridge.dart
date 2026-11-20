@@ -820,7 +820,7 @@ class BrowserConnection {
         if (_closed ||
             !_bridge.enabled ||
             !compatible ||
-            !can('sidebar.chat') ||
+            !can('sidebar.chat.list') ||
             !BrowserBridge.extensionIds.any(
               (id) => origin == 'chrome-extension://$id/',
             )) {

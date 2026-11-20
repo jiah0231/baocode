@@ -1,56 +1,97 @@
-import 'dart:math';
-
 import '../chat/chat_models.dart';
 import '../chat/chat_session.dart';
 
-/// A one-use invitation to an explicitly chosen conversation. Only the
-/// claiming browser connection and window can use it.
-class BrowserSidebarChat {
-  final _random = Random.secure();
-  ({String code, DateTime expires, _Grant grant})? _invitation;
-  final _links = <Object, Map<int, _Grant>>{};
+/// An entry in the local desktop conversation catalog. History is only
+/// opened when this entry is selected, not when the list is requested.
+class BrowserSidebarThread {
+  const BrowserSidebarThread(this.identity, this.readTitle, this.open);
+  final Object identity;
+  final String Function() readTitle;
+  String get title => readTitle();
+  final ChatSession? Function() open;
+}
 
-  String invite(ChatSession? Function() session, String Function() title) {
-    const alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
-    final code = List.generate(
-      10,
-      (_) => alphabet[_random.nextInt(alphabet.length)],
-    ).join();
-    _invitation = (
-      code: code,
-      expires: DateTime.now().add(const Duration(minutes: 2)),
-      grant: _Grant(session, title),
-    );
-    return code;
+/// State for authenticated native-browser connections. Each verified
+/// browser window or sidebar document selects its own conversation.
+class BrowserSidebarChat {
+  final _sources = <Object, Iterable<BrowserSidebarThread> Function()>{};
+  final _ids = Expando<String>();
+  final _links = <Object, Map<int, _Grant>>{};
+  int _nextId = 0;
+
+  void register(Object owner, Iterable<BrowserSidebarThread> Function() read) {
+    _sources[owner] = read;
   }
+
+  void unregister(Object owner) => _sources.remove(owner);
+
+  Iterable<BrowserSidebarThread> _threads() sync* {
+    final seen = Set<Object>.identity();
+    for (final read in _sources.values) {
+      for (final entry in read()) {
+        if (seen.add(entry.identity)) yield entry;
+      }
+    }
+  }
+
+  String _id(BrowserSidebarThread entry) =>
+      _ids[entry.identity] ??= (++_nextId).toString();
 
   void disconnect(Object connection) {
     _links.remove(connection);
   }
 
-  void revoke() {
-    _invitation = null;
-    _links.clear();
-  }
+  void revoke() => _links.clear();
 
   Map<String, Object?> handle(Object connection, Map<String, Object?> request) {
     final window = request['windowId'];
     if (window is! int || window < 0) return const {'error': 'invalid'};
     final action = request['action'];
-    if (action == 'claim') {
-      final pending = _invitation;
-      if (pending == null ||
-          !DateTime.now().isBefore(pending.expires) ||
-          pending.code != request['code'] ||
-          pending.grant.session() == null) {
-        return const {'error': 'code'};
+    if (action == 'list') {
+      final offset = request['offset'];
+      final query = request['query'];
+      if (offset is! int || offset < 0 || offset > 1000000 ||
+          query is! String || query.length > 100) {
+        return const {'error': 'invalid'};
       }
-      _invitation = null;
+      final key = query.trim().toLowerCase();
+      final page = _threads()
+          .where((entry) => entry.title.toLowerCase().contains(key))
+          .skip(offset)
+          .take(51)
+          .toList();
+      return {
+        'threads': [
+          for (final entry in page.take(50))
+            {'id': _id(entry), 'title': _limit(entry.title, 160)},
+        ],
+        'more': page.length > 50,
+      };
+    }
+    if (action == 'select') {
+      final id = request['threadId'];
+      if (id is! String || id.isEmpty || id.length > 20) {
+        return const {'error': 'invalid'};
+      }
+      BrowserSidebarThread? target;
+      for (final entry in _threads()) {
+        if (_ids[entry.identity] == id) {
+          target = entry;
+          break;
+        }
+      }
+      if (target == null) return const {'error': 'missing'};
+      final session = target.open();
+      if (session == null) return const {'error': 'missing'};
+      final entry = target;
       final windows = _links.putIfAbsent(connection, () => {});
       if (windows.length >= 16 && !windows.containsKey(window)) {
         windows.remove(windows.keys.first);
       }
-      windows[window] = pending.grant;
+      windows[window] = _Grant(
+        () => identical(entry.open(), session) ? session : null,
+        () => entry.title,
+      );
     } else if (action == 'unlink') {
       _links[connection]?.remove(window);
       return const {'linked': false};

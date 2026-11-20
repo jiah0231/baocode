@@ -123,7 +123,7 @@ test('global side panel without a window ID uses a distinct verified document sc
   });
   assert.equal((await call('forged', 'snapshot')).error, 'window');
   const pending = [
-    call('global-a', 'claim', {code: 'ABCDEFGHJK'}),
+    call('global-a', 'select', {threadId: '13'}),
     call('global-a', 'snapshot'),
     call('global-b', 'snapshot'),
   ];
@@ -131,9 +131,31 @@ test('global side panel without a window ID uses a distinct verified document sc
   const [a, again, b] = posted.filter(message => message.type === 'sidebarChat');
   assert.ok(a.windowId >= 2 ** 32);
   assert.equal(a.windowId, again.windowId);
+  assert.equal(a.threadId, '13');
   assert.notEqual(a.windowId, b.windowId);
   for (const request of [a, again, b]) {
     await listeners.native({type: 'sidebarChatResult', requestId: request.requestId, result: {linked: request !== b}});
   }
   assert.deepEqual((await Promise.all(pending)).map(result => result.linked), [true, true, false]);
+});
+
+test('verified sidebar loads the conversation catalog without a pairing code', async () => {
+  const {listeners, url, posted} = fixture();
+  await listeners.native({type: 'bridge', connected: true});
+  const call = data => new Promise(resolve => {
+    listeners.message({type: 'panel.chat', ...data}, {id: 'fixture', url, documentId: 'panel-a'}, resolve);
+  });
+  assert.equal((await call({action: 'claim', code: 'ABCDEFGHJK'})).error, 'invalid');
+  assert.equal((await call({action: 'list', query: '', offset: -1})).error, 'invalid');
+  const pending = call({action: 'list', query: 'Bao', offset: 50, code: 'unused', windowId: 99});
+  await new Promise(setImmediate);
+  const request = posted.find(message => message.type === 'sidebarChat');
+  assert.equal(request.action, 'list');
+  assert.equal(request.windowId, 4);
+  assert.equal(request.query, 'Bao');
+  assert.equal(request.offset, 50);
+  assert.equal(request.code, undefined);
+  const result = {threads: [{id: '1', title: 'One'}], more: false};
+  await listeners.native({type: 'sidebarChatResult', requestId: request.requestId, result});
+  assert.deepEqual(await pending, result);
 });

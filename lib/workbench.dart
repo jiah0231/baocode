@@ -13,6 +13,7 @@ import 'package:path/path.dart' as p;
 
 import 'base/mouse_navigation.dart';
 import 'browser/browser_bridge.dart';
+import 'browser/browser_sidebar_chat.dart';
 import 'browser/browser_tools.dart';
 import 'browser/browser_welcome.dart';
 import 'images/image_tools.dart';
@@ -624,6 +625,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
   @override
   void initState() {
     super.initState();
+    BrowserBridge.instance.sidebarChat.register(this, _browserSidebarThreads);
     HardwareKeyboard.instance.addHandler(_handleKey);
     _keybindings.addListener(_keybindingsChanged);
     // The window's own channels: its menu bar's commands (the key window's,
@@ -908,6 +910,7 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
 
   @override
   void dispose() {
+    BrowserBridge.instance.sidebarChat.unregister(this);
     if (_main) TranslationHost.instance.stop();
     _sessionLinks.dispose();
     ChannelGate.current?.removeListener(_channelGateChanged);
@@ -1683,42 +1686,23 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
     }
   }
 
-  Future<void> _inviteBrowserSidebar(AgentThread thread) async {
-    final zh = Localizations.localeOf(context).languageCode == 'zh';
+  Iterable<BrowserSidebarThread> _browserSidebarThreads() sync* {
     final workspace = _workspace;
-    final session = thread.session;
-    final code = BrowserBridge.instance.sidebarChat.invite(
-      () => workspace.threads.contains(thread) &&
-              thread.isOpen &&
-              identical(thread.session, session) &&
-              !thread.archived
-          ? session
-          : null,
-      () => thread.title,
-    );
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(zh ? '连接浏览器侧栏' : 'Connect browser sidebar'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(zh
-                ? '在浏览器侧栏输入此码，即可查看并继续「${thread.title}」。两分钟内有效，仅可使用一次。'
-                : 'Enter this code in the sidebar to view and continue “${thread.title}”. It expires after two minutes and can only be used once.'),
-            const SizedBox(height: 12),
-            SelectableText(code),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(MaterialLocalizations.of(context).closeButtonLabel),
-          ),
-        ],
-      ),
-    );
+    final threads = workspace.threads.toList()
+      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    final current = _agentThread ?? workspace.current;
+    for (final thread in threads) {
+      if (thread.archived || (thread.untouched && !identical(thread, current))) {
+        continue;
+      }
+      yield BrowserSidebarThread(
+        thread,
+        () => thread.title,
+        () => workspace.threads.contains(thread) && !thread.archived
+            ? thread.session
+            : null,
+      );
+    }
   }
 
   /// The window's commands the palette runs, as they can be now.
@@ -1753,15 +1737,6 @@ class _WorkbenchState extends State<Workbench> implements WindowDelegate {
       ?action(starOnGitHubCommandId, Codicons.star),
       ?action(browserWelcomeCommandId, Codicons.globe),
       if (BrowserBridge.instance.supported && BrowserBridge.instance.enabled) ...[
-        if ((_agentThread ?? _workspace.current) case final thread? when !thread.archived)
-          PaletteAction(
-            id: 'baocode.browserSidebar.connect',
-            label: Localizations.localeOf(context).languageCode == 'zh'
-                ? '连接浏览器侧栏到当前会话'
-                : 'Connect browser sidebar to this conversation',
-            icon: Codicons.globe,
-            run: () => unawaited(_inviteBrowserSidebar(thread)),
-          ),
         PaletteAction(
           id: 'baocode.browserSidebar.disconnect',
           label: Localizations.localeOf(context).languageCode == 'zh'

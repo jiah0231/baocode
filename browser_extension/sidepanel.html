@@ -13,10 +13,14 @@
   <section id="chat">
     <h1 id="chatTitle"></h1>
     <p id="chatStatus" role="status"></p>
-    <form id="pair" hidden>
-      <input id="code" maxlength="10" spellcheck="false" autocomplete="off">
-      <button id="link" type="submit"></button>
-    </form>
+    <div id="directory" hidden>
+      <input id="chatSearch" type="search" maxlength="100" autocomplete="off">
+      <div id="threads"></div>
+      <div id="pages">
+        <button id="previous" type="button"></button>
+        <button id="next" type="button"></button>
+      </div>
+    </div>
     <div id="conversation" hidden>
       <div id="messages"></div>
       <form id="composer">

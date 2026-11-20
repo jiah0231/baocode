@@ -22,3 +22,11 @@ button:disabled { opacity: .55; cursor: default; }
 #messages article { margin-block: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
 #messages strong { display: block; margin-bottom: 2px; }
 #unlink { margin-top: 8px; }
+
+#directory { margin-top: 10px; }
+#chatSearch { width: 100%; }
+#threads { display: grid; gap: 4px; margin-block: 8px; max-height: 50vh; overflow: auto; }
+#threads button { border-radius: 7px; text-align: start; background: transparent; overflow-wrap: anywhere; }
+#threads button:hover, #threads button:focus-visible { background: light-dark(#e0eafa, #334766); }
+#pages { display: flex; justify-content: space-between; gap: 8px; }
+#pages button[hidden] { display: none; }

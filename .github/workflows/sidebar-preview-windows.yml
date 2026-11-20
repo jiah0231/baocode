@@ -1,0 +1,76 @@
+# Test-only Windows bundle. No secrets, tags, store uploads or release changes.
+name: BaoCode browser sidebar Windows preview
+on:
+  create:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: browser-sidebar-direct-preview
+  cancel-in-progress: true
+jobs:
+  preview:
+    if: >-
+      github.repository == 'jiah0231/baocode' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.ref_type == 'branch' && github.event.ref == 'feat/browser-sidebar-direct'))
+    runs-on: windows-2025
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+      - name: Restore exact offline preview bundles and corresponding source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python tool/ci/test_reassemble_preview_assets.py
+          if ($LASTEXITCODE -ne 0) { throw 'Preview transport unit tests failed' }
+          python tool/ci/reassemble_preview_assets.py
+          if ($LASTEXITCODE -ne 0) { throw 'Preview original-byte reconstruction failed' }
+          git diff --quiet HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Preview reconstruction changed tracked source' }
+      - name: Verify and reassemble the unchanged Maple font
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python tool/ci/test_reassemble_maple_font.py
+          if ($LASTEXITCODE -ne 0) { throw 'Font reconstruction unit tests failed' }
+          python tool/ci/reassemble_maple_font.py
+          if ($LASTEXITCODE -ne 0) { throw 'Original font reconstruction failed' }
+          git diff --quiet HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Font reconstruction changed tracked source' }
+      - uses: ./.github/actions/bao-iroh-prebuilt
+      - uses: ./.github/actions/setup-rust
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.5
+          cache: true
+      - uses: ilammy/msvc-dev-cmd@v1
+      - run: node --test tool/ci/browser_sidepanel_test.cjs
+      - run: flutter pub get
+      - run: flutter gen-l10n
+      - run: flutter analyze --no-pub lib/browser/browser_bridge.dart lib/browser/browser_sidebar_chat.dart lib/workbench.dart
+      - run: flutter test --no-pub test/browser/sidebar_direct_catalog_test.dart
+      - run: choco install innosetup --no-progress -y
+      - run: dart run tool/build_windows.dart --arch x64 --no-updates --remote-release 1.9.0.26-75ba74c4f0cd
+      - name: Collect matching desktop installer and unpacked extension
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = New-Item -ItemType Directory -Path build/sidebar-preview -Force
+          $version = (Get-Content browser_extension/manifest.json -Raw | ConvertFrom-Json).version
+          $installer = @(Get-ChildItem build/installers -Filter '*-setup.exe')
+          if ($installer.Count -ne 1) { throw 'Expected one setup installer' }
+          Copy-Item $installer[0].FullName (Join-Path $out.FullName 'BaoCode-Sidebar-Preview-setup.exe')
+          $extension = @('manifest.json','background.js','sidepanel.html','sidepanel.css','sidepanel.js','icons','_locales') |
+            ForEach-Object { Join-Path browser_extension $_ }
+          Compress-Archive -Path $extension -DestinationPath (Join-Path $out.FullName "BaoCode-browser-$version.zip")
+          Set-Content -Path (Join-Path $out.FullName 'source-commit.txt') -Value $env:GITHUB_SHA
+      - uses: actions/upload-artifact@v6
+        with:
+          name: BaoCode-sidebar-preview-windows-x64
+          path: build/sidebar-preview/
+          if-no-files-found: error
+          retention-days: 14
