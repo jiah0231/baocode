@@ -23,6 +23,7 @@ import '../theme/workbench_theme.dart' show themeColors;
 import 'chat_column.dart';
 import 'chat_feed.dart';
 import 'chat_find.dart';
+import 'chat_find_bar.dart';
 import 'chat_keys.dart';
 import 'chat_models.dart';
 import 'chat_session.dart';
