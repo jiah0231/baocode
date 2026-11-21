@@ -11,7 +11,7 @@ jobs:
     if: >-
       github.repository == 'jiah0231/baocode' &&
       (github.event_name == 'workflow_dispatch' ||
-       (github.event.ref_type == 'branch' && github.event.ref == 'feat/edge-assistant-offline-maple'))
+       (github.event.ref_type == 'branch' && github.event.ref == 'feat/edge-sidebar-typed-prose'))
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -33,8 +33,8 @@ jobs:
           git diff --exit-code HEAD --
           flutter pub get
           flutter gen-l10n
-      - name: Verify native messaging envelope budget
-        run: flutter test --no-pub test/browser/sidebar_frame_budget_test.dart
+      - name: Verify sidebar prose snapshot and envelope budget
+        run: flutter test --no-pub test/browser/sidebar_frame_budget_test.dart test/browser/sidebar_prose_snapshot_test.dart test/browser/sidebar_direct_catalog_test.dart
       - name: Verify native code citation behavior
         if: ${{ !cancelled() && steps.restore.outcome == 'success' }}
         run: flutter test --no-pub test/chat/code_citation_test.dart

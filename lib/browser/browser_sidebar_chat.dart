@@ -1,5 +1,6 @@
 import '../chat/chat_models.dart';
 import '../chat/chat_session.dart';
+import 'sidebar_prose_snapshot.dart';
 
 /// An entry in the local desktop conversation catalog. History is only
 /// opened when this entry is selected, not when the list is requested.
@@ -125,30 +126,14 @@ class BrowserSidebarChat {
       return const {'linked': true};
     }
 
-    // Cap JSON below 1 MiB even when every UTF-16 code unit is escaped.
-    // Only top-level user-visible text; no tools, thoughts or image bytes.
-    final items = <Map<String, Object?>>[];
-    final count = session.itemCount;
-    for (
-      var i = count - 1;
-      i >= 0 && i >= count - 256 && items.length < 24;
-      i--
-    ) {
-      final (role, body) = switch (session.itemAt(i)) {
-        UserMessageItem(:final text, fromAgent: null, fromSession: null) =>
-          ('user', text),
-        AssistantTextItem(:final text) => ('assistant', text),
-        _ => ('', ''),
-      };
-      if (body.isNotEmpty) items.add({'role': role, 'text': _limit(body, 4000)});
-    }
+    final items = sidebarProseTail(session.itemCount, session.itemAt);
     return {
       'linked': true,
       'title': _limit(grant.title(), 160),
       'ready': _ready(session),
       'running': session.isStreaming,
       'approval': session.pendingInteraction != null,
-      'items': items.reversed.toList(),
+      'items': [for (final row in items) row.toWire()],
     };
   }
 
